@@ -80,4 +80,11 @@ app.*.map.json
 
 # generated code
 lib/generated_plugin_registrant.dart
-.github/instructions/
+.github
+
+# Platform-specific build outputs
+android/
+ios/
+linux/
+macos/
+windows/

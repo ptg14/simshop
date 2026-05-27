@@ -10,6 +10,8 @@ class HomeViewModel extends ChangeNotifier {
   List<Product> _filteredProducts = [];
   List<String> _categories = [];
   String _selectedCategory = 'All';
+  // Store identifier used to filter products for a specific store.
+  String? _selectedStoreId;
   bool _isLoading = false;
   String? _error;
   String _searchQuery = '';
@@ -18,6 +20,7 @@ class HomeViewModel extends ChangeNotifier {
   List<Product> get products => _filteredProducts;
   List<String> get categories => _categories;
   String get selectedCategory => _selectedCategory;
+  String? get selectedStoreId => _selectedStoreId;
   bool get isLoading => _isLoading;
   String? get error => _error;
   String get searchQuery => _searchQuery;
@@ -67,6 +70,15 @@ class HomeViewModel extends ChangeNotifier {
     }
   }
 
+  /// Update the selected store identifier and re‑apply filters.
+  void selectStore(String? storeId) {
+    if (_selectedStoreId != storeId) {
+      _selectedStoreId = storeId;
+      _applyFilters();
+      notifyListeners();
+    }
+  }
+
   /// Search products by query.
   Future<void> searchProducts(String query) async {
     _searchQuery = query;
@@ -101,22 +113,27 @@ class HomeViewModel extends ChangeNotifier {
 
   /// Apply filters based on selected category and search query.
   void _applyFilters() {
-    if (_selectedCategory == 'All') {
-      _filteredProducts = _products;
-    } else {
-      _filteredProducts = _products
-          .where((product) => product.category == _selectedCategory)
-          .toList();
+    Iterable<Product> filtered = _products;
+
+    // Apply store filter first if a store is selected.
+    if (_selectedStoreId != null) {
+      filtered = filtered.where((p) => p.storeId == _selectedStoreId);
     }
+
+    // Apply category filter.
+    if (_selectedCategory != 'All') {
+      filtered =
+          filtered.where((product) => product.category == _selectedCategory);
+    }
+
+    _filteredProducts = filtered.toList();
   }
 
   /// Get featured products (on sale).
-  List<Product> getFeaturedProducts() {
-    return _products.where((product) => product.isOnSale).take(6).toList();
-  }
+  List<Product> getFeaturedProducts() =>
+      _products.where((product) => product.isOnSale).take(6).toList();
 
   /// Get promotional products.
-  List<Product> getPromotionalProducts() {
-    return _products.where((product) => product.rating >= 4.7).take(4).toList();
-  }
+  List<Product> getPromotionalProducts() =>
+      _products.where((product) => product.rating >= 4.7).take(4).toList();
 }

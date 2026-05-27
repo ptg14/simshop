@@ -24,6 +24,7 @@ class MockProductService implements IProductService {
       reviews: 156,
       stock: 12,
       specs: ['Intel i9-13900K', 'RTX 4080', '32GB RAM', '2TB SSD'],
+      storeId: 'store1',
     ),
     Product(
       id: '2',
@@ -37,6 +38,7 @@ class MockProductService implements IProductService {
       reviews: 98,
       stock: 8,
       specs: ['Ryzen 7 7700X', 'RTX 4070', '16GB RAM', '1TB SSD'],
+      storeId: 'store2',
     ),
     Product(
       id: '3',
@@ -50,6 +52,7 @@ class MockProductService implements IProductService {
       reviews: 87,
       stock: 15,
       specs: ['Intel i7-13700K', 'RTX 4070 Ti', '32GB RAM', '1TB SSD'],
+      storeId: 'store1',
     ),
     Product(
       id: '4',
@@ -62,6 +65,7 @@ class MockProductService implements IProductService {
       reviews: 234,
       stock: 5,
       specs: ['Intel i9-13900KS', 'RTX 4090', '64GB RAM', '4TB SSD'],
+      storeId: 'store2',
     ),
     Product(
       id: '5',
@@ -74,6 +78,7 @@ class MockProductService implements IProductService {
       reviews: 102,
       stock: 10,
       specs: ['Intel i9-13900K', 'RTX 4080 Super', '32GB RAM', '2TB SSD'],
+      storeId: 'store1',
     ),
     Product(
       id: '6',
@@ -87,6 +92,7 @@ class MockProductService implements IProductService {
       reviews: 76,
       stock: 20,
       specs: ['Ryzen 9 7950X', 'RTX 4070 Ti', '16GB RAM', '1TB SSD'],
+      storeId: 'store2',
     ),
     Product(
       id: '7',
@@ -99,6 +105,7 @@ class MockProductService implements IProductService {
       reviews: 54,
       stock: 25,
       specs: ['27 inch', '240Hz', '1ms', 'IPS Panel'],
+      storeId: 'store1',
     ),
     Product(
       id: '8',
@@ -112,18 +119,18 @@ class MockProductService implements IProductService {
       reviews: 120,
       stock: 50,
       specs: ['Mechanical Switches', 'RGB Lighting', 'Wired'],
+      storeId: 'store2',
     ),
   ];
 
   @override
   Future<List<Product>> getAllProducts() async {
-    await Future.delayed(const Duration(milliseconds: 500));
+    // Removed artificial delay to avoid pending timers in widget tests.
     return _mockProducts;
   }
 
   @override
   Future<List<Product>> getProductsByCategory(String category) async {
-    await Future.delayed(const Duration(milliseconds: 300));
     return _mockProducts
         .where((product) => product.category == category)
         .toList();
@@ -131,22 +138,16 @@ class MockProductService implements IProductService {
 
   @override
   Future<Product> getProductById(String id) async {
-    await Future.delayed(const Duration(milliseconds: 200));
     return _mockProducts.firstWhere((product) => product.id == id);
   }
 
   @override
   Future<List<String>> getCategories() async {
-    await Future.delayed(const Duration(milliseconds: 200));
-    return _mockProducts
-        .map((product) => product.category)
-        .toSet()
-        .toList();
+    return _mockProducts.map((product) => product.category).toSet().toList();
   }
 
   @override
   Future<List<Product>> searchProducts(String query) async {
-    await Future.delayed(const Duration(milliseconds: 300));
     final lowerQuery = query.toLowerCase();
     return _mockProducts
         .where((product) =>

@@ -2,20 +2,19 @@ import 'package:flutter/material.dart';
 
 /// Category selector widget.
 class CategorySelector extends StatelessWidget {
+
+  const CategorySelector({
+    super.key,
+    required this.categories,
+    required this.selectedCategory,
+    required this.onCategorySelected,
+  });
   final List<String> categories;
   final String selectedCategory;
   final Function(String) onCategorySelected;
 
-  const CategorySelector({
-    Key? key,
-    required this.categories,
-    required this.selectedCategory,
-    required this.onCategorySelected,
-  }) : super(key: key);
-
   @override
-  Widget build(BuildContext context) {
-    return Container(
+  Widget build(BuildContext context) => Container(
       margin: const EdgeInsets.symmetric(vertical: 12),
       child: SingleChildScrollView(
         scrollDirection: Axis.horizontal,
@@ -39,7 +38,7 @@ class CategorySelector extends StatelessWidget {
                   boxShadow: isSelected
                       ? [
                           BoxShadow(
-                            color: const Color(0xFF1E88E5).withOpacity(0.3),
+                            color: const Color(0xFF1E88E5).withValues(alpha: 0.3),
                             blurRadius: 4,
                           ),
                         ]
@@ -59,5 +58,4 @@ class CategorySelector extends StatelessWidget {
         ),
       ),
     );
-  }
 }

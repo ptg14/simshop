@@ -2,6 +2,17 @@ import 'package:flutter/material.dart';
 
 /// Promotional banner widget.
 class PromoBanner extends StatelessWidget {
+
+  const PromoBanner({
+    super.key,
+    required this.title,
+    required this.subtitle,
+    required this.actionText,
+    required this.onTap,
+    this.backgroundColor = const Color(0xFF1E88E5),
+    this.textColor = Colors.white,
+    this.imageUrl,
+  });
   final String title;
   final String subtitle;
   final String actionText;
@@ -10,26 +21,14 @@ class PromoBanner extends StatelessWidget {
   final Color textColor;
   final String? imageUrl;
 
-  const PromoBanner({
-    Key? key,
-    required this.title,
-    required this.subtitle,
-    required this.actionText,
-    required this.onTap,
-    this.backgroundColor = const Color(0xFF1E88E5),
-    this.textColor = Colors.white,
-    this.imageUrl,
-  }) : super(key: key);
-
   @override
-  Widget build(BuildContext context) {
-    return Container(
+  Widget build(BuildContext context) => Container(
       margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
       decoration: BoxDecoration(
         gradient: LinearGradient(
           colors: [
             backgroundColor,
-            backgroundColor.withOpacity(0.7),
+            backgroundColor.withValues(alpha: 0.7),
           ],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
@@ -37,7 +36,7 @@ class PromoBanner extends StatelessWidget {
         borderRadius: BorderRadius.circular(12),
         boxShadow: [
           BoxShadow(
-            color: backgroundColor.withOpacity(0.3),
+            color: backgroundColor.withValues(alpha: 0.3),
             blurRadius: 8,
             offset: const Offset(0, 4),
           ),
@@ -81,7 +80,7 @@ class PromoBanner extends StatelessWidget {
                     subtitle,
                     style: TextStyle(
                       fontSize: 14,
-                      color: textColor.withOpacity(0.9),
+                      color: textColor.withValues(alpha: 0.9),
                       height: 1.4,
                     ),
                   ),
@@ -114,5 +113,4 @@ class PromoBanner extends StatelessWidget {
         ),
       ),
     );
-  }
 }
