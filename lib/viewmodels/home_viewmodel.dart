@@ -4,7 +4,8 @@ import '../services/product_service.dart';
 
 /// ViewModel for the home screen.
 class HomeViewModel extends ChangeNotifier {
-  final IProductService _productService = MockProductService();
+  // Use the real backend service for production. Switch to MockProductService() for testing.
+  final IProductService _productService = RealProductService();
 
   List<Product> _products = [];
   List<Product> _filteredProducts = [];

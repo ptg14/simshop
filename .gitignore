@@ -78,6 +78,9 @@ app.*.map.json
 **/android/app/profile
 **/android/app/release
 
+# Node related
+node_modules/
+
 # generated code
 lib/generated_plugin_registrant.dart
 .github
@@ -88,3 +91,7 @@ ios/
 linux/
 macos/
 windows/
+backend/backend
+backend/go.mod
+backend/go.sum
+backend/localhost:8080

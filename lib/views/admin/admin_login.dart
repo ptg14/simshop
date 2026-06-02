@@ -31,12 +31,12 @@ class _AdminLoginScreenState extends State<AdminLoginScreen> {
 
   @override
   Widget build(BuildContext context) => Scaffold(
-      appBar: AppBar(
-        title: const Text('Admin Login'),
-        centerTitle: true,
-      ),
-      body: Consumer<AdminViewModel>(
-        builder: (context, viewModel, _) => Center(
+        appBar: AppBar(
+          title: const Text('Admin Login'),
+          centerTitle: true,
+        ),
+        body: Consumer<AdminViewModel>(
+          builder: (context, viewModel, _) => Center(
             child: SingleChildScrollView(
               child: Padding(
                 padding: const EdgeInsets.all(24),
@@ -164,8 +164,9 @@ class _AdminLoginScreenState extends State<AdminLoginScreen> {
                                     _usernameController.text,
                                     _passwordController.text,
                                   );
-
                                   if (success && mounted) {
+                                    // Initialize admin data (products, categories, stores)
+                                    await viewModel.initialize();
                                     Navigator.pushReplacementNamed(
                                       context,
                                       '/admin',
@@ -245,6 +246,6 @@ class _AdminLoginScreenState extends State<AdminLoginScreen> {
               ),
             ),
           ),
-      ),
-    );
+        ),
+      );
 }

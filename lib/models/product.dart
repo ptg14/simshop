@@ -31,6 +31,41 @@ class Product {
   final int? stock;
   final List<String> specs;
 
+  /// Create a Product from a JSON map.
+  factory Product.fromJson(Map<String, dynamic> json) => Product(
+        id: json['id'] as String,
+        name: json['name'] as String,
+        description: json['description'] as String,
+        price: (json['price'] as num).toDouble(),
+        originalPrice: json['original_price'] != null
+            ? (json['original_price'] as num).toDouble()
+            : null,
+        imageUrl: json['image_url'] as String,
+        category: json['category'] as String,
+        storeId: json['store_id'] as String?,
+        rating: (json['rating'] as num).toDouble(),
+        reviews: json['reviews'] as int?,
+        stock: json['stock'] as int?,
+        specs:
+            (json['specs'] as List<dynamic>).map((e) => e as String).toList(),
+      );
+
+  /// Convert this Product to a JSON map.
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'name': name,
+        'description': description,
+        'price': price,
+        'original_price': originalPrice,
+        'image_url': imageUrl,
+        'category': category,
+        'store_id': storeId,
+        'rating': rating,
+        'reviews': reviews,
+        'stock': stock,
+        'specs': specs,
+      };
+
   /// Check if product is on sale.
   bool get isOnSale => originalPrice != null && originalPrice! > price;
 

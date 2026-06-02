@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import '../models/product.dart';
 import '../models/store.dart';
+import '../services/product_service.dart';
 
 /// ViewModel for admin panel.
 class AdminViewModel extends ChangeNotifier {
@@ -9,7 +10,8 @@ class AdminViewModel extends ChangeNotifier {
   final String _adminUsername = 'admin';
   final String _adminPassword = 'admin123'; // In production, use secure storage
 
-  // Products management
+  // Products management via service. Allows injection for testing.
+  final IProductService _productService;
   final List<Product> _products = [];
   List<String> _categories = [];
 
@@ -34,24 +36,40 @@ class AdminViewModel extends ChangeNotifier {
   List<Store> get stores => _stores;
   Store? get selectedStore => _selectedStore;
 
-  /// Initialize admin view model with products.
+  /// Constructor allowing optional injection of a product service.
+  AdminViewModel({IProductService? productService})
+      : _productService = productService ?? RealProductService();
+
+  /// Initialize admin view model with products and stores.
   Future<void> initialize() async {
     // Prevent re‑initialisation which would duplicate store entries.
     if (_stores.isNotEmpty) {
-      // Already initialized; ensure a selected store exists.
       _selectedStore ??= _stores.first;
       return;
     }
 
-    // Initialize dummy categories (replace with real service call in production)
-    _categories = ['All', 'PC Gaming', 'PC Design', 'PC Accessories'];
+    // Load categories from the backend (fallback to static list on error).
+    try {
+      final categories = await _productService.getCategories();
+      _categories = ['All', ...categories];
+    } catch (_) {
+      _categories = ['All', 'PC Gaming', 'PC Design', 'PC Accessories'];
+    }
+
+    // Load products from the backend.
+    try {
+      final loaded = await _productService.getAllProducts();
+      _products.clear();
+      _products.addAll(loaded);
+    } catch (_) {
+      // If backend unavailable, keep empty list.
+    }
 
     // Initialize dummy stores (replace with real service call in production)
     _stores.addAll([
       const Store(id: 'store1', name: 'Cửa hàng 1'),
       const Store(id: 'store2', name: 'Cửa hàng 2'),
     ]);
-    // Ensure a store is selected after initialization.
     _selectedStore = _stores.first;
     notifyListeners();
   }
@@ -104,13 +122,13 @@ class AdminViewModel extends ChangeNotifier {
     notifyListeners();
 
     try {
-      await Future.delayed(const Duration(milliseconds: 300));
-      // Associate product with the currently selected store (using category field as placeholder)
-      // Associate product with the currently selected store using storeId.
+      // Associate product with the currently selected store.
       final productWithStore = product.copyWith(
         storeId: _selectedStore?.id,
-        // Keep category unchanged; it represents product category.
       );
+      // Persist to backend.
+      await _productService.createProduct(productWithStore);
+      // Update local list.
       _products.add(productWithStore);
       _isLoading = false;
       notifyListeners();
@@ -128,7 +146,8 @@ class AdminViewModel extends ChangeNotifier {
     notifyListeners();
 
     try {
-      await Future.delayed(const Duration(milliseconds: 300));
+      // Persist changes to backend.
+      await _productService.updateProduct(id, product);
       final index = _products.indexWhere((p) => p.id == id);
       if (index >= 0) {
         _products[index] = product;
@@ -142,19 +161,18 @@ class AdminViewModel extends ChangeNotifier {
     }
   }
 
-  /// Delete a product.
+  /// Delete a product using the backend API.
   Future<void> deleteProduct(String id) async {
     _isLoading = true;
     _error = null;
     notifyListeners();
 
     try {
-      await Future.delayed(const Duration(milliseconds: 300));
+      await _productService.deleteProduct(id);
       _products.removeWhere((p) => p.id == id);
-      _isLoading = false;
-      notifyListeners();
     } catch (e) {
       _error = 'Lỗi xóa sản phẩm: $e';
+    } finally {
       _isLoading = false;
       notifyListeners();
     }
