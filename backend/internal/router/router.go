@@ -9,7 +9,7 @@ import (
 )
 
 // New returns a mux.Router with all routes and middleware registered.
-func New(productRepo *handler.ProductRepo) *mux.Router {
+func New(productRepo *handler.ProductRepo, uploadCfg *handler.UploadConfig) *mux.Router {
 	r := mux.NewRouter()
 	// Global middleware
 	r.Use(middleware.CORSMiddleware)
@@ -23,6 +23,14 @@ func New(productRepo *handler.ProductRepo) *mux.Router {
 	r.HandleFunc("/api/products", handler.CreateProductHandler(productRepo)).Methods(http.MethodPost)
 	r.HandleFunc("/api/products/{id}", handler.UpdateProductHandler(productRepo)).Methods(http.MethodPut)
 	r.HandleFunc("/api/products/{id}", handler.DeleteProductHandler(productRepo)).Methods(http.MethodDelete)
+
+	// Upload route
+	r.HandleFunc("/api/upload", handler.UploadImageHandler(uploadCfg)).Methods(http.MethodPost)
+
+	// Serve uploaded files as static content.
+	uploadDir := http.Dir(uploadCfg.UploadDir)
+	fileServer := http.FileServer(uploadDir)
+	r.PathPrefix("/uploads/").Handler(http.StripPrefix("/uploads/", fileServer))
 
 	return r
 }

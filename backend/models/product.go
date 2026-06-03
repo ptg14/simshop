@@ -15,3 +15,25 @@ type Product struct {
 	Stock         *int32   `json:"stock,omitempty"`
 	Specs         []string `json:"specs"`
 }
+
+// ProductFilter holds optional filter criteria for listing products.
+type ProductFilter struct {
+	Category    string
+	Search      string
+	MinPrice    *float64
+	MaxPrice    *float64
+	MinRating   *float64
+	StoreID     string
+	SortBy      string // "price_asc", "price_desc", "rating", "name", "newest"
+	Page        int
+	PageSize    int
+}
+
+// ProductListResponse wraps paginated product results.
+type ProductListResponse struct {
+	Products   []Product `json:"products"`
+	Total      int       `json:"total"`
+	Page       int       `json:"page"`
+	PageSize   int       `json:"page_size"`
+	TotalPages int       `json:"total_pages"`
+}

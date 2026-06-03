@@ -16,6 +16,10 @@ type Config struct {
 	MaxOpenConns int
 	// ConnMaxLifetime sets the maximum amount of time a connection may be reused.
 	ConnMaxLifetime time.Duration
+	// UploadDir is the directory where uploaded images are stored.
+	UploadDir string
+	// MaxUploadSize is the maximum allowed size (in bytes) for uploaded files.
+	MaxUploadSize int64
 }
 
 // Load reads configuration from environment variables, providing sensible defaults.
@@ -45,10 +49,24 @@ func Load() *Config {
 		}
 	}
 
+	uploadDir := os.Getenv("UPLOAD_DIR")
+	if uploadDir == "" {
+		uploadDir = "./uploads"
+	}
+
+	maxUploadSize := int64(10 << 20) // 10 MB
+	if v := os.Getenv("MAX_UPLOAD_SIZE"); v != "" {
+		if i, err := strconv.ParseInt(v, 10, 64); err == nil && i > 0 {
+			maxUploadSize = i
+		}
+	}
+
 	return &Config{
 		Port:            port,
 		DatabaseURL:     dsn,
 		MaxOpenConns:    maxConns,
 		ConnMaxLifetime: connLifetime,
+		UploadDir:       uploadDir,
+		MaxUploadSize:   maxUploadSize,
 	}
 }
