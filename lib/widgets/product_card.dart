@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../models/product.dart';
+import '../utils/currency_formatter.dart';
 
 /// Widget displaying a product card.
 class ProductCard extends StatelessWidget {
@@ -172,7 +173,7 @@ class ProductCard extends StatelessWidget {
                       Row(
                         children: [
                           Text(
-                            '${product.price.toStringAsFixed(0)}đ',
+                            formatCurrency(product.price),
                             style: const TextStyle(
                               fontWeight: FontWeight.bold,
                               fontSize: 13,
@@ -182,7 +183,7 @@ class ProductCard extends StatelessWidget {
                           if (product.isOnSale) ...[
                             const SizedBox(width: 6),
                             Text(
-                              '${product.originalPrice?.toStringAsFixed(0)}đ',
+                              formatCurrency(product.originalPrice ?? 0),
                               style: TextStyle(
                                 fontSize: 11,
                                 color: Colors.grey[600],

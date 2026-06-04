@@ -153,7 +153,7 @@ class AdminDashboard extends StatelessWidget {
           // For rail layout, place the rail in the leading slot.
           body: Row(
             children: [
-              if (useRail) SizedBox(width: 72, child: navigation),
+              if (useRail) SizedBox(width: 250, child: navigation),
               Expanded(child: _buildTabContent(viewModel.selectedTab)),
             ],
           ),

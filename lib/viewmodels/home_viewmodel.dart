@@ -40,10 +40,11 @@ class HomeViewModel extends ChangeNotifier {
 
     try {
       _products = await _productService.getAllProducts();
-      _applyFilters();
+      _filteredProducts = _products;
     } catch (e) {
       _error = 'Failed to load products: $e';
       _products = [];
+      _filteredProducts = [];
     } finally {
       _isLoading = false;
       notifyListeners();
@@ -61,13 +62,27 @@ class HomeViewModel extends ChangeNotifier {
     }
   }
 
-  /// Select a category and filter products.
-  void selectCategory(String category) {
+  /// Select a category and filter products via backend.
+  Future<void> selectCategory(String category) async {
     if (_selectedCategory != category) {
       _selectedCategory = category;
       _searchQuery = '';
-      _applyFilters();
+      _isLoading = true;
       notifyListeners();
+
+      try {
+        if (category == 'All') {
+          _filteredProducts = _products;
+        } else {
+          _filteredProducts =
+              await _productService.getProductsByCategory(category);
+        }
+      } catch (e) {
+        _error = 'Failed to filter by category: $e';
+      } finally {
+        _isLoading = false;
+        notifyListeners();
+      }
     }
   }
 
@@ -80,13 +95,14 @@ class HomeViewModel extends ChangeNotifier {
     }
   }
 
-  /// Search products by query.
+  /// Search products by query via backend.
   Future<void> searchProducts(String query) async {
     _searchQuery = query;
     _selectedCategory = 'All';
 
     if (query.isEmpty) {
       _filteredProducts = _products;
+      notifyListeners();
     } else {
       _isLoading = true;
       notifyListeners();
@@ -98,10 +114,9 @@ class HomeViewModel extends ChangeNotifier {
         _filteredProducts = [];
       } finally {
         _isLoading = false;
+        notifyListeners();
       }
     }
-
-    notifyListeners();
   }
 
   /// Reset search and show all products.
@@ -112,19 +127,12 @@ class HomeViewModel extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Apply filters based on selected category and search query.
+  /// Apply local store filter on top of already-loaded products.
   void _applyFilters() {
     Iterable<Product> filtered = _products;
 
-    // Apply store filter first if a store is selected.
     if (_selectedStoreId != null) {
       filtered = filtered.where((p) => p.storeId == _selectedStoreId);
-    }
-
-    // Apply category filter.
-    if (_selectedCategory != 'All') {
-      filtered =
-          filtered.where((product) => product.category == _selectedCategory);
     }
 
     _filteredProducts = filtered.toList();

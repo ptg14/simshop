@@ -80,27 +80,53 @@ class _HomeScreenState extends State<HomeScreen> {
                       selectedCategory: viewModel.selectedCategory,
                       onCategorySelected: viewModel.selectCategory,
                     ),
-                    // Product grid
-                    GridView.builder(
-                      shrinkWrap: true,
-                      physics: const NeverScrollableScrollPhysics(),
-                      padding: const EdgeInsets.symmetric(horizontal: 12),
-                      gridDelegate:
-                          const SliverGridDelegateWithFixedCrossAxisCount(
-                        crossAxisCount: 2,
-                        childAspectRatio: 0.6,
-                        crossAxisSpacing: 12,
-                        mainAxisSpacing: 12,
+                    // Product grid or empty state
+                    if (viewModel.products.isEmpty)
+                      Center(
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 64),
+                          child: Column(
+                            children: [
+                              const Icon(Icons.inventory_2_outlined,
+                                  size: 80, color: Colors.grey),
+                              const SizedBox(height: 16),
+                              const Text(
+                                'Không tìm thấy sản phẩm nào',
+                                style: TextStyle(
+                                  fontSize: 16,
+                                  color: Colors.grey,
+                                ),
+                              ),
+                              const SizedBox(height: 24),
+                              ElevatedButton(
+                                onPressed: () => viewModel.resetSearch(),
+                                child: const Text('Xóa bộ lọc'),
+                              ),
+                            ],
+                          ),
+                        ),
+                      )
+                    else
+                      GridView.builder(
+                        shrinkWrap: true,
+                        physics: const NeverScrollableScrollPhysics(),
+                        padding: const EdgeInsets.symmetric(horizontal: 12),
+                        gridDelegate:
+                            const SliverGridDelegateWithFixedCrossAxisCount(
+                          crossAxisCount: 2,
+                          childAspectRatio: 0.6,
+                          crossAxisSpacing: 12,
+                          mainAxisSpacing: 12,
+                        ),
+                        itemCount: viewModel.products.length,
+                        itemBuilder: (context, index) {
+                          final product = viewModel.products[index];
+                          return ProductCard(
+                            product: product,
+                            onTap: () => _navigateToProductDetail(product),
+                          );
+                        },
                       ),
-                      itemCount: viewModel.products.length,
-                      itemBuilder: (context, index) {
-                        final product = viewModel.products[index];
-                        return ProductCard(
-                          product: product,
-                          onTap: () => _navigateToProductDetail(product),
-                        );
-                      },
-                    ),
                   ],
                 ),
               ),

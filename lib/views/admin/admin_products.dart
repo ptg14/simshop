@@ -1,4 +1,6 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
 import '../../viewmodels/admin_viewmodel.dart';
 import '../../models/product.dart';
@@ -129,7 +131,11 @@ void _showEditProductDialog(
 class _EditProductDialogState extends State<_EditProductDialog> {
   late TextEditingController _nameController;
   late TextEditingController _priceController;
+  late TextEditingController _originalPriceController;
   late TextEditingController _descriptionController;
+  late TextEditingController _stockController;
+  File? _imageFile;
+  String? _selectedCategory;
 
   @override
   void initState() {
@@ -137,16 +143,35 @@ class _EditProductDialogState extends State<_EditProductDialog> {
     _nameController = TextEditingController(text: widget.product.name);
     _priceController =
         TextEditingController(text: widget.product.price.toStringAsFixed(0));
+    _originalPriceController = TextEditingController(
+        text: widget.product.originalPrice?.toStringAsFixed(0) ?? '');
     _descriptionController =
         TextEditingController(text: widget.product.description);
+    _stockController =
+        TextEditingController(text: widget.product.stock?.toString() ?? '0');
+    _selectedCategory = widget.product.category;
   }
 
   @override
   void dispose() {
     _nameController.dispose();
     _priceController.dispose();
+    _originalPriceController.dispose();
     _descriptionController.dispose();
+    _stockController.dispose();
     super.dispose();
+  }
+
+  Future<void> _pickImage() async {
+    // Use image_picker to select an image from the gallery.
+    final imagePicker = ImagePicker();
+    final XFile? picked = await imagePicker.pickImage(
+      source: ImageSource.gallery,
+      imageQuality: 85,
+    );
+    if (picked != null) {
+      setState(() => _imageFile = File(picked.path));
+    }
   }
 
   @override
@@ -156,6 +181,49 @@ class _EditProductDialogState extends State<_EditProductDialog> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
+              // Image picker button
+              Row(
+                children: [
+                  GestureDetector(
+                    onTap: _pickImage,
+                    child: Container(
+                      width: 80,
+                      height: 80,
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(8),
+                        color: Colors.grey[200],
+                        border: Border.all(color: Colors.grey),
+                      ),
+                      child: _imageFile != null
+                          ? ClipRRect(
+                              borderRadius: BorderRadius.circular(8),
+                              child: Image.file(_imageFile!, fit: BoxFit.cover),
+                            )
+                          : widget.product.imageUrl.isNotEmpty
+                              ? ClipRRect(
+                                  borderRadius: BorderRadius.circular(8),
+                                  child: Image.network(
+                                    widget.product.imageUrl,
+                                    fit: BoxFit.cover,
+                                    errorBuilder: (_, __, ___) =>
+                                        const Icon(Icons.image),
+                                  ),
+                                )
+                              : const Icon(Icons.add_photo_alternate),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      _imageFile != null
+                          ? 'Đã chọn ảnh mới'
+                          : 'Chạm để đổi ảnh',
+                      style: TextStyle(color: Colors.grey[600]),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
               TextField(
                 controller: _nameController,
                 decoration: const InputDecoration(labelText: 'Tên sản phẩm'),
@@ -164,6 +232,30 @@ class _EditProductDialogState extends State<_EditProductDialog> {
               TextField(
                 controller: _priceController,
                 decoration: const InputDecoration(labelText: 'Giá (đ)'),
+                keyboardType: TextInputType.number,
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: _originalPriceController,
+                decoration:
+                    const InputDecoration(labelText: 'Giá gốc (đ) (tùy chọn)'),
+                keyboardType: TextInputType.number,
+              ),
+              const SizedBox(height: 12),
+              // Category dropdown
+              DropdownButtonFormField<String>(
+                value: _selectedCategory,
+                decoration: const InputDecoration(labelText: 'Danh mục'),
+                items: widget.viewModel.categories
+                    .where((c) => c != 'All')
+                    .map((c) => DropdownMenuItem(value: c, child: Text(c)))
+                    .toList(),
+                onChanged: (v) => setState(() => _selectedCategory = v),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: _stockController,
+                decoration: const InputDecoration(labelText: 'Tồn kho'),
                 keyboardType: TextInputType.number,
               ),
               const SizedBox(height: 12),
@@ -199,12 +291,25 @@ class _EditProductDialogState extends State<_EditProductDialog> {
                 );
                 return;
               }
+              final originalPriceText = _originalPriceController.text.trim();
+              final originalPrice = originalPriceText.isNotEmpty
+                  ? double.tryParse(originalPriceText)
+                  : null;
+              final stock = int.tryParse(_stockController.text.trim()) ?? 0;
+
               final updated = widget.product.copyWith(
                 name: name,
                 price: price,
+                originalPrice: originalPrice,
                 description: description,
+                category: _selectedCategory ?? widget.product.category,
+                stock: stock,
               );
-              await widget.viewModel.updateProduct(widget.product.id, updated);
+              await widget.viewModel.updateProduct(
+                widget.product.id,
+                updated,
+                imageFile: _imageFile,
+              );
               Navigator.pop(context);
               ScaffoldMessenger.of(context).showSnackBar(
                 const SnackBar(content: Text('Cập nhật sản phẩm thành công')),
@@ -293,13 +398,27 @@ class _ProductListTile extends StatelessWidget {
             child: const Text('Hủy'),
           ),
           TextButton(
-            onPressed: () {
-              viewModel.deleteProduct(product.id);
-              Navigator.pop(context);
-              // Show feedback after deletion.
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Xóa sản phẩm thành công')),
-              );
+            onPressed: () async {
+              try {
+                await viewModel.deleteProduct(product.id);
+                if (context.mounted) {
+                  Navigator.pop(context);
+                  // Show feedback after deletion.
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Xóa sản phẩm thành công')),
+                  );
+                }
+              } catch (e) {
+                if (context.mounted) {
+                  Navigator.pop(context);
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('Lỗi khi xóa sản phẩm: $e'),
+                      backgroundColor: Colors.red,
+                    ),
+                  );
+                }
+              }
             },
             child: const Text('Xóa', style: TextStyle(color: Colors.red)),
           ),
@@ -320,22 +439,45 @@ class _AddProductDialog extends StatefulWidget {
 class _AddProductDialogState extends State<_AddProductDialog> {
   late TextEditingController _nameController;
   late TextEditingController _priceController;
+  late TextEditingController _originalPriceController;
   late TextEditingController _descriptionController;
+  late TextEditingController _stockController;
+  File? _imageFile;
+  String? _selectedCategory;
 
   @override
   void initState() {
     super.initState();
     _nameController = TextEditingController();
     _priceController = TextEditingController();
+    _originalPriceController = TextEditingController();
     _descriptionController = TextEditingController();
+    _stockController = TextEditingController(text: '0');
+    // Default to first non-'All' category if available.
+    final cats = widget.viewModel.categories.where((c) => c != 'All').toList();
+    _selectedCategory = cats.isNotEmpty ? cats.first : null;
   }
 
   @override
   void dispose() {
     _nameController.dispose();
     _priceController.dispose();
+    _originalPriceController.dispose();
     _descriptionController.dispose();
+    _stockController.dispose();
     super.dispose();
+  }
+
+  Future<void> _pickImage() async {
+    // Use image_picker to select an image from the gallery.
+    final imagePicker = ImagePicker();
+    final XFile? picked = await imagePicker.pickImage(
+      source: ImageSource.gallery,
+      imageQuality: 85,
+    );
+    if (picked != null) {
+      setState(() => _imageFile = File(picked.path));
+    }
   }
 
   @override
@@ -345,6 +487,35 @@ class _AddProductDialogState extends State<_AddProductDialog> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
+              // Image picker
+              GestureDetector(
+                onTap: _pickImage,
+                child: Container(
+                  width: double.infinity,
+                  height: 120,
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(8),
+                    color: Colors.grey[200],
+                    border: Border.all(color: Colors.grey),
+                  ),
+                  child: _imageFile != null
+                      ? ClipRRect(
+                          borderRadius: BorderRadius.circular(8),
+                          child: Image.file(_imageFile!, fit: BoxFit.cover),
+                        )
+                      : Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(Icons.add_photo_alternate,
+                                size: 40, color: Colors.grey[600]),
+                            const SizedBox(height: 4),
+                            Text('Chọn ảnh sản phẩm',
+                                style: TextStyle(color: Colors.grey[600])),
+                          ],
+                        ),
+                ),
+              ),
+              const SizedBox(height: 12),
               TextField(
                 controller: _nameController,
                 decoration: const InputDecoration(
@@ -359,6 +530,32 @@ class _AddProductDialogState extends State<_AddProductDialog> {
                   labelText: 'Giá (đ)',
                   hintText: 'VD: 25000000',
                 ),
+                keyboardType: TextInputType.number,
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: _originalPriceController,
+                decoration: const InputDecoration(
+                  labelText: 'Giá gốc (đ) (tùy chọn)',
+                  hintText: 'VD: 30000000',
+                ),
+                keyboardType: TextInputType.number,
+              ),
+              const SizedBox(height: 12),
+              // Category dropdown
+              DropdownButtonFormField<String>(
+                value: _selectedCategory,
+                decoration: const InputDecoration(labelText: 'Danh mục'),
+                items: widget.viewModel.categories
+                    .where((c) => c != 'All')
+                    .map((c) => DropdownMenuItem(value: c, child: Text(c)))
+                    .toList(),
+                onChanged: (v) => setState(() => _selectedCategory = v),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: _stockController,
+                decoration: const InputDecoration(labelText: 'Tồn kho'),
                 keyboardType: TextInputType.number,
               ),
               const SizedBox(height: 12),
@@ -380,13 +577,11 @@ class _AddProductDialogState extends State<_AddProductDialog> {
           ),
           ElevatedButton(
             onPressed: () async {
-              // Gather input values
               final name = _nameController.text.trim();
               final priceText = _priceController.text.trim();
               final description = _descriptionController.text.trim();
 
               if (name.isEmpty || priceText.isEmpty) {
-                // Show simple validation error
                 ScaffoldMessenger.of(context).showSnackBar(
                   const SnackBar(
                       content: Text('Vui lòng nhập tên và giá sản phẩm')),
@@ -402,23 +597,29 @@ class _AddProductDialogState extends State<_AddProductDialog> {
                 return;
               }
 
-              // Create a new product instance. Use a simple timestamp as id.
+              final originalPriceText = _originalPriceController.text.trim();
+              final originalPrice = originalPriceText.isNotEmpty
+                  ? double.tryParse(originalPriceText)
+                  : null;
+              final stock = int.tryParse(_stockController.text.trim()) ?? 0;
+
+              // Create product with empty id – backend will generate one.
               final newProduct = Product(
-                id: DateTime.now().millisecondsSinceEpoch.toString(),
+                id: '', // backend will assign real ID
                 name: name,
                 description: description,
                 price: price,
-                originalPrice: null,
-                imageUrl:
-                    'https://via.placeholder.com/150', // placeholder image
-                category: 'All',
+                originalPrice: originalPrice,
+                imageUrl: '', // will be set after upload
+                category: _selectedCategory ?? 'All',
                 rating: 0,
                 reviews: 0,
-                stock: 0,
+                stock: stock,
                 specs: [],
               );
 
-              await widget.viewModel.addProduct(newProduct);
+              await widget.viewModel
+                  .addProduct(newProduct, imageFile: _imageFile);
               Navigator.pop(context);
               ScaffoldMessenger.of(context).showSnackBar(
                 const SnackBar(content: Text('Thêm sản phẩm thành công')),

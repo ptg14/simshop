@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import '../models/product.dart';
 import '../utils/currency_formatter.dart';
-import 'package:provider/provider.dart';
 
 /// Product detail screen.
 class ProductDetailScreen extends StatefulWidget {

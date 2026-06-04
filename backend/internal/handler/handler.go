@@ -75,6 +75,11 @@ func CreateProductHandler(repo *ProductRepo) http.HandlerFunc {
 			return
 		}
 
+		// Auto-generate ID if not provided.
+		if p.ID == "" {
+			p.ID = uuid.New().String()
+		}
+
 		if err := repo.Create(&p); err != nil {
 			writeError(w, http.StatusInternalServerError, "Failed to create product")
 			return
@@ -104,8 +109,15 @@ func UpdateProductHandler(repo *ProductRepo) http.HandlerFunc {
 			writeError(w, http.StatusInternalServerError, "Failed to update product")
 			return
 		}
+
+		// Fetch the updated product from the database to return it.
+		updated, err := repo.GetByID(id)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "Product updated but failed to fetch")
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(p)
+		json.NewEncoder(w).Encode(updated)
 	}
 }
 

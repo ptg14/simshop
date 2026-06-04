@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:flutter/foundation.dart';
 import '../models/product.dart';
 import '../models/store.dart';
@@ -115,21 +116,40 @@ class AdminViewModel extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Upload an image file and return the URL.
+  Future<String?> uploadImage(File file) async {
+    try {
+      final url = await _productService.uploadImage(file);
+      return url;
+    } catch (e) {
+      _error = 'Lỗi tải ảnh lên: $e';
+      return null;
+    }
+  }
+
   /// Add a new product.
-  Future<void> addProduct(Product product) async {
+  Future<void> addProduct(Product product, {File? imageFile}) async {
     _isLoading = true;
     _error = null;
     notifyListeners();
 
     try {
+      String? imageUrl = product.imageUrl;
+
+      // Upload image first if provided.
+      if (imageFile != null) {
+        imageUrl = await _productService.uploadImage(imageFile);
+      }
+
       // Associate product with the currently selected store.
       final productWithStore = product.copyWith(
         storeId: _selectedStore?.id,
+        imageUrl: imageUrl,
       );
-      // Persist to backend.
-      await _productService.createProduct(productWithStore);
-      // Update local list.
-      _products.add(productWithStore);
+      // Persist to backend and get the created product with real ID.
+      final created = await _productService.createProduct(productWithStore);
+      // Update local list with the real product from backend.
+      _products.add(created);
       _isLoading = false;
       notifyListeners();
     } catch (e) {
@@ -140,17 +160,27 @@ class AdminViewModel extends ChangeNotifier {
   }
 
   /// Update a product.
-  Future<void> updateProduct(String id, Product product) async {
+  Future<void> updateProduct(String id, Product product,
+      {File? imageFile}) async {
     _isLoading = true;
     _error = null;
     notifyListeners();
 
     try {
-      // Persist changes to backend.
-      await _productService.updateProduct(id, product);
+      String? imageUrl = product.imageUrl;
+
+      // Upload new image if provided.
+      if (imageFile != null) {
+        imageUrl = await _productService.uploadImage(imageFile);
+      }
+
+      final updatedProduct = product.copyWith(imageUrl: imageUrl);
+
+      // Persist changes to backend and get the updated product.
+      final updated = await _productService.updateProduct(id, updatedProduct);
       final index = _products.indexWhere((p) => p.id == id);
       if (index >= 0) {
-        _products[index] = product;
+        _products[index] = updated;
       }
       _isLoading = false;
       notifyListeners();

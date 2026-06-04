@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../viewmodels/admin_viewmodel.dart';
+import '../../widgets/stat_card.dart';
 
 /// Admin analytics screen.
 class AdminAnalyticsScreen extends StatelessWidget {
@@ -31,25 +32,25 @@ class AdminAnalyticsScreen extends StatelessWidget {
                     crossAxisSpacing: 16,
                     mainAxisSpacing: 16,
                     children: [
-                      _StatCard(
+                      StatCard(
                         title: 'Tổng sản phẩm',
                         value: '${stats['totalProducts']}',
                         icon: Icons.inventory_2,
                         color: Colors.blue,
                       ),
-                      _StatCard(
+                      StatCard(
                         title: 'Danh mục',
                         value: '${stats['totalCategories']}',
                         icon: Icons.category,
                         color: Colors.green,
                       ),
-                      _StatCard(
+                      StatCard(
                         title: 'Sản phẩm khuyến mãi',
                         value: '${stats['productsOnSale']}',
                         icon: Icons.local_offer,
                         color: Colors.orange,
                       ),
-                      _StatCard(
+                      StatCard(
                         title: 'Sắp hết hàng',
                         value: '${stats['lowStockProducts']}',
                         icon: Icons.warning,
@@ -150,70 +151,5 @@ class AdminAnalyticsScreen extends StatelessWidget {
             ),
           );
         },
-      );
-}
-
-class _StatCard extends StatelessWidget {
-  const _StatCard({
-    required this.title,
-    required this.value,
-    required this.icon,
-    required this.color,
-  });
-  final String title;
-  final String value;
-  final IconData icon;
-  final Color color;
-
-  @override
-  Widget build(BuildContext context) => Card(
-        child: Container(
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(8),
-            gradient: LinearGradient(
-              colors: [color.withOpacity(0.1), color.withOpacity(0.05)],
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-            ),
-          ),
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Container(
-                  padding: const EdgeInsets.all(8),
-                  decoration: BoxDecoration(
-                    color: color.withOpacity(0.2),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Icon(icon, color: color, size: 24),
-                ),
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      value,
-                      style: TextStyle(
-                        fontSize: 28,
-                        fontWeight: FontWeight.bold,
-                        color: color,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      title,
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: Colors.grey[700],
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ),
-        ),
       );
 }
