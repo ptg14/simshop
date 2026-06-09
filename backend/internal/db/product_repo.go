@@ -20,9 +20,48 @@ func NewProductRepo(db *sql.DB) *ProductRepo {
 	return &ProductRepo{db: db}
 }
 
+// GetCategories returns all category names persisted in the database.
+func (r *ProductRepo) GetCategories() ([]string, error) {
+	rows, err := r.db.Query(`SELECT name FROM categories ORDER BY name ASC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var cats []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
+		}
+		cats = append(cats, name)
+	}
+	if cats == nil {
+		cats = []string{}
+	}
+	return cats, nil
+}
+
+// AddCategory inserts a new category if it does not already exist.
+func (r *ProductRepo) AddCategory(name string) error {
+	if name == "" {
+		return nil
+	}
+	_, err := r.db.Exec(`INSERT OR IGNORE INTO categories (name) VALUES (?)`, name)
+	return err
+}
+
+// DeleteCategory removes a category by name.
+func (r *ProductRepo) DeleteCategory(name string) error {
+	if name == "" {
+		return nil
+	}
+	_, err := r.db.Exec(`DELETE FROM categories WHERE name=?`, name)
+	return err
+}
+
 // GetAll returns all products.
 func (r *ProductRepo) GetAll() ([]models.Product, error) {
-	rows, err := r.db.Query(`SELECT id, name, description, price, original_price, image_url, category, store_id, rating, reviews, stock, specs FROM products`)
+	rows, err := r.db.Query(`SELECT id, name, description, price, original_price, image_url, category, store_id, rating, reviews, stock, specs, categories FROM products`)
 	if err != nil {
 		return nil, err
 	}
@@ -31,11 +70,23 @@ func (r *ProductRepo) GetAll() ([]models.Product, error) {
 	for rows.Next() {
 		var p models.Product
 		var specsJSON string
-		if err := rows.Scan(&p.ID, &p.Name, &p.Description, &p.Price, &p.OriginalPrice, &p.ImageURL, &p.Category, &p.StoreID, &p.Rating, &p.Reviews, &p.Stock, &specsJSON); err != nil {
+		var categoriesJSON sql.NullString
+		if err := rows.Scan(&p.ID, &p.Name, &p.Description, &p.Price, &p.OriginalPrice, &p.ImageURL, &p.Category, &p.StoreID, &p.Rating, &p.Reviews, &p.Stock, &specsJSON, &categoriesJSON); err != nil {
 			return nil, err
 		}
 		if err := json.Unmarshal([]byte(specsJSON), &p.Specs); err != nil {
 			return nil, err
+		}
+		// parse categories JSON if present
+		p.Categories = []string{}
+		if categoriesJSON.Valid && categoriesJSON.String != "" {
+			_ = json.Unmarshal([]byte(categoriesJSON.String), &p.Categories)
+		}
+		// Load images for this product
+		imgs, _ := r.getImagesForProduct(p.ID)
+		p.Images = imgs
+		if p.ImageURL == "" && len(imgs) > 0 {
+			p.ImageURL = imgs[0]
 		}
 		products = append(products, p)
 	}
@@ -46,13 +97,24 @@ func (r *ProductRepo) GetAll() ([]models.Product, error) {
 func (r *ProductRepo) GetByID(id string) (*models.Product, error) {
 	var p models.Product
 	var specsJSON string
-	err := r.db.QueryRow(`SELECT id, name, description, price, original_price, image_url, category, store_id, rating, reviews, stock, specs FROM products WHERE id=?`, id).
-		Scan(&p.ID, &p.Name, &p.Description, &p.Price, &p.OriginalPrice, &p.ImageURL, &p.Category, &p.StoreID, &p.Rating, &p.Reviews, &p.Stock, &specsJSON)
+	var categoriesJSON sql.NullString
+	err := r.db.QueryRow(`SELECT id, name, description, price, original_price, image_url, category, store_id, rating, reviews, stock, specs, categories FROM products WHERE id=?`, id).
+		Scan(&p.ID, &p.Name, &p.Description, &p.Price, &p.OriginalPrice, &p.ImageURL, &p.Category, &p.StoreID, &p.Rating, &p.Reviews, &p.Stock, &specsJSON, &categoriesJSON)
 	if err != nil {
 		return nil, err
 	}
 	if err := json.Unmarshal([]byte(specsJSON), &p.Specs); err != nil {
 		return nil, err
+	}
+	// Load images
+	imgs, _ := r.getImagesForProduct(p.ID)
+	p.Images = imgs
+	if p.ImageURL == "" && len(imgs) > 0 {
+		p.ImageURL = imgs[0]
+	}
+	p.Categories = []string{}
+	if categoriesJSON.Valid && categoriesJSON.String != "" {
+		_ = json.Unmarshal([]byte(categoriesJSON.String), &p.Categories)
 	}
 	return &p, nil
 }
@@ -60,21 +122,74 @@ func (r *ProductRepo) GetByID(id string) (*models.Product, error) {
 // Create inserts a new product.
 func (r *ProductRepo) Create(p *models.Product) error {
 	specsJSON, _ := json.Marshal(p.Specs)
-	_, err := r.db.Exec(`INSERT INTO products (id, name, description, price, original_price, image_url, category, store_id, rating, reviews, stock, specs) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
-		p.ID, p.Name, p.Description, p.Price, p.OriginalPrice, p.ImageURL, p.Category, p.StoreID, p.Rating, p.Reviews, p.Stock, string(specsJSON))
-	return err
+	categoriesJSON, _ := json.Marshal(p.Categories)
+	tx, err := r.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err != nil {
+			tx.Rollback()
+		} else {
+			tx.Commit()
+		}
+	}()
+
+	// Use primary image_url if provided; otherwise leave null and rely on product_images.
+	if _, err = tx.Exec(`INSERT INTO products (id, name, description, price, original_price, image_url, category, store_id, rating, reviews, stock, specs, categories) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		p.ID, p.Name, p.Description, p.Price, p.OriginalPrice, p.ImageURL, p.Category, p.StoreID, p.Rating, p.Reviews, p.Stock, string(specsJSON), string(categoriesJSON)); err != nil {
+		return err
+	}
+
+	// Insert images if any
+	for i, url := range p.Images {
+		if _, err = tx.Exec(`INSERT INTO product_images (product_id, image_url, ord) VALUES (?,?,?)`, p.ID, url, i); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // Update modifies an existing product.
 func (r *ProductRepo) Update(id string, p *models.Product) error {
 	specsJSON, _ := json.Marshal(p.Specs)
-	_, err := r.db.Exec(`UPDATE products SET name=?, description=?, price=?, original_price=?, image_url=?, category=?, store_id=?, rating=?, reviews=?, stock=?, specs=? WHERE id=?`,
-		p.Name, p.Description, p.Price, p.OriginalPrice, p.ImageURL, p.Category, p.StoreID, p.Rating, p.Reviews, p.Stock, string(specsJSON), id)
-	return err
+	categoriesJSON, _ := json.Marshal(p.Categories)
+	tx, err := r.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err != nil {
+			tx.Rollback()
+		} else {
+			tx.Commit()
+		}
+	}()
+
+	if _, err = tx.Exec(`UPDATE products SET name=?, description=?, price=?, original_price=?, image_url=?, category=?, store_id=?, rating=?, reviews=?, stock=?, specs=?, categories=? WHERE id=?`,
+		p.Name, p.Description, p.Price, p.OriginalPrice, p.ImageURL, p.Category, p.StoreID, p.Rating, p.Reviews, p.Stock, string(specsJSON), string(categoriesJSON), id); err != nil {
+		return err
+	}
+
+	// Replace images: delete existing and insert provided list
+	if _, err = tx.Exec(`DELETE FROM product_images WHERE product_id=?`, id); err != nil {
+		return err
+	}
+	for i, url := range p.Images {
+		if _, err = tx.Exec(`INSERT INTO product_images (product_id, image_url, ord) VALUES (?,?,?)`, id, url, i); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // Delete removes a product.
 func (r *ProductRepo) Delete(id string) error {
+	// Delete product and its images (FK with ON DELETE CASCADE handles images,
+	// but ensure deletion order).
+	if _, err := r.db.Exec(`DELETE FROM product_images WHERE product_id=?`, id); err != nil {
+		return err
+	}
 	_, err := r.db.Exec(`DELETE FROM products WHERE id=?`, id)
 	return err
 }
@@ -165,6 +280,11 @@ func (r *ProductRepo) GetAllFiltered(f models.ProductFilter) (*models.ProductLis
 		if err := json.Unmarshal([]byte(specsJSON), &p.Specs); err != nil {
 			return nil, fmt.Errorf("unmarshal specs: %w", err)
 		}
+		imgs, _ := r.getImagesForProduct(p.ID)
+		p.Images = imgs
+		if p.ImageURL == "" && len(imgs) > 0 {
+			p.ImageURL = imgs[0]
+		}
 		products = append(products, p)
 	}
 	if products == nil {
@@ -180,4 +300,25 @@ func (r *ProductRepo) GetAllFiltered(f models.ProductFilter) (*models.ProductLis
 		PageSize:   f.PageSize,
 		TotalPages: totalPages,
 	}, nil
+}
+
+// getImagesForProduct returns ordered image URLs for a product.
+func (r *ProductRepo) getImagesForProduct(productID string) ([]string, error) {
+	rows, err := r.db.Query(`SELECT image_url FROM product_images WHERE product_id=? ORDER BY ord ASC`, productID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var imgs []string
+	for rows.Next() {
+		var url string
+		if err := rows.Scan(&url); err != nil {
+			return nil, err
+		}
+		imgs = append(imgs, url)
+	}
+	if imgs == nil {
+		imgs = []string{}
+	}
+	return imgs, nil
 }

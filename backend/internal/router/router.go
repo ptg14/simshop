@@ -14,6 +14,17 @@ func New(productRepo *handler.ProductRepo, uploadCfg *handler.UploadConfig) *mux
 	// Global middleware
 	r.Use(middleware.CORSMiddleware)
 
+	// Ensure preflight requests for API paths always return CORS headers.
+	// Some clients issue OPTIONS preflight to endpoints that are method-restricted;
+	// registering an explicit OPTIONS handler for the /api/ prefix guarantees
+	// we respond with the proper CORS headers.
+	r.PathPrefix("/api/").Methods(http.MethodOptions).HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type,Authorization")
+		w.WriteHeader(http.StatusOK)
+	})
+
 	// Health
 	r.HandleFunc("/health", handler.HealthHandler).Methods(http.MethodGet)
 
@@ -23,6 +34,11 @@ func New(productRepo *handler.ProductRepo, uploadCfg *handler.UploadConfig) *mux
 	r.HandleFunc("/api/products", handler.CreateProductHandler(productRepo)).Methods(http.MethodPost)
 	r.HandleFunc("/api/products/{id}", handler.UpdateProductHandler(productRepo)).Methods(http.MethodPut)
 	r.HandleFunc("/api/products/{id}", handler.DeleteProductHandler(productRepo)).Methods(http.MethodDelete)
+
+	// Categories
+	r.HandleFunc("/api/categories", handler.GetCategoriesHandler(productRepo)).Methods(http.MethodGet)
+	r.HandleFunc("/api/categories", handler.CreateCategoryHandler(productRepo)).Methods(http.MethodPost)
+	r.HandleFunc("/api/categories/{name}", handler.DeleteCategoryHandler(productRepo)).Methods(http.MethodDelete)
 
 	// Upload route
 	r.HandleFunc("/api/upload", handler.UploadImageHandler(uploadCfg)).Methods(http.MethodPost)

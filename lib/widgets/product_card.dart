@@ -24,7 +24,7 @@ class ProductCard extends StatelessWidget {
             boxShadow: [
               BoxShadow(
                 // Use withOpacity to set the alpha channel correctly.
-                color: Colors.black.withOpacity(0.1),
+                color: Colors.black.withValues(alpha: 0.1),
                 blurRadius: 4,
                 offset: const Offset(0, 2),
               ),
@@ -37,7 +37,7 @@ class ProductCard extends StatelessWidget {
               Stack(
                 children: [
                   Container(
-                    height: 160,
+                    height: 120,
                     width: double.infinity,
                     decoration: BoxDecoration(
                       color: Colors.grey[200],
@@ -149,24 +149,7 @@ class ProductCard extends StatelessWidget {
 
                       const Spacer(),
 
-                      /// Rating
-                      Row(
-                        children: [
-                          const Icon(Icons.star, size: 14, color: Colors.amber),
-                          const SizedBox(width: 4),
-                          Text(
-                            '${product.rating}',
-                            style: const TextStyle(
-                                fontSize: 12, fontWeight: FontWeight.w500),
-                          ),
-                          Text(
-                            ' (${product.reviews ?? 0})',
-                            style: TextStyle(
-                                fontSize: 11, color: Colors.grey[600]),
-                          ),
-                        ],
-                      ),
-
+                      // Ratings removed (handled in overview)
                       const SizedBox(height: 6),
 
                       /// Price

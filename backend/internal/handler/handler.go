@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
+	"mime/multipart"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -47,6 +49,59 @@ func GetProductsHandler(repo *ProductRepo) http.HandlerFunc {
 	}
 }
 
+// GetCategoriesHandler returns persisted categories.
+func GetCategoriesHandler(repo *ProductRepo) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		cats, err := repo.GetCategories()
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "Failed to fetch categories")
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{"categories": cats})
+	}
+}
+
+// CreateCategoryHandler persists a new category.
+func CreateCategoryHandler(repo *ProductRepo) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Name string `json:"name"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			writeError(w, http.StatusBadRequest, "Invalid request body")
+			return
+		}
+		name := strings.TrimSpace(body.Name)
+		if name == "" {
+			writeError(w, http.StatusBadRequest, "name is required")
+			return
+		}
+		if err := repo.AddCategory(name); err != nil {
+			writeError(w, http.StatusInternalServerError, "Failed to add category")
+			return
+		}
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(map[string]string{"name": name})
+	}
+}
+
+// DeleteCategoryHandler deletes a persisted category.
+func DeleteCategoryHandler(repo *ProductRepo) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		name := mux.Vars(r)["name"]
+		if name == "" {
+			writeError(w, http.StatusBadRequest, "name required")
+			return
+		}
+		if err := repo.DeleteCategory(name); err != nil {
+			writeError(w, http.StatusInternalServerError, "Failed to delete category")
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
 // GetProductHandler returns a single product by ID.
 func GetProductHandler(repo *ProductRepo) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -80,6 +135,11 @@ func CreateProductHandler(repo *ProductRepo) http.HandlerFunc {
 			p.ID = uuid.New().String()
 		}
 
+		// Ensure primary image_url is set from images if missing
+		if p.ImageURL == "" && len(p.Images) > 0 {
+			p.ImageURL = p.Images[0]
+		}
+
 		if err := repo.Create(&p); err != nil {
 			writeError(w, http.StatusInternalServerError, "Failed to create product")
 			return
@@ -103,6 +163,11 @@ func UpdateProductHandler(repo *ProductRepo) http.HandlerFunc {
 		if err := validateProduct(&p); err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
+		}
+
+		// Ensure primary image_url is set from images if missing
+		if p.ImageURL == "" && len(p.Images) > 0 {
+			p.ImageURL = p.Images[0]
 		}
 
 		if err := repo.Update(id, &p); err != nil {
@@ -141,19 +206,34 @@ func validateProduct(p *models.Product) error {
 	p.Name = strings.TrimSpace(p.Name)
 	p.Description = strings.TrimSpace(p.Description)
 	p.ImageURL = strings.TrimSpace(p.ImageURL)
+	// Trim image URLs in Images slice
+	for i := range p.Images {
+		p.Images[i] = strings.TrimSpace(p.Images[i])
+	}
 	p.Category = strings.TrimSpace(p.Category)
 
 	if p.Name == "" {
 		errs = append(errs, "name is required")
 	}
-	if p.Description == "" {
-		errs = append(errs, "description is required")
+	// Description is optional now; do not require it.
+	// Require at least one image either in ImageURL or Images.
+	if p.ImageURL == "" && len(p.Images) == 0 {
+		errs = append(errs, "at least one image is required (image_url or images)")
 	}
-	if p.ImageURL == "" {
-		errs = append(errs, "image_url is required")
-	}
-	if p.Category == "" {
-		errs = append(errs, "category is required")
+	// Require at least one category in the categories list.
+	if len(p.Categories) == 0 {
+		// fallback to single category field for older clients
+		if p.Category == "" {
+			errs = append(errs, "category is required")
+		} else {
+			// populate categories from single category
+			p.Categories = []string{p.Category}
+		}
+	} else {
+		// ensure primary category string is populated for backward compatibility
+		if p.Category == "" && len(p.Categories) > 0 {
+			p.Category = p.Categories[0]
+		}
 	}
 	if p.Price <= 0 {
 		errs = append(errs, "price must be greater than 0")
@@ -221,66 +301,109 @@ func UploadImageHandler(cfg *UploadConfig) http.HandlerFunc {
 			return
 		}
 
-		file, header, err := r.FormFile("image")
-		if err != nil {
-			writeError(w, http.StatusBadRequest, "Missing 'image' field in form data")
-			return
-		}
-		defer file.Close()
+		// Support multiple file fields: 'images' (preferred) or repeated 'image'.
+		var uploadedURLs []string
+		var filenames []string
 
-		// Validate file type by extension.
-		ext := strings.ToLower(filepath.Ext(header.Filename))
-		allowedExts := map[string]bool{
-			".jpg": true, ".jpeg": true, ".png": true, ".gif": true, ".webp": true,
-		}
-		if !allowedExts[ext] {
-			writeError(w, http.StatusBadRequest, "Unsupported file type. Allowed: jpg, jpeg, png, gif, webp")
-			return
+		// Helper to process a file header.
+		saveFile := func(header *multipart.FileHeader) (string, string, error) {
+			f, err := header.Open()
+			if err != nil {
+				return "", "", err
+			}
+			defer f.Close()
+			ext := strings.ToLower(filepath.Ext(header.Filename))
+			// If the uploaded file has no extension (common with browser blob uploads),
+			// try to infer it from the Content-Type header. Fall back to .jpg.
+			if ext == "" {
+				if ct := header.Header.Get("Content-Type"); ct != "" {
+					switch strings.ToLower(ct) {
+					case "image/jpeg", "image/jpg":
+						ext = ".jpg"
+					case "image/png":
+						ext = ".png"
+					case "image/gif":
+						ext = ".gif"
+					case "image/webp":
+						ext = ".webp"
+					}
+				}
+			}
+			if ext == "" {
+				ext = ".jpg"
+			}
+			allowedExts := map[string]bool{".jpg": true, ".jpeg": true, ".png": true, ".gif": true, ".webp": true}
+			if !allowedExts[ext] {
+				return "", "", fmt.Errorf("unsupported file type")
+			}
+			filename := fmt.Sprintf("%s%s", uuid.New().String(), ext)
+			if err := os.MkdirAll(cfg.UploadDir, 0755); err != nil {
+				return "", "", err
+			}
+			dst, err := os.Create(filepath.Join(cfg.UploadDir, filename))
+			if err != nil {
+				return "", "", err
+			}
+			defer dst.Close()
+			if _, err := io.Copy(dst, f); err != nil {
+				return "", "", err
+			}
+			scheme := r.Header.Get("X-Forwarded-Proto")
+			if scheme == "" {
+				if r.TLS != nil {
+					scheme = "https"
+				} else {
+					scheme = "http"
+				}
+			}
+			host := r.Header.Get("X-Forwarded-Host")
+			if host == "" {
+				host = r.Host
+			}
+			imageURL := fmt.Sprintf("%s://%s/uploads/%s", scheme, host, filename)
+			return imageURL, filename, nil
 		}
 
-		// Generate unique filename.
-		filename := fmt.Sprintf("%s%s", uuid.New().String(), ext)
-
-		// Ensure upload directory exists.
-		if err := os.MkdirAll(cfg.UploadDir, 0755); err != nil {
-			writeError(w, http.StatusInternalServerError, "Failed to create upload directory")
-			return
-		}
-
-		// Write file to disk.
-		dst, err := os.Create(filepath.Join(cfg.UploadDir, filename))
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "Failed to save file")
-			return
-		}
-		defer dst.Close()
-
-		if _, err := io.Copy(dst, file); err != nil {
-			writeError(w, http.StatusInternalServerError, "Failed to write file")
-			return
-		}
-
-		// Build the accessible URL for the uploaded image.
-		// Use X-Forwarded-Proto / Host headers to build a proper URL when behind a proxy.
-		scheme := r.Header.Get("X-Forwarded-Proto")
-		if scheme == "" {
-			if r.TLS != nil {
-				scheme = "https"
-			} else {
-				scheme = "http"
+		// Check 'images' first
+		if r.MultipartForm != nil {
+			if headers, ok := r.MultipartForm.File["images"]; ok && len(headers) > 0 {
+				log.Printf("upload: received %d files in 'images' field", len(headers))
+				for _, h := range headers {
+					url, fname, err := saveFile(h)
+					if err != nil {
+						log.Printf("upload: saveFile error: %v", err)
+						writeError(w, http.StatusBadRequest, "Unsupported file type or failed to save")
+						return
+					}
+					log.Printf("upload: saved file %s -> %s", fname, url)
+					uploadedURLs = append(uploadedURLs, url)
+					filenames = append(filenames, fname)
+				}
+			} else if headers, ok := r.MultipartForm.File["image"]; ok && len(headers) > 0 {
+				log.Printf("upload: received %d files in 'image' field", len(headers))
+				for _, h := range headers {
+					url, fname, err := saveFile(h)
+					if err != nil {
+						log.Printf("upload: saveFile error: %v", err)
+						writeError(w, http.StatusBadRequest, "Unsupported file type or failed to save")
+						return
+					}
+					log.Printf("upload: saved file %s -> %s", fname, url)
+					uploadedURLs = append(uploadedURLs, url)
+					filenames = append(filenames, fname)
+				}
 			}
 		}
-		host := r.Header.Get("X-Forwarded-Host")
-		if host == "" {
-			host = r.Host
-		}
-		imageURL := fmt.Sprintf("%s://%s/uploads/%s", scheme, host, filename)
 
+		if len(uploadedURLs) == 0 {
+			writeError(w, http.StatusBadRequest, "No image files provided")
+			return
+		}
+
+		// Return both array and first URL for backward compatibility.
+		resp := map[string]any{"image_urls": uploadedURLs, "filenames": filenames, "image_url": uploadedURLs[0]}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]string{
-			"image_url": imageURL,
-			"filename":  filename,
-		})
+		json.NewEncoder(w).Encode(resp)
 	}
 }
 

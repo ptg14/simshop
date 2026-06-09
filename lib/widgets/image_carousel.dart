@@ -73,8 +73,7 @@ class _ImageCarouselState extends State<ImageCarousel> {
   }
 
   @override
-  Widget build(BuildContext context) {
-    return SizedBox(
+  Widget build(BuildContext context) => SizedBox(
       height: widget.height,
       child: Stack(
         alignment: Alignment.bottomCenter,
@@ -133,5 +132,4 @@ class _ImageCarouselState extends State<ImageCarousel> {
         ],
       ),
     );
-  }
 }

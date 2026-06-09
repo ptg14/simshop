@@ -64,7 +64,7 @@ class _AdminLoginScreenState extends State<AdminLoginScreen> {
 
                       /// Title
                       const Text(
-                        'TTSHOP Admin',
+                        'simshop Admin',
                         style: TextStyle(
                           fontSize: 28,
                           fontWeight: FontWeight.bold,
@@ -167,6 +167,7 @@ class _AdminLoginScreenState extends State<AdminLoginScreen> {
                                   if (success && mounted) {
                                     // Initialize admin data (products, categories, stores)
                                     await viewModel.initialize();
+                                    if (!context.mounted) return;
                                     Navigator.pushReplacementNamed(
                                       context,
                                       '/admin',
@@ -219,18 +220,18 @@ class _AdminLoginScreenState extends State<AdminLoginScreen> {
                           border: Border.all(color: Colors.blue[200]!),
                           borderRadius: BorderRadius.circular(8),
                         ),
-                        child: Column(
+                        child: const Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            const Text(
+                            Text(
                               'Demo Credentials:',
                               style: TextStyle(
                                 fontWeight: FontWeight.bold,
                                 fontSize: 12,
                               ),
                             ),
-                            const SizedBox(height: 4),
-                            const Text(
+                            SizedBox(height: 4),
+                            Text(
                               'Username: admin\nPassword: admin123',
                               style: TextStyle(
                                 fontSize: 12,

@@ -1,4 +1,3 @@
-import 'dart:io';
 import 'package:flutter/foundation.dart';
 import '../models/product.dart';
 import '../models/store.dart';
@@ -6,6 +5,10 @@ import '../services/product_service.dart';
 
 /// ViewModel for admin panel.
 class AdminViewModel extends ChangeNotifier {
+  /// Constructor allowing optional injection of a product service.
+  AdminViewModel({IProductService? productService})
+      : _productService = productService ?? RealProductService();
+
   // Authentication
   bool _isLoggedIn = false;
   final String _adminUsername = 'admin';
@@ -37,10 +40,6 @@ class AdminViewModel extends ChangeNotifier {
   List<Store> get stores => _stores;
   Store? get selectedStore => _selectedStore;
 
-  /// Constructor allowing optional injection of a product service.
-  AdminViewModel({IProductService? productService})
-      : _productService = productService ?? RealProductService();
-
   /// Initialize admin view model with products and stores.
   Future<void> initialize() async {
     // Prevent re‑initialisation which would duplicate store entries.
@@ -54,7 +53,7 @@ class AdminViewModel extends ChangeNotifier {
       final categories = await _productService.getCategories();
       _categories = ['All', ...categories];
     } catch (_) {
-      _categories = ['All', 'PC Gaming', 'PC Design', 'PC Accessories'];
+      _categories = ['All', 'Design', 'Accessories'];
     }
 
     // Load products from the backend.
@@ -116,8 +115,8 @@ class AdminViewModel extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Upload an image file and return the URL.
-  Future<String?> uploadImage(File file) async {
+  /// Upload an image (File, XFile, or bytes) and return the URL.
+  Future<String?> uploadImage(dynamic file) async {
     try {
       final url = await _productService.uploadImage(file);
       return url;
@@ -127,24 +126,48 @@ class AdminViewModel extends ChangeNotifier {
     }
   }
 
+  /// Upload multiple images and return their URLs.
+  Future<List<String>?> uploadImages(List<dynamic> files) async {
+    try {
+      final urls =
+          await (_productService as RealProductService).uploadImages(files);
+      return urls;
+    } catch (e) {
+      _error = 'Lỗi tải nhiều ảnh lên: $e';
+      return null;
+    }
+  }
+
   /// Add a new product.
-  Future<void> addProduct(Product product, {File? imageFile}) async {
+  Future<void> addProduct(Product product, {dynamic imageFile}) async {
     _isLoading = true;
     _error = null;
     notifyListeners();
 
     try {
       String? imageUrl = product.imageUrl;
+      List<String> images = product.images;
 
-      // Upload image first if provided.
+      // Upload images first if provided. Accept either single file or a list.
       if (imageFile != null) {
-        imageUrl = await _productService.uploadImage(imageFile);
+        if (imageFile is List) {
+          final urls = await uploadImages(List<dynamic>.from(imageFile));
+          if (urls != null) images = urls;
+          if (urls != null && urls.isNotEmpty) imageUrl = urls.first;
+        } else {
+          final url = await _productService.uploadImage(imageFile);
+          if (url != null) {
+            images = [url];
+            imageUrl = url;
+          }
+        }
       }
 
       // Associate product with the currently selected store.
       final productWithStore = product.copyWith(
         storeId: _selectedStore?.id,
         imageUrl: imageUrl,
+        images: images,
       );
       // Persist to backend and get the created product with real ID.
       final created = await _productService.createProduct(productWithStore);
@@ -161,20 +184,34 @@ class AdminViewModel extends ChangeNotifier {
 
   /// Update a product.
   Future<void> updateProduct(String id, Product product,
-      {File? imageFile}) async {
+      {dynamic imageFile}) async {
     _isLoading = true;
     _error = null;
     notifyListeners();
 
     try {
       String? imageUrl = product.imageUrl;
+      List<String> images = product.images;
 
-      // Upload new image if provided.
+      // Upload new images if provided.
       if (imageFile != null) {
-        imageUrl = await _productService.uploadImage(imageFile);
+        if (imageFile is List) {
+          final urls = await uploadImages(List<dynamic>.from(imageFile));
+          if (urls != null) {
+            images = urls;
+            if (urls.isNotEmpty) imageUrl = urls.first;
+          }
+        } else {
+          final url = await _productService.uploadImage(imageFile);
+          if (url != null) {
+            images = [url];
+            imageUrl = url;
+          }
+        }
       }
 
-      final updatedProduct = product.copyWith(imageUrl: imageUrl);
+      final updatedProduct =
+          product.copyWith(imageUrl: imageUrl, images: images);
 
       // Persist changes to backend and get the updated product.
       final updated = await _productService.updateProduct(id, updatedProduct);
@@ -210,6 +247,16 @@ class AdminViewModel extends ChangeNotifier {
 
   /// Add a new category.
   Future<void> addCategory(String category) async {
+    try {
+      await (_productService as RealProductService).createCategory(category);
+      // Refresh categories from backend to ensure persistence and ordering.
+      final cats = await _productService.getCategories();
+      _categories = ['All', ...cats];
+      notifyListeners();
+      return;
+    } catch (_) {
+      // If backend fails, still fall back to local update.
+    }
     if (!_categories.contains(category)) {
       _categories.add(category);
       notifyListeners();
@@ -218,10 +265,14 @@ class AdminViewModel extends ChangeNotifier {
 
   /// Delete a category.
   Future<void> deleteCategory(String category) async {
-    if (category != 'All') {
-      _categories.remove(category);
-      notifyListeners();
+    if (category == 'All') return;
+    try {
+      await (_productService as RealProductService).deleteCategory(category);
+    } catch (_) {
+      // ignore backend delete errors for now
     }
+    _categories.remove(category);
+    notifyListeners();
   }
 
   /// Get dashboard statistics.

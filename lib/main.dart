@@ -1,14 +1,30 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'viewmodels/home_viewmodel.dart';
 import 'viewmodels/admin_viewmodel.dart';
-import 'views/home_screen.dart';
-import 'views/product_detail_screen.dart';
+import 'viewmodels/home_viewmodel.dart';
 import 'views/admin/admin_dashboard.dart';
 import 'views/admin/admin_login.dart';
+import 'views/home_screen.dart';
+import 'views/product_detail_screen.dart';
+
+final ValueNotifier<String?> _globalError = ValueNotifier(null);
 
 void main() {
-  runApp(const MyApp());
+  // Surface uncaught Flutter errors and async errors on-screen for debugging
+  FlutterError.onError = (details) {
+    FlutterError.dumpErrorToConsole(details);
+    _globalError.value = '${details.exceptionAsString()}\n${details.stack ?? ''}';
+  };
+
+  runZonedGuarded(() {
+    runApp(const GuardedApp());
+  }, (error, stack) {
+    // Catch all other errors
+    _globalError.value = '$error\n$stack';
+    // Also print to console
+    Zone.current.handleUncaughtError(error, stack);
+  });
 }
 
 class MyApp extends StatelessWidget {
@@ -45,5 +61,29 @@ class MyApp extends StatelessWidget {
             '/admin': (context) => const AdminDashboard(),
           },
         ),
+      );
+}
+
+class GuardedApp extends StatelessWidget {
+  const GuardedApp({super.key});
+
+  @override
+  Widget build(BuildContext context) => ValueListenableBuilder<String?>(
+        valueListenable: _globalError,
+        builder: (context, error, _) {
+          if (error != null) {
+            return MaterialApp(
+              home: Scaffold(
+                appBar: AppBar(title: const Text('Runtime Error')),
+                body: SingleChildScrollView(
+                  padding: const EdgeInsets.all(16),
+                  child: SelectableText(error,
+                      style: const TextStyle(color: Colors.red)),
+                ),
+              ),
+            );
+          }
+          return const MyApp();
+        },
       );
 }

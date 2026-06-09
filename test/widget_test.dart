@@ -5,10 +5,9 @@
 // gestures. You can also use WidgetTester to find child widgets in the widget
 // tree, read text, and verify that the values of widget properties are correct.
 
-import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:ttshop/main.dart';
+import 'package:simshop/main.dart';
 
 void main() {
   testWidgets('Home screen loads with title', (WidgetTester tester) async {
@@ -18,6 +17,6 @@ void main() {
     await tester.pumpAndSettle();
 
     // Verify that the HomeScreen AppBar title is present.
-    expect(find.text('TTSHOP - Quảng Cáo'), findsOneWidget);
+    expect(find.text('simshop - Quảng Cáo'), findsOneWidget);
   });
 }

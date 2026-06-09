@@ -31,7 +31,7 @@ func Load() *Config {
 
 	dsn := os.Getenv("DATABASE_URL")
 	if dsn == "" {
-		dsn = ":memory:"
+		dsn = "./simshop.db"
 	}
 
 	maxConns := 10

@@ -1,12 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../models/product.dart';
 import '../viewmodels/home_viewmodel.dart';
-import '../widgets/product_card.dart';
-import '../widgets/search_bar.dart';
 import '../widgets/category_selector.dart';
 import '../widgets/image_carousel.dart';
-import '../models/product.dart';
+import '../widgets/product_card.dart';
+import '../widgets/search_bar.dart';
 
 /// Home screen displaying products and promotions.
 class HomeScreen extends StatefulWidget {
@@ -33,7 +33,7 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   Widget build(BuildContext context) => Scaffold(
         appBar: AppBar(
-          title: const Text('TTSHOP - Quảng Cáo'),
+          title: const Text('simshop - Quảng Cáo'),
           actions: [
             IconButton(
               icon: const Icon(Icons.admin_panel_settings),
@@ -65,7 +65,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     ),
                     // Promotional image carousel (replaces special promo banner)
                     if (viewModel.getPromotionalProducts().isNotEmpty)
-                      ImageCarousel(
+                      const ImageCarousel(
                         // Example placeholder images; replace with real URLs as needed
                         imageUrls: [
                           'https://picsum.photos/800/300?random=1',
@@ -107,26 +107,49 @@ class _HomeScreenState extends State<HomeScreen> {
                         ),
                       )
                     else
-                      GridView.builder(
-                        shrinkWrap: true,
-                        physics: const NeverScrollableScrollPhysics(),
-                        padding: const EdgeInsets.symmetric(horizontal: 12),
-                        gridDelegate:
-                            const SliverGridDelegateWithFixedCrossAxisCount(
-                          crossAxisCount: 2,
-                          childAspectRatio: 0.6,
-                          crossAxisSpacing: 12,
-                          mainAxisSpacing: 12,
-                        ),
-                        itemCount: viewModel.products.length,
-                        itemBuilder: (context, index) {
-                          final product = viewModel.products[index];
-                          return ProductCard(
-                            product: product,
-                            onTap: () => _navigateToProductDetail(product),
-                          );
-                        },
-                      ),
+                      LayoutBuilder(builder: (context, constraints) {
+                        final width = constraints.maxWidth;
+                        // ignore: unused_local_variable
+                        int crossAxisCount = 2;
+                        // ignore: unused_local_variable
+                        double aspect = 0.58;
+                        if (width > 1200) {
+                          crossAxisCount = 4;
+                          aspect = 0.62;
+                        } else if (width > 800) {
+                          crossAxisCount = 3;
+                          aspect = 0.6;
+                        }
+                        // Compute columns dynamically based on a target item width
+                        const double targetItemWidth = 200; // px
+                        final int dynamicCount = (width / targetItemWidth).floor();
+                        final int finalCount = dynamicCount.clamp(2, 6);
+                        final double itemWidth = width / finalCount;
+                        // Use a moderate height so cards don't become too tall.
+                        const double itemHeight = 260;
+                        final double finalAspect = itemWidth / itemHeight;
+
+                        return GridView.builder(
+                          shrinkWrap: true,
+                          physics: const NeverScrollableScrollPhysics(),
+                          padding: const EdgeInsets.symmetric(horizontal: 12),
+                          gridDelegate:
+                              SliverGridDelegateWithFixedCrossAxisCount(
+                            crossAxisCount: finalCount,
+                            childAspectRatio: finalAspect,
+                            crossAxisSpacing: 12,
+                            mainAxisSpacing: 12,
+                          ),
+                          itemCount: viewModel.products.length,
+                          itemBuilder: (context, index) {
+                            final product = viewModel.products[index];
+                            return ProductCard(
+                              product: product,
+                              onTap: () => _navigateToProductDetail(product),
+                            );
+                          },
+                        );
+                      }),
                   ],
                 ),
               ),

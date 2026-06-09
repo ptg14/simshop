@@ -1,4 +1,4 @@
-# TTSHOP - Flutter E-Commerce Mobile App
+# simshop - Flutter E-Commerce Mobile App
 
 A modern e-commerce mobile application built with Flutter, featuring PC gaming products and accessories. This app demonstrates clean architecture principles using the MVVM (Model-View-ViewModel) pattern.
 
@@ -153,7 +153,7 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 
 ## Support
 
-For support, email support@ttshop.com or open an issue in the repository.
+For support, email support@simshop.com or open an issue in the repository.
 
 ---
 

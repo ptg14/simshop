@@ -33,7 +33,7 @@ class AdminCategoriesScreen extends StatelessWidget {
                 child: ListTile(
                   leading: const Icon(Icons.category, color: Colors.blue),
                   title: Text(category),
-                  subtitle: Text('Danh mục sản phẩm'),
+                  subtitle: const Text('Danh mục sản phẩm'),
                   trailing: category != 'All'
                       ? IconButton(
                           icon: const Icon(Icons.delete, color: Colors.red),
@@ -58,8 +58,7 @@ class AdminCategoriesScreen extends StatelessWidget {
           controller: controller,
           decoration: const InputDecoration(
             labelText: 'Tên danh mục',
-            hintText: 'VD: PC Gaming',
-          ),
+            hintText: 'Nhập tên danh mục mới',),
         ),
         actions: [
           TextButton(

@@ -141,7 +141,7 @@ class _AdminSettingsScreenState extends State<AdminSettingsScreen> {
                         width: 200,
                         child: TextField(
                           decoration: InputDecoration(
-                            hintText: 'TTSHOP',
+                            hintText: 'simshop',
                             border: OutlineInputBorder(
                               borderRadius: BorderRadius.circular(8),
                             ),
@@ -161,7 +161,7 @@ class _AdminSettingsScreenState extends State<AdminSettingsScreen> {
                         width: 200,
                         child: TextField(
                           decoration: InputDecoration(
-                            hintText: 'contact@ttshop.com',
+                            hintText: 'contact@simshop.com',
                             border: OutlineInputBorder(
                               borderRadius: BorderRadius.circular(8),
                             ),

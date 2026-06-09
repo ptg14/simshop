@@ -1,6 +1,6 @@
 {
-    "name": "ttshop",
-    "short_name": "ttshop",
+    "name": "simshop",
+    "short_name": "simshop",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#0175C2",

@@ -45,19 +45,58 @@ func runMigrations(db *sql.DB) error {
     CREATE TABLE IF NOT EXISTS products (
         id TEXT PRIMARY KEY,
         name TEXT NOT NULL,
-        description TEXT NOT NULL,
+		description TEXT NOT NULL,
         price REAL NOT NULL,
         original_price REAL,
-        image_url TEXT NOT NULL,
+		image_url TEXT,
         category TEXT NOT NULL,
         store_id TEXT,
         rating REAL NOT NULL,
         reviews INTEGER,
         stock INTEGER,
-        specs TEXT NOT NULL DEFAULT '[]'
+		specs TEXT NOT NULL DEFAULT '[]'
     );`
 	_, err := db.Exec(schema)
-	return err
+	if err != nil {
+		return err
+	}
+
+	// Table to store multiple images per product. 'ord' preserves ordering.
+	images := `
+	CREATE TABLE IF NOT EXISTS product_images (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		product_id TEXT NOT NULL,
+		image_url TEXT NOT NULL,
+		ord INTEGER NOT NULL DEFAULT 0,
+		FOREIGN KEY(product_id) REFERENCES products(id) ON DELETE CASCADE
+	);`
+	_, err = db.Exec(images)
+	if err != nil {
+		return err
+	}
+
+	// Categories table to persist available product categories.
+	cats := `
+	CREATE TABLE IF NOT EXISTS categories (
+		name TEXT PRIMARY KEY
+	);`
+	_, err = db.Exec(cats)
+	if err != nil {
+		return err
+	}
+
+	// Seed categories from existing products to preserve historical data.
+	if _, err := db.Exec(`INSERT OR IGNORE INTO categories (name) SELECT DISTINCT category FROM products WHERE category IS NOT NULL AND category <> ''`); err != nil {
+		return err
+	}
+
+	// Ensure products table has a 'categories' TEXT column to store JSON array of categories.
+	// SQLite ALTER TABLE ADD COLUMN will error if column exists; ignore error.
+	if _, err := db.Exec(`ALTER TABLE products ADD COLUMN categories TEXT`); err != nil {
+		// ignore error; column may already exist
+	}
+
+	return nil
 }
 
 // Close safely closes the underlying DB.

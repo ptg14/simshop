@@ -5,13 +5,29 @@
 package main
 
 import (
-    "log"
+	"context"
+	"log"
+	"os"
+	"os/signal"
+	"syscall"
 
-    "github.com/ptg14/simshop/backend/internal/server"
+	"github.com/ptg14/simshop/backend/internal/server"
 )
 
 func main() {
-    if err := server.Start(); err != nil {
-        log.Fatalf("server stopped with error: %v", err)
-    }
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Listen for interrupt/terminate signals and cancel context when received.
+	sigs := make(chan os.Signal, 1)
+	signal.Notify(sigs, os.Interrupt, syscall.SIGTERM)
+	go func() {
+		<-sigs
+		log.Println("signal received, shutting down...")
+		cancel()
+	}()
+
+	if err := server.Start(ctx); err != nil {
+		log.Fatalf("server stopped with error: %v", err)
+	}
 }

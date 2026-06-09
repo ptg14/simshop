@@ -1,9 +1,11 @@
 import 'dart:io';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
-import '../../viewmodels/admin_viewmodel.dart';
 import '../../models/product.dart';
+import '../../viewmodels/admin_viewmodel.dart';
+import '../../viewmodels/home_viewmodel.dart';
 
 /// Admin products management screen.
 class AdminProductsScreen extends StatefulWidget {
@@ -19,7 +21,6 @@ class _AdminProductsScreenState extends State<AdminProductsScreen> {
   @override
   void initState() {
     super.initState();
-    // Delay initialization until after the first frame to ensure context is ready.
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       if (!_initialized) {
         final vm = Provider.of<AdminViewModel>(context, listen: false);
@@ -48,43 +49,47 @@ class _AdminProductsScreenState extends State<AdminProductsScreen> {
           ),
           body: Stack(
             children: [
-              // Main content
-              viewModel.products.isEmpty
-                  ? Center(
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          const Icon(Icons.inventory_2_outlined,
-                              size: 80, color: Colors.grey),
-                          const SizedBox(height: 16),
-                          const Text('Chưa có sản phẩm nào'),
-                          const SizedBox(height: 24),
-                          ElevatedButton.icon(
-                            onPressed: () =>
-                                _showAddProductDialog(context, viewModel),
-                            icon: const Icon(Icons.add),
-                            label: const Text('Thêm sản phẩm đầu tiên'),
-                          ),
-                        ],
+              if (viewModel.products.isEmpty)
+                Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      const Icon(
+                        Icons.inventory_2_outlined,
+                        size: 80,
+                        color: Colors.grey,
                       ),
-                    )
-                  : viewModel.error != null
-                      ? Center(
-                          child: Text(
-                            viewModel.error!,
-                            style: const TextStyle(color: Colors.red),
-                          ),
-                        )
-                      : ListView.builder(
-                          padding: const EdgeInsets.all(16),
-                          itemCount: viewModel.products.length,
-                          itemBuilder: (context, index) {
-                            final product = viewModel.products[index];
-                            return _ProductListTile(
-                                product: product, viewModel: viewModel);
-                          },
-                        ),
-              // Loading overlay
+                      const SizedBox(height: 16),
+                      const Text('Chưa có sản phẩm nào'),
+                      const SizedBox(height: 24),
+                      ElevatedButton.icon(
+                        onPressed: () =>
+                            _showAddProductDialog(context, viewModel),
+                        icon: const Icon(Icons.add),
+                        label: const Text('Thêm sản phẩm đầu tiên'),
+                      ),
+                    ],
+                  ),
+                )
+              else if (viewModel.error != null)
+                Center(
+                  child: Text(
+                    viewModel.error!,
+                    style: const TextStyle(color: Colors.red),
+                  ),
+                )
+              else
+                ListView.builder(
+                  padding: const EdgeInsets.all(16),
+                  itemCount: viewModel.products.length,
+                  itemBuilder: (context, index) {
+                    final product = viewModel.products[index];
+                    return _ProductListTile(
+                      product: product,
+                      viewModel: viewModel,
+                    );
+                  },
+                ),
               if (viewModel.isLoading)
                 const Positioned.fill(
                   child: ColoredBox(
@@ -105,7 +110,6 @@ class _AdminProductsScreenState extends State<AdminProductsScreen> {
       builder: (context) => _AddProductDialog(viewModel: viewModel),
     );
   }
-  // NOTE: The edit dialog is now provided via a top‑level helper function.
 }
 
 // Edit product dialog similar to add dialog but pre‑filled and calls update.
@@ -131,11 +135,20 @@ void _showEditProductDialog(
 class _EditProductDialogState extends State<_EditProductDialog> {
   late TextEditingController _nameController;
   late TextEditingController _priceController;
-  late TextEditingController _originalPriceController;
   late TextEditingController _descriptionController;
   late TextEditingController _stockController;
+  // ignore: unused_field
   File? _imageFile;
-  String? _selectedCategory;
+  // ignore: unused_field
+  Uint8List? _imageFileBytes;
+  final List<XFile> _selectedImages = [];
+  List<Uint8List> _selectedImagesBytes = [];
+  List<String> _existingImages = [];
+  // ignore: unused_field
+  late String? _selectedCategory;
+  List<String> _selectedCategories = [];
+  final TextEditingController _newCategoryController = TextEditingController();
+  bool _addingCategory = false;
 
   @override
   void initState() {
@@ -143,34 +156,49 @@ class _EditProductDialogState extends State<_EditProductDialog> {
     _nameController = TextEditingController(text: widget.product.name);
     _priceController =
         TextEditingController(text: widget.product.price.toStringAsFixed(0));
-    _originalPriceController = TextEditingController(
-        text: widget.product.originalPrice?.toStringAsFixed(0) ?? '');
     _descriptionController =
         TextEditingController(text: widget.product.description);
     _stockController =
         TextEditingController(text: widget.product.stock?.toString() ?? '0');
     _selectedCategory = widget.product.category;
+    _selectedCategories = widget.product.categories.isNotEmpty
+        ? List<String>.from(widget.product.categories)
+        : (widget.product.category.isNotEmpty ? [widget.product.category] : []);
+    _existingImages = List<String>.from(widget.product.images);
   }
 
   @override
   void dispose() {
     _nameController.dispose();
     _priceController.dispose();
-    _originalPriceController.dispose();
     _descriptionController.dispose();
     _stockController.dispose();
+    _newCategoryController.dispose();
     super.dispose();
   }
 
   Future<void> _pickImage() async {
-    // Use image_picker to select an image from the gallery.
-    final imagePicker = ImagePicker();
-    final XFile? picked = await imagePicker.pickImage(
-      source: ImageSource.gallery,
-      imageQuality: 85,
-    );
-    if (picked != null) {
-      setState(() => _imageFile = File(picked.path));
+    final picker = ImagePicker();
+    final List<XFile> images = await picker.pickMultiImage(imageQuality: 85);
+    if (images.isNotEmpty) {
+      if (kIsWeb) {
+        final bytesList = await Future.wait(images.map((e) => e.readAsBytes()));
+        setState(() {
+          _selectedImages.addAll(images);
+          _selectedImagesBytes.addAll(bytesList);
+          _imageFile = null;
+          _imageFileBytes = _selectedImagesBytes.isNotEmpty
+              ? _selectedImagesBytes.first
+              : null;
+        });
+      } else {
+        setState(() {
+          _selectedImages.addAll(images);
+          _selectedImagesBytes = _selectedImagesBytes; // keep existing bytes
+          _imageFile = File(_selectedImages.first.path);
+          _imageFileBytes = null;
+        });
+      }
     }
   }
 
@@ -181,47 +209,126 @@ class _EditProductDialogState extends State<_EditProductDialog> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              // Image picker button
-              Row(
-                children: [
-                  GestureDetector(
-                    onTap: _pickImage,
-                    child: Container(
-                      width: 80,
-                      height: 80,
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(8),
-                        color: Colors.grey[200],
-                        border: Border.all(color: Colors.grey),
-                      ),
-                      child: _imageFile != null
-                          ? ClipRRect(
+              // Thumbnails grid only (square tiles) with delete overlay and add tile
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 600),
+                child: Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    // new selected images
+                    for (var i = 0; i < _selectedImagesBytes.length; i++)
+                      Stack(
+                        children: [
+                          Container(
+                            width: 72,
+                            height: 72,
+                            decoration: BoxDecoration(
                               borderRadius: BorderRadius.circular(8),
-                              child: Image.file(_imageFile!, fit: BoxFit.cover),
-                            )
-                          : widget.product.imageUrl.isNotEmpty
-                              ? ClipRRect(
-                                  borderRadius: BorderRadius.circular(8),
-                                  child: Image.network(
-                                    widget.product.imageUrl,
-                                    fit: BoxFit.cover,
-                                    errorBuilder: (_, __, ___) =>
-                                        const Icon(Icons.image),
-                                  ),
-                                )
-                              : const Icon(Icons.add_photo_alternate),
+                              color: Colors.grey[100],
+                            ),
+                            child: ClipRRect(
+                              borderRadius: BorderRadius.circular(8),
+                              child: Image.memory(
+                                _selectedImagesBytes[i],
+                                fit: BoxFit.contain,
+                                alignment: Alignment.center,
+                              ),
+                            ),
+                          ),
+                          Positioned(
+                            right: 0,
+                            top: 0,
+                            child: GestureDetector(
+                              onTap: () {
+                                setState(() {
+                                  _selectedImages.removeAt(i);
+                                  _selectedImagesBytes.removeAt(i);
+                                });
+                              },
+                              child: Container(
+                                width: 20,
+                                height: 20,
+                                decoration: BoxDecoration(
+                                  color: Colors.black54,
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
+                                child: const Icon(
+                                  Icons.close,
+                                  size: 14,
+                                  color: Colors.white,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    // existing images
+                    for (var j = 0; j < _existingImages.length; j++)
+                      Stack(
+                        children: [
+                          Container(
+                            width: 72,
+                            height: 72,
+                            decoration: BoxDecoration(
+                              borderRadius: BorderRadius.circular(8),
+                              color: Colors.grey[100],
+                            ),
+                            child: ClipRRect(
+                              borderRadius: BorderRadius.circular(8),
+                              child: Image.network(
+                                _existingImages[j],
+                                fit: BoxFit.contain,
+                                alignment: Alignment.center,
+                                errorBuilder: (_, __, ___) => Container(
+                                  color: Colors.grey[200],
+                                  child: const Icon(Icons.image_not_supported),
+                                ),
+                              ),
+                            ),
+                          ),
+                          Positioned(
+                            right: 0,
+                            top: 0,
+                            child: GestureDetector(
+                              onTap: () {
+                                setState(() {
+                                  _existingImages.removeAt(j);
+                                });
+                              },
+                              child: Container(
+                                width: 20,
+                                height: 20,
+                                decoration: BoxDecoration(
+                                  color: Colors.black54,
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
+                                child: const Icon(
+                                  Icons.close,
+                                  size: 14,
+                                  color: Colors.white,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    // Add tile
+                    GestureDetector(
+                      onTap: _pickImage,
+                      child: Container(
+                        width: 72,
+                        height: 72,
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(8),
+                          color: Colors.grey[100],
+                          border: Border.all(color: Colors.grey),
+                        ),
+                        child: const Center(child: Icon(Icons.add)),
+                      ),
                     ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Text(
-                      _imageFile != null
-                          ? 'Đã chọn ảnh mới'
-                          : 'Chạm để đổi ảnh',
-                      style: TextStyle(color: Colors.grey[600]),
-                    ),
-                  ),
-                ],
+                  ],
+                ),
               ),
               const SizedBox(height: 12),
               TextField(
@@ -235,22 +342,109 @@ class _EditProductDialogState extends State<_EditProductDialog> {
                 keyboardType: TextInputType.number,
               ),
               const SizedBox(height: 12),
-              TextField(
-                controller: _originalPriceController,
-                decoration:
-                    const InputDecoration(labelText: 'Giá gốc (đ) (tùy chọn)'),
-                keyboardType: TextInputType.number,
-              ),
-              const SizedBox(height: 12),
-              // Category dropdown
-              DropdownButtonFormField<String>(
-                value: _selectedCategory,
-                decoration: const InputDecoration(labelText: 'Danh mục'),
-                items: widget.viewModel.categories
-                    .where((c) => c != 'All')
-                    .map((c) => DropdownMenuItem(value: c, child: Text(c)))
-                    .toList(),
-                onChanged: (v) => setState(() => _selectedCategory = v),
+              // Category selector (multiple) with '+' chip that toggles inline input
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 520),
+                child: Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    ...widget.viewModel.categories
+                        .where((c) => c != 'All')
+                        .map((c) => ChoiceChip(
+                              label: Text(c),
+                              selected: _selectedCategories.contains(c),
+                              onSelected: (sel) {
+                                setState(() {
+                                  if (sel) {
+                                    _selectedCategories.add(c);
+                                  } else {
+                                    _selectedCategories.remove(c);
+                                  }
+                                });
+                              },
+                            ))
+                        ,
+
+                    // Add-category toggle: show '+' chip or inline input with confirm/cancel
+                    if (_addingCategory)
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 6),
+                        decoration: BoxDecoration(
+                          color: Colors.grey[100],
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: Colors.grey.shade300),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            SizedBox(
+                              width: 140,
+                              child: TextField(
+                                controller: _newCategoryController,
+                                decoration: const InputDecoration(
+                                  hintText: 'Danh mục mới',
+                                  border: InputBorder.none,
+                                  isDense: true,
+                                  contentPadding: EdgeInsets.symmetric(
+                                      horizontal: 8, vertical: 10),
+                                ),
+                              ),
+                            ),
+                            IconButton(
+                              icon:
+                                  const Icon(Icons.check, color: Colors.green),
+                              onPressed: () async {
+                                final name = _newCategoryController.text.trim();
+                                if (name.isEmpty) return;
+                                try {
+                                  await widget.viewModel.addCategory(name);
+                                  setState(() {
+                                    _selectedCategories.add(name);
+                                    _newCategoryController.clear();
+                                    _addingCategory = false;
+                                  });
+                                } catch (_) {
+                                  // ignore errors for now
+                                }
+                              },
+                              tooltip: 'Tạo',
+                            ),
+                            IconButton(
+                              icon: const Icon(Icons.close, color: Colors.red),
+                              onPressed: () {
+                                setState(() {
+                                  _newCategoryController.clear();
+                                  _addingCategory = false;
+                                });
+                              },
+                              tooltip: 'Hủy',
+                            ),
+                          ],
+                        ),
+                      )
+                    else
+                      MouseRegion(
+                        cursor: SystemMouseCursors.click,
+                        child: InkWell(
+                          borderRadius: BorderRadius.circular(20),
+                          onTap: () {
+                            setState(() => _addingCategory = true);
+                          },
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 12, vertical: 8),
+                            decoration: BoxDecoration(
+                              color: Colors.grey[100],
+                              borderRadius: BorderRadius.circular(20),
+                              border: Border.all(color: Colors.grey.shade400),
+                            ),
+                            child: const Icon(Icons.add, size: 20),
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
               ),
               const SizedBox(height: 12),
               TextField(
@@ -291,25 +485,47 @@ class _EditProductDialogState extends State<_EditProductDialog> {
                 );
                 return;
               }
-              final originalPriceText = _originalPriceController.text.trim();
-              final originalPrice = originalPriceText.isNotEmpty
-                  ? double.tryParse(originalPriceText)
-                  : null;
               final stock = int.tryParse(_stockController.text.trim()) ?? 0;
 
               final updated = widget.product.copyWith(
                 name: name,
                 price: price,
-                originalPrice: originalPrice,
                 description: description,
-                category: _selectedCategory ?? widget.product.category,
+                category: _selectedCategories.isNotEmpty
+                    ? _selectedCategories.first
+                    : widget.product.category,
+                categories: _selectedCategories.isNotEmpty
+                    ? _selectedCategories
+                    : widget.product.categories,
                 stock: stock,
               );
+              // Determine imageFile: if user selected new images, upload them; otherwise keep null.
+              dynamic imageFile;
+              if (_selectedImages.isNotEmpty) {
+                imageFile = kIsWeb
+                    ? _selectedImagesBytes
+                    : _selectedImages.map((e) => File(e.path)).toList();
+              } else {
+                imageFile = null;
+              }
+              // Ensure updated product includes remaining existing images.
+              final productWithImages = updated.copyWith(
+                images: _existingImages,
+                imageUrl: _existingImages.isNotEmpty
+                    ? _existingImages.first
+                    : updated.imageUrl,
+              );
+
               await widget.viewModel.updateProduct(
                 widget.product.id,
-                updated,
-                imageFile: _imageFile,
+                productWithImages,
+                imageFile: imageFile,
               );
+              // Refresh home list
+              if (context.mounted) {
+                await context.read<HomeViewModel>().initialize();
+              }
+              if (!context.mounted) return;
               Navigator.pop(context);
               ScaffoldMessenger.of(context).showSnackBar(
                 const SnackBar(content: Text('Cập nhật sản phẩm thành công')),
@@ -439,21 +655,24 @@ class _AddProductDialog extends StatefulWidget {
 class _AddProductDialogState extends State<_AddProductDialog> {
   late TextEditingController _nameController;
   late TextEditingController _priceController;
-  late TextEditingController _originalPriceController;
   late TextEditingController _descriptionController;
   late TextEditingController _stockController;
   File? _imageFile;
+  Uint8List? _imageFileBytes;
+  // ignore: unused_field
   String? _selectedCategory;
-
+  final List<XFile> _selectedImages = [];
+  List<Uint8List> _selectedImagesBytes = [];
+  final List<String> _selectedCategories = [];
+  final TextEditingController _newCategoryController = TextEditingController();
+  bool _addingCategory = false;
   @override
   void initState() {
     super.initState();
     _nameController = TextEditingController();
     _priceController = TextEditingController();
-    _originalPriceController = TextEditingController();
     _descriptionController = TextEditingController();
     _stockController = TextEditingController(text: '0');
-    // Default to first non-'All' category if available.
     final cats = widget.viewModel.categories.where((c) => c != 'All').toList();
     _selectedCategory = cats.isNotEmpty ? cats.first : null;
   }
@@ -462,57 +681,113 @@ class _AddProductDialogState extends State<_AddProductDialog> {
   void dispose() {
     _nameController.dispose();
     _priceController.dispose();
-    _originalPriceController.dispose();
     _descriptionController.dispose();
     _stockController.dispose();
+    _newCategoryController.dispose();
     super.dispose();
   }
 
   Future<void> _pickImage() async {
-    // Use image_picker to select an image from the gallery.
-    final imagePicker = ImagePicker();
-    final XFile? picked = await imagePicker.pickImage(
-      source: ImageSource.gallery,
-      imageQuality: 85,
-    );
-    if (picked != null) {
-      setState(() => _imageFile = File(picked.path));
+    final picker = ImagePicker();
+    final List<XFile> images = await picker.pickMultiImage(imageQuality: 85);
+    if (images.isNotEmpty) {
+      if (kIsWeb) {
+        final bytesList = await Future.wait(images.map((e) => e.readAsBytes()));
+        setState(() {
+          _selectedImages.addAll(images);
+          _selectedImagesBytes.addAll(bytesList);
+          _imageFile = null;
+          _imageFileBytes = _selectedImagesBytes.isNotEmpty
+              ? _selectedImagesBytes.first
+              : null;
+        });
+      } else {
+        setState(() {
+          _selectedImages.addAll(images);
+          _selectedImagesBytes = _selectedImagesBytes; // keep existing bytes
+          _imageFile = File(_selectedImages.first.path);
+          _imageFileBytes = null;
+        });
+      }
     }
   }
 
   @override
   Widget build(BuildContext context) => AlertDialog(
-        title: const Text('Thêm sản phẩm mới'),
-        content: SingleChildScrollView(
+      title: const Text('Thêm sản phẩm mới'),
+      content: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 520),
+        child: SingleChildScrollView(
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              // Image picker
-              GestureDetector(
-                onTap: _pickImage,
-                child: Container(
-                  width: double.infinity,
-                  height: 120,
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(8),
-                    color: Colors.grey[200],
-                    border: Border.all(color: Colors.grey),
-                  ),
-                  child: _imageFile != null
-                      ? ClipRRect(
+              // Thumbnails grid with delete overlay and add tile
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 600),
+                child: Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    for (var i = 0; i < _selectedImagesBytes.length; i++)
+                      Stack(
+                        children: [
+                          Container(
+                            width: 72,
+                            height: 72,
+                            decoration: BoxDecoration(
+                              borderRadius: BorderRadius.circular(8),
+                              color: Colors.grey[100],
+                            ),
+                            child: ClipRRect(
+                              borderRadius: BorderRadius.circular(8),
+                              child: Image.memory(
+                                _selectedImagesBytes[i],
+                                fit: BoxFit.contain,
+                                alignment: Alignment.center,
+                              ),
+                            ),
+                          ),
+                          Positioned(
+                            right: 0,
+                            top: 0,
+                            child: GestureDetector(
+                              onTap: () {
+                                setState(() {
+                                  _selectedImages.removeAt(i);
+                                  _selectedImagesBytes.removeAt(i);
+                                });
+                              },
+                              child: Container(
+                                width: 20,
+                                height: 20,
+                                decoration: BoxDecoration(
+                                  color: Colors.black54,
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
+                                child: const Icon(
+                                  Icons.close,
+                                  size: 14,
+                                  color: Colors.white,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    GestureDetector(
+                      onTap: _pickImage,
+                      child: Container(
+                        width: 72,
+                        height: 72,
+                        decoration: BoxDecoration(
                           borderRadius: BorderRadius.circular(8),
-                          child: Image.file(_imageFile!, fit: BoxFit.cover),
-                        )
-                      : Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Icon(Icons.add_photo_alternate,
-                                size: 40, color: Colors.grey[600]),
-                            const SizedBox(height: 4),
-                            Text('Chọn ảnh sản phẩm',
-                                style: TextStyle(color: Colors.grey[600])),
-                          ],
+                          color: Colors.grey[100],
+                          border: Border.all(color: Colors.grey),
                         ),
+                        child: const Center(child: Icon(Icons.add)),
+                      ),
+                    ),
+                  ],
                 ),
               ),
               const SizedBox(height: 12),
@@ -520,7 +795,6 @@ class _AddProductDialogState extends State<_AddProductDialog> {
                 controller: _nameController,
                 decoration: const InputDecoration(
                   labelText: 'Tên sản phẩm',
-                  hintText: 'VD: PC Gaming',
                 ),
               ),
               const SizedBox(height: 12),
@@ -528,29 +802,109 @@ class _AddProductDialogState extends State<_AddProductDialog> {
                 controller: _priceController,
                 decoration: const InputDecoration(
                   labelText: 'Giá (đ)',
-                  hintText: 'VD: 25000000',
                 ),
                 keyboardType: TextInputType.number,
               ),
               const SizedBox(height: 12),
-              TextField(
-                controller: _originalPriceController,
-                decoration: const InputDecoration(
-                  labelText: 'Giá gốc (đ) (tùy chọn)',
-                  hintText: 'VD: 30000000',
+              // Category selector - FIXED: wrap entire selector with ConstrainedBox
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 520),
+                child: Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    ...widget.viewModel.categories
+                        .where((c) => c != 'All')
+                        .map((c) => ChoiceChip(
+                              label: Text(c),
+                              selected: _selectedCategories.contains(c),
+                              onSelected: (sel) {
+                                setState(() {
+                                  if (sel) {
+                                    _selectedCategories.add(c);
+                                  } else {
+                                    _selectedCategories.remove(c);
+                                  }
+                                });
+                              },
+                            ))
+                        ,
+                    // Add-category toggle - removed nested ConstrainedBox and Wrap
+                    if (_addingCategory)
+                      Container(
+                        constraints: const BoxConstraints(maxWidth: 280),
+                        padding: const EdgeInsets.symmetric(horizontal: 6),
+                        decoration: BoxDecoration(
+                          color: Colors.grey[100],
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: Colors.grey.shade300),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            SizedBox(
+                              width: 140,
+                              child: TextField(
+                                controller: _newCategoryController,
+                                decoration: const InputDecoration(
+                                  hintText: 'Danh mục mới',
+                                  border: InputBorder.none,
+                                  isDense: true,
+                                  contentPadding: EdgeInsets.symmetric(
+                                      horizontal: 8, vertical: 10),
+                                ),
+                              ),
+                            ),
+                            IconButton(
+                              icon:
+                                  const Icon(Icons.check, color: Colors.green),
+                              onPressed: () async {
+                                final name = _newCategoryController.text.trim();
+                                if (name.isEmpty) return;
+                                try {
+                                  await widget.viewModel.addCategory(name);
+                                  setState(() {
+                                    _selectedCategories.add(name);
+                                    _newCategoryController.clear();
+                                    _addingCategory = false;
+                                  });
+                                } catch (_) {}
+                              },
+                              tooltip: 'Tạo',
+                            ),
+                            IconButton(
+                              icon: const Icon(Icons.close, color: Colors.red),
+                              onPressed: () {
+                                setState(() {
+                                  _newCategoryController.clear();
+                                  _addingCategory = false;
+                                });
+                              },
+                              tooltip: 'Hủy',
+                            ),
+                          ],
+                        ),
+                      )
+                    else
+                      MouseRegion(
+                        cursor: SystemMouseCursors.click,
+                        child: InkWell(
+                          borderRadius: BorderRadius.circular(20),
+                          onTap: () => setState(() => _addingCategory = true),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 12, vertical: 8),
+                            decoration: BoxDecoration(
+                              color: Colors.grey[100],
+                              borderRadius: BorderRadius.circular(20),
+                              border: Border.all(color: Colors.grey.shade400),
+                            ),
+                            child: const Icon(Icons.add, size: 20),
+                          ),
+                        ),
+                      ),
+                  ],
                 ),
-                keyboardType: TextInputType.number,
-              ),
-              const SizedBox(height: 12),
-              // Category dropdown
-              DropdownButtonFormField<String>(
-                value: _selectedCategory,
-                decoration: const InputDecoration(labelText: 'Danh mục'),
-                items: widget.viewModel.categories
-                    .where((c) => c != 'All')
-                    .map((c) => DropdownMenuItem(value: c, child: Text(c)))
-                    .toList(),
-                onChanged: (v) => setState(() => _selectedCategory = v),
               ),
               const SizedBox(height: 12),
               TextField(
@@ -570,63 +924,70 @@ class _AddProductDialogState extends State<_AddProductDialog> {
             ],
           ),
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Hủy'),
-          ),
-          ElevatedButton(
-            onPressed: () async {
-              final name = _nameController.text.trim();
-              final priceText = _priceController.text.trim();
-              final description = _descriptionController.text.trim();
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Hủy'),
+        ),
+        ElevatedButton(
+          onPressed: () async {
+            final name = _nameController.text.trim();
+            final priceText = _priceController.text.trim();
+            final description = _descriptionController.text.trim();
 
-              if (name.isEmpty || priceText.isEmpty) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                      content: Text('Vui lòng nhập tên và giá sản phẩm')),
-                );
-                return;
-              }
-
-              final price = double.tryParse(priceText);
-              if (price == null) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Giá sản phẩm không hợp lệ')),
-                );
-                return;
-              }
-
-              final originalPriceText = _originalPriceController.text.trim();
-              final originalPrice = originalPriceText.isNotEmpty
-                  ? double.tryParse(originalPriceText)
-                  : null;
-              final stock = int.tryParse(_stockController.text.trim()) ?? 0;
-
-              // Create product with empty id – backend will generate one.
-              final newProduct = Product(
-                id: '', // backend will assign real ID
-                name: name,
-                description: description,
-                price: price,
-                originalPrice: originalPrice,
-                imageUrl: '', // will be set after upload
-                category: _selectedCategory ?? 'All',
-                rating: 0,
-                reviews: 0,
-                stock: stock,
-                specs: [],
-              );
-
-              await widget.viewModel
-                  .addProduct(newProduct, imageFile: _imageFile);
-              Navigator.pop(context);
+            if (name.isEmpty || priceText.isEmpty) {
               ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Thêm sản phẩm thành công')),
+                const SnackBar(
+                    content: Text('Vui lòng nhập tên và giá sản phẩm')),
               );
-            },
-            child: const Text('Thêm'),
-          ),
-        ],
-      );
+              return;
+            }
+
+            final price = double.tryParse(priceText);
+            if (price == null) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Giá sản phẩm không hợp lệ')),
+              );
+              return;
+            }
+
+            final stock = int.tryParse(_stockController.text.trim()) ?? 0;
+
+            final newProduct = Product(
+              id: '',
+              name: name,
+              description: description,
+              price: price,
+              originalPrice: null,
+              imageUrl: '',
+              category: _selectedCategories.isNotEmpty
+                  ? _selectedCategories.first
+                  : 'All',
+              categories: _selectedCategories,
+              rating: 0,
+              reviews: 0,
+              stock: stock,
+              specs: [],
+            );
+
+            await widget.viewModel.addProduct(newProduct,
+                imageFile: _selectedImages.isNotEmpty
+                    ? (kIsWeb
+                        ? _selectedImagesBytes
+                        : _selectedImages.map((e) => File(e.path)).toList())
+                    : (_imageFile ?? _imageFileBytes));
+            if (context.mounted) {
+              await context.read<HomeViewModel>().initialize();
+            }
+            if (!context.mounted) return;
+            Navigator.pop(context);
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Thêm sản phẩm thành công')),
+            );
+          },
+          child: const Text('Thêm'),
+        ),
+      ],
+    );
 }

@@ -117,46 +117,24 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    /// Category and rating
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 12,
-                            vertical: 6,
-                          ),
-                          decoration: BoxDecoration(
-                            color: Colors.blue[100],
-                            borderRadius: BorderRadius.circular(20),
-                          ),
-                          child: Text(
-                            product.category,
-                            style: TextStyle(
-                              color: Colors.blue[800],
-                              fontWeight: FontWeight.w500,
-                              fontSize: 12,
-                            ),
-                          ),
+                    /// Category
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 6,
+                      ),
+                      decoration: BoxDecoration(
+                        color: Colors.blue[100],
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                      child: Text(
+                        product.category,
+                        style: TextStyle(
+                          color: Colors.blue[800],
+                          fontWeight: FontWeight.w500,
+                          fontSize: 12,
                         ),
-                        Row(
-                          children: [
-                            const Icon(Icons.star,
-                                color: Colors.amber, size: 20),
-                            const SizedBox(width: 4),
-                            Text(
-                              '${product.rating}',
-                              style:
-                                  const TextStyle(fontWeight: FontWeight.bold),
-                            ),
-                            const SizedBox(width: 4),
-                            Text(
-                              '(${product.reviews ?? 0} reviews)',
-                              style: TextStyle(color: Colors.grey[600]),
-                            ),
-                          ],
-                        ),
-                      ],
+                      ),
                     ),
 
                     const SizedBox(height: 12),

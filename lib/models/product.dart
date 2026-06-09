@@ -8,28 +8,14 @@ class Product {
     this.originalPrice,
     required this.imageUrl,
     required this.category,
+    this.categories = const [],
     this.storeId,
     required this.rating,
     this.reviews,
     this.stock,
     required this.specs,
+    this.images = const [],
   });
-  final String id;
-  final String name;
-  final String description;
-  final double price;
-  final double? originalPrice;
-  final String imageUrl;
-  final String category;
-
-  /// Optional store identifier for multi‑store support.
-  final String? storeId;
-  final double rating;
-  // Number of reviews; nullable to handle missing data gracefully.
-  final int? reviews;
-  // Stock count; nullable to handle missing data gracefully.
-  final int? stock;
-  final List<String> specs;
 
   /// Create a Product from a JSON map.
   factory Product.fromJson(Map<String, dynamic> json) => Product(
@@ -40,15 +26,42 @@ class Product {
         originalPrice: json['original_price'] != null
             ? (json['original_price'] as num).toDouble()
             : null,
-        imageUrl: json['image_url'] as String,
+        imageUrl: json['image_url'] as String? ?? '',
+        images: json['images'] != null
+            ? (json['images'] as List<dynamic>).map((e) => e as String).toList()
+            : (json['image_url'] != null ? [json['image_url'] as String] : []),
         category: json['category'] as String,
+        categories: json['categories'] != null
+            ? (json['categories'] as List<dynamic>)
+                .map((e) => e as String)
+                .toList()
+            : (json['category'] != null ? [json['category'] as String] : []),
         storeId: json['store_id'] as String?,
         rating: (json['rating'] as num).toDouble(),
         reviews: json['reviews'] as int?,
         stock: json['stock'] as int?,
         specs:
             (json['specs'] as List<dynamic>).map((e) => e as String).toList(),
+        // images already populated above
       );
+  final String id;
+  final String name;
+  final String description;
+  final double price;
+  final double? originalPrice;
+  final String imageUrl;
+  final String category;
+  final List<String> categories;
+  final List<String> images;
+
+  /// Optional store identifier for multi‑store support.
+  final String? storeId;
+  final double rating;
+  // Number of reviews; nullable to handle missing data gracefully.
+  final int? reviews;
+  // Stock count; nullable to handle missing data gracefully.
+  final int? stock;
+  final List<String> specs;
 
   /// Convert this Product to a JSON map.
   Map<String, dynamic> toJson() => {
@@ -59,11 +72,13 @@ class Product {
         'original_price': originalPrice,
         'image_url': imageUrl,
         'category': category,
+        'categories': categories,
         'store_id': storeId,
         'rating': rating,
         'reviews': reviews,
         'stock': stock,
         'specs': specs,
+        'images': images,
       };
 
   /// Check if product is on sale.
@@ -89,6 +104,8 @@ class Product {
     int? reviews,
     int? stock,
     List<String>? specs,
+    List<String>? images,
+    List<String>? categories,
   }) =>
       Product(
         id: id ?? this.id,
@@ -103,5 +120,7 @@ class Product {
         reviews: reviews ?? this.reviews,
         stock: stock ?? this.stock,
         specs: specs ?? this.specs,
+        images: images ?? this.images,
+        categories: categories ?? this.categories,
       );
 }

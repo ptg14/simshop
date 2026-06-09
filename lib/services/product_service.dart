@@ -1,16 +1,13 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 import 'package:http/http.dart' as http;
+import 'package:image_picker/image_picker.dart';
 
 import '../models/product.dart';
 
 /// Response wrapper for paginated product list from backend.
 class ProductListResponse {
-  final List<Product> products;
-  final int total;
-  final int page;
-  final int pageSize;
-  final int totalPages;
 
   ProductListResponse({
     required this.products,
@@ -30,6 +27,11 @@ class ProductListResponse {
         pageSize: json['page_size'] as int,
         totalPages: json['total_pages'] as int,
       );
+  final List<Product> products;
+  final int total;
+  final int page;
+  final int pageSize;
+  final int totalPages;
 }
 
 /// Service for fetching products from an API or local storage.
@@ -38,6 +40,8 @@ abstract class IProductService {
   Future<List<Product>> getProductsByCategory(String category);
   Future<Product> getProductById(String id);
   Future<List<String>> getCategories();
+  Future<void> createCategory(String name);
+  Future<void> deleteCategory(String name);
   Future<List<Product>> searchProducts(String query);
 
   /// Create a new product and return the created product (with server-generated ID).
@@ -50,16 +54,16 @@ abstract class IProductService {
   Future<void> deleteProduct(String id);
 
   /// Upload an image file and return the image URL.
-  Future<String> uploadImage(File file);
+  Future<String?> uploadImage(dynamic file);
 }
 
 /// Real implementation that talks to the Go backend API.
 class RealProductService implements IProductService {
-  // Base URL of the backend. Adjust if the backend runs on a different host/port.
-  final String _baseUrl;
 
   RealProductService({String? baseUrl})
       : _baseUrl = baseUrl ?? 'http://localhost:8080';
+  // Base URL of the backend. Adjust if the backend runs on a different host/port.
+  final String _baseUrl;
 
   Uri _productsUri() => Uri.parse('$_baseUrl/api/products');
   Uri _productUri(String id) => Uri.parse('$_baseUrl/api/products/$id');
@@ -77,9 +81,7 @@ class RealProductService implements IProductService {
   }
 
   /// Apply image URL resolution to a single product.
-  Product _resolveProductImages(Product product) {
-    return product.copyWith(imageUrl: _resolveImageUrl(product.imageUrl));
-  }
+  Product _resolveProductImages(Product product) => product.copyWith(imageUrl: _resolveImageUrl(product.imageUrl));
 
   /// Build a products URI with optional query parameters.
   Uri _filteredProductsUri({
@@ -147,8 +149,43 @@ class RealProductService implements IProductService {
 
   @override
   Future<List<String>> getCategories() async {
+    // Prefer backend categories endpoint if available.
+    final uri = Uri.parse('$_baseUrl/api/categories');
+    final response = await http.get(uri);
+    if (response.statusCode == 200) {
+      final data = json.decode(response.body) as Map<String, dynamic>;
+      if (data['categories'] != null) {
+        return (data['categories'] as List<dynamic>)
+            .map((e) => e as String)
+            .toList();
+      }
+    }
+    // Fallback: derive categories from products
     final products = await getAllProducts();
     return products.map((p) => p.category).toSet().toList();
+  }
+
+  /// Create a new category via backend.
+  @override
+  Future<void> createCategory(String name) async {
+    final uri = Uri.parse('$_baseUrl/api/categories');
+    final response = await http.post(uri,
+        headers: {'Content-Type': 'application/json'},
+        body: json.encode({'name': name}));
+    if (response.statusCode != 201 && response.statusCode != 200) {
+      throw Exception('Failed to create category: ${response.statusCode}');
+    }
+  }
+
+  /// Delete a category via backend.
+  @override
+  Future<void> deleteCategory(String name) async {
+    final uri =
+        Uri.parse('$_baseUrl/api/categories/${Uri.encodeComponent(name)}');
+    final response = await http.delete(uri);
+    if (response.statusCode != 204 && response.statusCode != 200) {
+      throw Exception('Failed to delete category: ${response.statusCode}');
+    }
   }
 
   @override
@@ -206,15 +243,73 @@ class RealProductService implements IProductService {
   }
 
   @override
-  Future<String> uploadImage(File file) async {
+  Future<String> uploadImage(dynamic file) async {
     final request = http.MultipartRequest('POST', _uploadUri());
-    request.files.add(await http.MultipartFile.fromPath('image', file.path));
+
+    if (file is File) {
+      request.files.add(await http.MultipartFile.fromPath('image', file.path));
+    } else if (file is XFile) {
+      final bytes = await file.readAsBytes();
+      final multipart =
+          http.MultipartFile.fromBytes('image', bytes, filename: file.name);
+      request.files.add(multipart);
+    } else if (file is Uint8List) {
+      final multipart =
+          http.MultipartFile.fromBytes('image', file, filename: 'upload.jpg');
+      request.files.add(multipart);
+    } else {
+      throw Exception('Unsupported image type for upload');
+    }
+
     final streamedResponse = await request.send();
     final response = await http.Response.fromStream(streamedResponse);
     if (response.statusCode != 200) {
       throw Exception('Failed to upload image: ${response.statusCode}');
     }
     final data = json.decode(response.body) as Map<String, dynamic>;
+    // Prefer image_urls array if present
+    if (data['image_urls'] != null) {
+      final list = (data['image_urls'] as List<dynamic>)
+          .map((e) => e as String)
+          .toList();
+      return list.isNotEmpty ? list[0] : (data['image_url'] as String);
+    }
     return data['image_url'] as String;
+  }
+
+  /// Upload multiple images and return their URLs in order.
+  Future<List<String>> uploadImages(List<dynamic> files) async {
+    final request = http.MultipartRequest('POST', _uploadUri());
+    for (final file in files) {
+      if (file is File) {
+        request.files
+            .add(await http.MultipartFile.fromPath('images', file.path));
+      } else if (file is XFile) {
+        final bytes = await file.readAsBytes();
+        final multipart =
+            http.MultipartFile.fromBytes('images', bytes, filename: file.name);
+        request.files.add(multipart);
+      } else if (file is Uint8List) {
+        final multipart = http.MultipartFile.fromBytes('images', file,
+            filename: 'upload.jpg');
+        request.files.add(multipart);
+      } else {
+        throw Exception('Unsupported image type for upload');
+      }
+    }
+
+    final streamedResponse = await request.send();
+    final response = await http.Response.fromStream(streamedResponse);
+    if (response.statusCode != 200) {
+      throw Exception('Failed to upload images: ${response.statusCode}');
+    }
+    final data = json.decode(response.body) as Map<String, dynamic>;
+    if (data['image_urls'] != null) {
+      return (data['image_urls'] as List<dynamic>)
+          .map((e) => e as String)
+          .toList();
+    }
+    // Fallback to single image_url
+    return [data['image_url'] as String];
   }
 }
