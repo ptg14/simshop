@@ -309,11 +309,9 @@ class _OptionsEditorWithImages extends StatelessWidget {
           const SizedBox(height: 8),
           ElevatedButton.icon(
             onPressed: () {
-              WidgetsBinding.instance.addPostFrameCallback((_) {
-                final updated = List<Option>.from(options)
-                  ..add(Option(id: '', name: 'Option', imageUrls: []));
-                onChanged(updated);
-              });
+              final updated = List<Option>.from(options)
+                ..add(Option(id: '', name: 'Option', imageUrls: []));
+              onChanged(updated);
             },
             icon: const Icon(Icons.add),
             label: const Text('Thêm option'),

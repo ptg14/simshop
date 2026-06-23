@@ -9,11 +9,6 @@ class AdminViewModel extends ChangeNotifier {
   AdminViewModel({IProductService? productService})
       : _productService = productService ?? RealProductService();
 
-  // Authentication
-  bool _isLoggedIn = false;
-  final String _adminUsername = 'admin';
-  final String _adminPassword = 'admin123'; // In production, use secure storage
-
   // Products management via service. Allows injection for testing.
   final IProductService _productService;
   final List<Product> _products = [];
@@ -26,11 +21,9 @@ class AdminViewModel extends ChangeNotifier {
   // UI states
   bool _isLoading = false;
   String? _error;
-  String _selectedTab =
-      'overview'; // overview, products, categories, analytics, settings
+  String _selectedTab = 'overview'; // overview, products, categories, settings
 
   // Getters
-  bool get isLoggedIn => _isLoggedIn;
   List<Product> get products => _products;
   List<String> get categories => _categories;
   bool get isLoading => _isLoading;
@@ -71,41 +64,6 @@ class AdminViewModel extends ChangeNotifier {
       const Store(id: 'store2', name: 'Cửa hàng 2'),
     ]);
     _selectedStore = _stores.first;
-    notifyListeners();
-  }
-
-  /// Login with username and password.
-  Future<bool> login(String username, String password) async {
-    _isLoading = true;
-    _error = null;
-    notifyListeners();
-
-    try {
-      await Future.delayed(const Duration(milliseconds: 500));
-
-      if (username == _adminUsername && password == _adminPassword) {
-        _isLoggedIn = true;
-        _isLoading = false;
-        notifyListeners();
-        return true;
-      } else {
-        _error = 'Tên đăng nhập hoặc mật khẩu không chính xác';
-        _isLoading = false;
-        notifyListeners();
-        return false;
-      }
-    } catch (e) {
-      _error = 'Lỗi đăng nhập: $e';
-      _isLoading = false;
-      notifyListeners();
-      return false;
-    }
-  }
-
-  /// Logout.
-  void logout() {
-    _isLoggedIn = false;
-    _selectedTab = 'products';
     notifyListeners();
   }
 

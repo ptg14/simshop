@@ -4,8 +4,12 @@ import '../services/product_service.dart';
 
 /// ViewModel for the home screen.
 class HomeViewModel extends ChangeNotifier {
-  // Use the real backend service for production. Switch to MockProductService() for testing.
-  final IProductService _productService = RealProductService();
+  /// Constructor allowing optional injection of a product service.
+  HomeViewModel({IProductService? productService})
+      : _productService = productService ?? RealProductService();
+
+  // Backend service. Inject via constructor in tests; defaults to the real HTTP client.
+  final IProductService _productService;
 
   List<Product> _products = [];
   List<Product> _filteredProducts = [];

@@ -25,13 +25,7 @@ class AdminDashboard extends StatelessWidget {
               ? NavigationRail(
                   selectedIndex: _getTabIndex(viewModel.selectedTab),
                   onDestinationSelected: (index) {
-                    const tabs = [
-                      'overview',
-                      'products',
-                      // upload tab removed – merged into products
-                      'categories',
-                      'settings',
-                    ];
+                    const tabs = ['overview', 'products', 'categories', 'settings'];
                     viewModel.selectTab(tabs[index]);
                   },
                   labelType: NavigationRailLabelType.all,
@@ -73,36 +67,17 @@ class AdminDashboard extends StatelessWidget {
                       ),
                       // Build a ListTile for each tab.
                       ...[
-                        'overview',
-                        'products',
-                        // 'upload' removed
-                        'categories',
-                        'settings',
-                      ].asMap().entries.map(
-                            (e) => ListTile(
-                              leading: Icon(
-                                e.key == 0
-                                    ? Icons.dashboard
-                                    : e.key == 1
-                                        ? Icons.inventory_2
-                                        : e.key == 2
-                                            ? Icons.category
-                                            : e.key == 3
-                                                ? Icons.analytics
-                                                : Icons.settings,
-                              ),
-                              title: Text(
-                                e.value == 'overview'
-                                    ? 'Tổng quan'
-                                    : e.value == 'products'
-                                        ? 'Sản phẩm'
-                                        : e.value == 'categories'
-                                            ? 'Danh mục'
-                                            : 'Cài đặt',
-                              ),
-                              selected: viewModel.selectedTab == e.value,
+                        (tab: 'overview', label: 'Tổng quan', icon: Icons.dashboard),
+                        (tab: 'products', label: 'Sản phẩm', icon: Icons.inventory_2),
+                        (tab: 'categories', label: 'Danh mục', icon: Icons.category),
+                        (tab: 'settings', label: 'Cài đặt', icon: Icons.settings),
+                      ].map(
+                            (t) => ListTile(
+                              leading: Icon(t.icon),
+                              title: Text(t.label),
+                              selected: viewModel.selectedTab == t.tab,
                               onTap: () {
-                                viewModel.selectTab(e.value);
+                                viewModel.selectTab(t.tab);
                                 Navigator.pop(context);
                               },
                             ),
@@ -111,10 +86,7 @@ class AdminDashboard extends StatelessWidget {
                       ListTile(
                         leading: const Icon(Icons.logout),
                         title: const Text('Đăng xuất'),
-                        onTap: () {
-                          viewModel.logout();
-                          Navigator.pushReplacementNamed(context, '/home');
-                        },
+                        onTap: () => Navigator.pushReplacementNamed(context, '/home'),
                       ),
                     ],
                   ),

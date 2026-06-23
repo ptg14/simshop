@@ -171,13 +171,6 @@ extension ResponsiveContext on BuildContext {
   /// Whether to show a full navigation rail (desktop) vs compact (tablet).
   bool get useFullNavigationRail => screenWidth > 900;
 
-  /// Responsive admin sidebar width.
-  double get adminSidebarWidth {
-    if (isDesktop) return 250;
-    if (isTablet) return 200;
-    return 0;
-  }
-
   /// Whether the device orientation is portrait.
   bool get isPortrait => screenHeight > screenWidth;
 
