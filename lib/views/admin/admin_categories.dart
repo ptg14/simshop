@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import '../../utils/responsive.dart';
 import '../../viewmodels/admin_viewmodel.dart';
 
 /// Admin categories management screen.
@@ -8,7 +9,7 @@ class AdminCategoriesScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Consumer<AdminViewModel>(
-      builder: (context, viewModel, _) => Scaffold(
+        builder: (context, viewModel, _) => Scaffold(
           appBar: AppBar(
             title: const Text('Quản lý danh mục'),
             elevation: 0,
@@ -24,12 +25,14 @@ class AdminCategoriesScreen extends StatelessWidget {
             ],
           ),
           body: ListView.builder(
-            padding: const EdgeInsets.all(16),
+            padding: EdgeInsets.all(context.horizontalPadding),
             itemCount: viewModel.categories.length,
             itemBuilder: (context, index) {
               final category = viewModel.categories[index];
               return Card(
-                margin: const EdgeInsets.only(bottom: 12),
+                margin: EdgeInsets.only(
+                    bottom: context.responsive<double>(
+                        mobile: 8, tablet: 10, desktop: 12)),
                 child: ListTile(
                   leading: const Icon(Icons.category, color: Colors.blue),
                   title: Text(category),
@@ -46,7 +49,7 @@ class AdminCategoriesScreen extends StatelessWidget {
             },
           ),
         ),
-    );
+      );
 
   void _showAddCategoryDialog(BuildContext context, AdminViewModel viewModel) {
     final controller = TextEditingController();
@@ -58,7 +61,8 @@ class AdminCategoriesScreen extends StatelessWidget {
           controller: controller,
           decoration: const InputDecoration(
             labelText: 'Tên danh mục',
-            hintText: 'Nhập tên danh mục mới',),
+            hintText: 'Nhập tên danh mục mới',
+          ),
         ),
         actions: [
           TextButton(

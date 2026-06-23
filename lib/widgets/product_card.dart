@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../models/product.dart';
 import '../utils/currency_formatter.dart';
+import '../utils/responsive.dart';
 
 /// Widget displaying a product card.
 class ProductCard extends StatelessWidget {
@@ -20,12 +21,11 @@ class ProductCard extends StatelessWidget {
         child: Container(
           decoration: BoxDecoration(
             color: Colors.white,
-            borderRadius: BorderRadius.circular(8),
+            borderRadius: BorderRadius.circular(12),
             boxShadow: [
               BoxShadow(
-                // Use withOpacity to set the alpha channel correctly.
-                color: Colors.black.withValues(alpha: 0.1),
-                blurRadius: 4,
+                color: Colors.black.withValues(alpha: 0.08),
+                blurRadius: 8,
                 offset: const Offset(0, 2),
               ),
             ],
@@ -37,20 +37,18 @@ class ProductCard extends StatelessWidget {
               Stack(
                 children: [
                   Container(
-                    height: 120,
+                    height: context.productCardImageHeight,
                     width: double.infinity,
                     decoration: BoxDecoration(
                       color: Colors.grey[200],
                       borderRadius: const BorderRadius.only(
-                        topLeft: Radius.circular(8),
-                        topRight: Radius.circular(8),
+                        topLeft: Radius.circular(12),
+                        topRight: Radius.circular(12),
                       ),
                     ),
-                    // Show a placeholder while the network image loads.
                     child: Image.network(
                       product.imageUrl,
                       fit: BoxFit.cover,
-                      // Display a loading indicator until the image is ready.
                       loadingBuilder: (context, child, loadingProgress) {
                         if (loadingProgress == null) return child;
                         return Container(
@@ -83,16 +81,16 @@ class ProductCard extends StatelessWidget {
                         ),
                         child: Text(
                           '-${product.discountPercentage}%',
-                          style: const TextStyle(
+                          style: TextStyle(
                             color: Colors.white,
                             fontWeight: FontWeight.bold,
-                            fontSize: 12,
+                            fontSize: context.productCardPriceFontSize,
                           ),
                         ),
                       ),
                     ),
 
-                  /// Stock status (handle nullable stock)
+                  /// Stock status
                   if ((product.stock ?? 0) < 10)
                     Positioned(
                       top: 8,
@@ -104,11 +102,11 @@ class ProductCard extends StatelessWidget {
                           color: Colors.orange,
                           borderRadius: BorderRadius.circular(4),
                         ),
-                        child: const Text(
+                        child: Text(
                           'Sắp hết',
                           style: TextStyle(
                             color: Colors.white,
-                            fontSize: 12,
+                            fontSize: context.productCardPriceFontSize,
                             fontWeight: FontWeight.bold,
                           ),
                         ),
@@ -120,7 +118,7 @@ class ProductCard extends StatelessWidget {
               /// Product info
               Expanded(
                 child: Padding(
-                  padding: const EdgeInsets.all(12),
+                  padding: context.productCardPadding,
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
@@ -129,27 +127,53 @@ class ProductCard extends StatelessWidget {
                         product.name,
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontWeight: FontWeight.w600,
-                          fontSize: 13,
+                          fontSize: context.productCardNameFontSize,
                           height: 1.3,
                         ),
                       ),
 
                       const SizedBox(height: 4),
 
+                      // Option mini-review: show small chips for option names
+                      if (product.options.isNotEmpty)
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 6.0),
+                          child: Wrap(
+                            spacing: 6,
+                            runSpacing: 4,
+                            children: product.options
+                                .take(4)
+                                .map((o) => Chip(
+                                      label: Text(
+                                        o.name,
+                                        style: const TextStyle(fontSize: 12),
+                                      ),
+                                      visualDensity: VisualDensity.compact,
+                                      materialTapTargetSize:
+                                          MaterialTapTargetSize.shrinkWrap,
+                                      backgroundColor: Colors.grey[100],
+                                    ))
+                                .toList(),
+                          ),
+                        ),
+
                       /// Category
                       Text(
                         product.category,
                         style: TextStyle(
-                          fontSize: 11,
+                          fontSize: context.responsive<double>(
+                            mobile: 11,
+                            tablet: 12,
+                            desktop: 13,
+                          ),
                           color: Colors.grey[600],
                         ),
                       ),
 
                       const Spacer(),
 
-                      // Ratings removed (handled in overview)
                       const SizedBox(height: 6),
 
                       /// Price
@@ -157,9 +181,9 @@ class ProductCard extends StatelessWidget {
                         children: [
                           Text(
                             formatCurrency(product.price),
-                            style: const TextStyle(
+                            style: TextStyle(
                               fontWeight: FontWeight.bold,
-                              fontSize: 13,
+                              fontSize: context.productCardPriceFontSize,
                               color: Colors.red,
                             ),
                           ),
@@ -168,7 +192,11 @@ class ProductCard extends StatelessWidget {
                             Text(
                               formatCurrency(product.originalPrice ?? 0),
                               style: TextStyle(
-                                fontSize: 11,
+                                fontSize: context.responsive<double>(
+                                  mobile: 11,
+                                  tablet: 12,
+                                  desktop: 13,
+                                ),
                                 color: Colors.grey[600],
                                 decoration: TextDecoration.lineThrough,
                               ),
@@ -179,22 +207,29 @@ class ProductCard extends StatelessWidget {
 
                       const SizedBox(height: 8),
 
-                      /// View details button (if no add to cart callback)
+                      /// View details button
                       if (onAddToCart == null)
                         SizedBox(
                           width: double.infinity,
-                          height: 32,
+                          height: context.productCardButtonHeight,
                           child: ElevatedButton(
                             onPressed: onTap,
                             style: ElevatedButton.styleFrom(
                               backgroundColor: const Color(0xFF1E88E5),
                               padding: EdgeInsets.zero,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(8),
+                              ),
                             ),
-                            child: const Text(
+                            child: Text(
                               'Xem chi tiết',
                               style: TextStyle(
                                 color: Colors.white,
-                                fontSize: 12,
+                                fontSize: context.responsive<double>(
+                                  mobile: 12,
+                                  tablet: 13,
+                                  desktop: 14,
+                                ),
                                 fontWeight: FontWeight.w500,
                               ),
                             ),
@@ -203,18 +238,22 @@ class ProductCard extends StatelessWidget {
                       else
                         SizedBox(
                           width: double.infinity,
-                          height: 32,
+                          height: context.productCardButtonHeight,
                           child: ElevatedButton(
                             onPressed: onAddToCart,
                             style: ElevatedButton.styleFrom(
                               backgroundColor: const Color(0xFF1E88E5),
                               padding: EdgeInsets.zero,
                             ),
-                            child: const Text(
+                            child: Text(
                               'Thêm vào giỏ',
                               style: TextStyle(
                                 color: Colors.white,
-                                fontSize: 12,
+                                fontSize: context.responsive<double>(
+                                  mobile: 12,
+                                  tablet: 13,
+                                  desktop: 14,
+                                ),
                                 fontWeight: FontWeight.w500,
                               ),
                             ),

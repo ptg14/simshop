@@ -1,10 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../../utils/responsive.dart';
 import '../../viewmodels/admin_viewmodel.dart';
 import 'admin_categories.dart';
 import 'admin_overview.dart';
-import 'admin_products.dart';
+import 'admin_product/admin_product_screen.dart';
 import 'admin_settings.dart';
 
 /// Admin dashboard screen that provides navigation (Rail or Drawer) and
@@ -17,7 +18,7 @@ class AdminDashboard extends StatelessWidget {
         // Use a Consumer to obtain the AdminViewModel.
         builder: (context, viewModel, _) {
           // Determine whether to use a NavigationRail (wide screens) or a Drawer.
-          final bool useRail = MediaQuery.of(context).size.width > 600;
+          final bool useRail = context.useNavigationRail;
 
           // Build the navigation widget based on the layout choice.
           final Widget navigation = useRail
@@ -138,7 +139,8 @@ class AdminDashboard extends StatelessWidget {
             // For rail layout, place the rail in the leading slot.
             body: Row(
               children: [
-                if (useRail) SizedBox(width: 250, child: navigation),
+                if (useRail)
+                  SizedBox(width: context.adminRailWidth, child: navigation),
                 Expanded(child: _buildTabContent(viewModel.selectedTab)),
               ],
             ),

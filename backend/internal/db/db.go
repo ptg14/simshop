@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"time"
 
 	_ "github.com/mattn/go-sqlite3"
@@ -28,6 +29,11 @@ func New(cfg *config.Config) (*DB, error) {
 	defer cancel()
 	if err := db.PingContext(ctx); err != nil {
 		return nil, err
+	}
+
+	// Enable foreign key constraints for SQLite. This ensures ON DELETE/UPDATE actions are enforced.
+	if _, err := db.Exec(`PRAGMA foreign_keys = ON`); err != nil {
+		return nil, fmt.Errorf("enable foreign keys: %w", err)
 	}
 
 	// Run schema migrations.
@@ -75,14 +81,52 @@ func runMigrations(db *sql.DB) error {
 		return err
 	}
 
-	// Categories table to persist available product categories.
-	cats := `
-	CREATE TABLE IF NOT EXISTS categories (
-		name TEXT PRIMARY KEY
+	// Product options/variants table. Each option may reference multiple image URLs stored as JSON text.
+	options := `
+	CREATE TABLE IF NOT EXISTS product_options (
+		id TEXT PRIMARY KEY,
+		product_id TEXT NOT NULL,
+		name TEXT NOT NULL,
+		image_urls TEXT NOT NULL DEFAULT '[]',
+		ord INTEGER NOT NULL DEFAULT 0,
+		FOREIGN KEY(product_id) REFERENCES products(id) ON DELETE CASCADE
 	);`
-	_, err = db.Exec(cats)
+	_, err = db.Exec(options)
 	if err != nil {
 		return err
+	}
+
+	// Ensure the image_urls column exists (SQLite will error if column exists; ignore error).
+	if _, err = db.Exec(`ALTER TABLE product_options ADD COLUMN image_urls TEXT NOT NULL DEFAULT '[]'`); err != nil {
+		// ignore error, column may already exist
+	}
+
+	// Categories table to persist available product categories.
+	// Large categories (parent categories)
+	largeCats := `
+	CREATE TABLE IF NOT EXISTS large_categories (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		name TEXT NOT NULL UNIQUE
+	);`
+	_, err = db.Exec(largeCats)
+	if err != nil {
+		return err
+	}
+
+	// Ensure categories table exists (may already exist from previous migrations).
+	// If it does not exist, create it with optional large_category_id column.
+	if _, err = db.Exec(`CREATE TABLE IF NOT EXISTS categories (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		name TEXT NOT NULL UNIQUE,
+		large_category_id INTEGER,
+		FOREIGN KEY(large_category_id) REFERENCES large_categories(id) ON DELETE SET NULL
+	);`); err != nil {
+		return err
+	}
+
+	// Add large_category_id column if missing (SQLite will error if column exists; ignore).
+	if _, err = db.Exec(`ALTER TABLE categories ADD COLUMN large_category_id INTEGER`); err != nil {
+		// ignore error, column may already exist
 	}
 
 	// Seed categories from existing products to preserve historical data.

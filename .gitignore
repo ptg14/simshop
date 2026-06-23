@@ -82,7 +82,7 @@ app.*.map.json
 node_modules/
 
 # generated code
-.github
+.github/
 
 # Platform-specific build outputs
 android/
@@ -94,4 +94,4 @@ backend/backend
 backend/go.mod
 backend/go.sum
 backend/localhost:8080
-backend/uploads
+backend/uploads/

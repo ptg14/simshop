@@ -4,7 +4,6 @@ import 'package:provider/provider.dart';
 import 'viewmodels/admin_viewmodel.dart';
 import 'viewmodels/home_viewmodel.dart';
 import 'views/admin/admin_dashboard.dart';
-import 'views/admin/admin_login.dart';
 import 'views/home_screen.dart';
 import 'views/product_detail_screen.dart';
 
@@ -57,7 +56,6 @@ class MyApp extends StatelessWidget {
           routes: {
             '/home': (context) => const HomeScreen(),
             '/product-detail': (context) => const ProductDetailScreen(),
-            '/admin-login': (context) => const AdminLoginScreen(),
             '/admin': (context) => const AdminDashboard(),
           },
         ),

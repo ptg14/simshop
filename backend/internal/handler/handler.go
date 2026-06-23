@@ -23,10 +23,42 @@ import (
 type UploadConfig struct {
 	UploadDir     string
 	MaxUploadSize int64
+	// BaseURL is the public base URL used to construct absolute image URLs.
+	// When set, it overrides Host/X-Forwarded-Host headers to prevent host header spoofing.
+	BaseURL string
 }
 
 // ProductRepo re-exports the db.ProductRepo type so the router can reference it.
 type ProductRepo = db.ProductRepo
+
+// maxJSONBodySize limits the size of JSON request bodies to 1 MB.
+const maxJSONBodySize = 1 << 20
+
+// readJSONBody reads and decodes a JSON request body with size limiting and
+// Content-Type validation. It returns an error suitable for writeError.
+func readJSONBody(r *http.Request, v any) error {
+	ct := r.Header.Get("Content-Type")
+	if ct != "" {
+		// Strip parameters (e.g., "application/json; charset=utf-8")
+		if i := strings.Index(ct, ";"); i != -1 {
+			ct = strings.TrimSpace(ct[:i])
+		}
+		if ct != "application/json" {
+			return fmt.Errorf("unsupported Content-Type: %s", ct)
+		}
+	}
+	r.Body = http.MaxBytesReader(nil, r.Body, maxJSONBodySize)
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(v); err != nil {
+		var maxBytesErr *http.MaxBytesError
+		if errors.As(err, &maxBytesErr) {
+			return fmt.Errorf("request body too large (max %d bytes)", maxJSONBodySize)
+		}
+		return fmt.Errorf("invalid request body: %w", err)
+	}
+	return nil
+}
 
 // HealthHandler responds with a simple health check.
 func HealthHandler(w http.ResponseWriter, r *http.Request) {
@@ -52,6 +84,7 @@ func GetProductsHandler(repo *ProductRepo) http.HandlerFunc {
 // GetCategoriesHandler returns persisted categories.
 func GetCategoriesHandler(repo *ProductRepo) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		// Return simple list of category names for frontend compatibility.
 		cats, err := repo.GetCategories()
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "Failed to fetch categories")
@@ -66,10 +99,11 @@ func GetCategoriesHandler(repo *ProductRepo) http.HandlerFunc {
 func CreateCategoryHandler(repo *ProductRepo) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
-			Name string `json:"name"`
+			Name          string `json:"name"`
+			LargeCategory string `json:"large_category,omitempty"`
 		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			writeError(w, http.StatusBadRequest, "Invalid request body")
+		if err := readJSONBody(r, &body); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
 		name := strings.TrimSpace(body.Name)
@@ -77,7 +111,8 @@ func CreateCategoryHandler(repo *ProductRepo) http.HandlerFunc {
 			writeError(w, http.StatusBadRequest, "name is required")
 			return
 		}
-		if err := repo.AddCategory(name); err != nil {
+		// Use the method that can associate a large category if provided.
+		if err := repo.AddCategoryWithParent(name, strings.TrimSpace(body.LargeCategory)); err != nil {
 			writeError(w, http.StatusInternalServerError, "Failed to add category")
 			return
 		}
@@ -96,6 +131,59 @@ func DeleteCategoryHandler(repo *ProductRepo) http.HandlerFunc {
 		}
 		if err := repo.DeleteCategory(name); err != nil {
 			writeError(w, http.StatusInternalServerError, "Failed to delete category")
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+// GetLargeCategoriesHandler returns persisted large categories.
+func GetLargeCategoriesHandler(repo *ProductRepo) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		cats, err := repo.GetLargeCategories()
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "Failed to fetch large categories")
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{"large_categories": cats})
+	}
+}
+
+// CreateLargeCategoryHandler persists a new large category.
+func CreateLargeCategoryHandler(repo *ProductRepo) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Name string `json:"name"`
+		}
+		if err := readJSONBody(r, &body); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		name := strings.TrimSpace(body.Name)
+		if name == "" {
+			writeError(w, http.StatusBadRequest, "name is required")
+			return
+		}
+		if err := repo.AddLargeCategory(name); err != nil {
+			writeError(w, http.StatusInternalServerError, "Failed to add large category")
+			return
+		}
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(map[string]string{"name": name})
+	}
+}
+
+// DeleteLargeCategoryHandler deletes a persisted large category.
+func DeleteLargeCategoryHandler(repo *ProductRepo) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		name := mux.Vars(r)["name"]
+		if name == "" {
+			writeError(w, http.StatusBadRequest, "name required")
+			return
+		}
+		if err := repo.DeleteLargeCategory(name); err != nil {
+			writeError(w, http.StatusInternalServerError, "Failed to delete large category")
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)
@@ -144,9 +232,18 @@ func CreateProductHandler(repo *ProductRepo) http.HandlerFunc {
 			writeError(w, http.StatusInternalServerError, "Failed to create product")
 			return
 		}
+		// Retrieve the fully persisted product (including generated option IDs) to return to the client.
+		created, err := repo.GetByID(p.ID)
+		if err != nil {
+			// If fetching fails, fall back to returning the original payload.
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusCreated)
+			json.NewEncoder(w).Encode(p)
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
-		json.NewEncoder(w).Encode(p)
+		json.NewEncoder(w).Encode(created)
 	}
 }
 
@@ -210,6 +307,22 @@ func validateProduct(p *models.Product) error {
 	for i := range p.Images {
 		p.Images[i] = strings.TrimSpace(p.Images[i])
 	}
+	// Trim and validate options (support multiple image URLs)
+	for i := range p.Options {
+		p.Options[i].ID = strings.TrimSpace(p.Options[i].ID)
+		p.Options[i].Name = strings.TrimSpace(p.Options[i].Name)
+		// trim each image url
+		for j := range p.Options[i].ImageURLs {
+			p.Options[i].ImageURLs[j] = strings.TrimSpace(p.Options[i].ImageURLs[j])
+		}
+		if p.Options[i].ImageURLs == nil {
+			p.Options[i].ImageURLs = []string{}
+		}
+		// ensure option has a name
+		if p.Options[i].Name == "" {
+			errs = append(errs, "option name is required")
+		}
+	}
 	p.Category = strings.TrimSpace(p.Category)
 
 	if p.Name == "" {
@@ -220,14 +333,14 @@ func validateProduct(p *models.Product) error {
 	if p.ImageURL == "" && len(p.Images) == 0 {
 		errs = append(errs, "at least one image is required (image_url or images)")
 	}
-	// Require at least one category in the categories list.
+	// Categories are optional. For backward compatibility, if a single
+	// `Category` string is provided but `Categories` slice is empty,
+	// populate the slice. Do not require a category.
 	if len(p.Categories) == 0 {
-		// fallback to single category field for older clients
-		if p.Category == "" {
-			errs = append(errs, "category is required")
-		} else {
-			// populate categories from single category
+		if p.Category != "" {
 			p.Categories = []string{p.Category}
+		} else {
+			p.Categories = []string{}
 		}
 	} else {
 		// ensure primary category string is populated for backward compatibility
@@ -312,30 +425,43 @@ func UploadImageHandler(cfg *UploadConfig) http.HandlerFunc {
 				return "", "", err
 			}
 			defer f.Close()
-			ext := strings.ToLower(filepath.Ext(header.Filename))
-			// If the uploaded file has no extension (common with browser blob uploads),
-			// try to infer it from the Content-Type header. Fall back to .jpg.
-			if ext == "" {
-				if ct := header.Header.Get("Content-Type"); ct != "" {
-					switch strings.ToLower(ct) {
-					case "image/jpeg", "image/jpg":
-						ext = ".jpg"
-					case "image/png":
-						ext = ".png"
-					case "image/gif":
-						ext = ".gif"
-					case "image/webp":
-						ext = ".webp"
-					}
-				}
+
+			// Validate MIME type by reading the first 512 bytes to detect content type.
+			// This prevents attackers from bypassing extension checks by renaming files.
+			buf := make([]byte, 512)
+			n, _ := io.ReadFull(f, buf)
+			if n == 0 {
+				return "", "", fmt.Errorf("empty file")
 			}
-			if ext == "" {
+			contentType := http.DetectContentType(buf[:n])
+			allowedMIMEs := map[string]bool{
+				"image/jpeg": true,
+				"image/png":  true,
+				"image/gif":  true,
+				"image/webp": true,
+			}
+			if !allowedMIMEs[contentType] {
+				return "", "", fmt.Errorf("unsupported file type: %s", contentType)
+			}
+
+			// Map detected MIME to safe extension — never trust the user-supplied filename.
+			ext := ".jpg" // default
+			switch contentType {
+			case "image/jpeg":
 				ext = ".jpg"
+			case "image/png":
+				ext = ".png"
+			case "image/gif":
+				ext = ".gif"
+			case "image/webp":
+				ext = ".webp"
 			}
-			allowedExts := map[string]bool{".jpg": true, ".jpeg": true, ".png": true, ".gif": true, ".webp": true}
-			if !allowedExts[ext] {
-				return "", "", fmt.Errorf("unsupported file type")
+
+			// Seek back to beginning so io.Copy reads the full file.
+			if _, err := f.Seek(0, io.SeekStart); err != nil {
+				return "", "", err
 			}
+
 			filename := fmt.Sprintf("%s%s", uuid.New().String(), ext)
 			if err := os.MkdirAll(cfg.UploadDir, 0755); err != nil {
 				return "", "", err
@@ -348,19 +474,26 @@ func UploadImageHandler(cfg *UploadConfig) http.HandlerFunc {
 			if _, err := io.Copy(dst, f); err != nil {
 				return "", "", err
 			}
-			scheme := r.Header.Get("X-Forwarded-Proto")
-			if scheme == "" {
-				if r.TLS != nil {
-					scheme = "https"
-				} else {
-					scheme = "http"
+			// Construct the public URL for the uploaded file.
+			// Prefer the configured BaseURL to prevent host header spoofing.
+			var imageURL string
+			if cfg.BaseURL != "" {
+				imageURL = fmt.Sprintf("%s/uploads/%s", strings.TrimRight(cfg.BaseURL, "/"), filename)
+			} else {
+				scheme := r.Header.Get("X-Forwarded-Proto")
+				if scheme == "" {
+					if r.TLS != nil {
+						scheme = "https"
+					} else {
+						scheme = "http"
+					}
 				}
+				host := r.Header.Get("X-Forwarded-Host")
+				if host == "" {
+					host = r.Host
+				}
+				imageURL = fmt.Sprintf("%s://%s/uploads/%s", scheme, host, filename)
 			}
-			host := r.Header.Get("X-Forwarded-Host")
-			if host == "" {
-				host = r.Host
-			}
-			imageURL := fmt.Sprintf("%s://%s/uploads/%s", scheme, host, filename)
 			return imageURL, filename, nil
 		}
 

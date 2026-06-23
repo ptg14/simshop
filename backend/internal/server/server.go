@@ -31,6 +31,7 @@ func Start(ctx context.Context) error {
 	uploadCfg := &handler.UploadConfig{
 		UploadDir:     cfg.UploadDir,
 		MaxUploadSize: cfg.MaxUploadSize,
+		BaseURL:       cfg.BaseURL,
 	}
 
 	// Ensure upload directory exists.
@@ -39,7 +40,7 @@ func Start(ctx context.Context) error {
 		return fmt.Errorf("create upload dir: %w", err)
 	}
 
-	r := router.New(productRepo, uploadCfg)
+	r := router.New(productRepo, uploadCfg, cfg.AllowedOrigin)
 
 	addr := fmt.Sprintf(":%s", cfg.Port)
 	srv := &http.Server{

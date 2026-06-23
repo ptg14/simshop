@@ -15,6 +15,7 @@ class Product {
     this.stock,
     required this.specs,
     this.images = const [],
+    this.options = const [],
   });
 
   /// Create a Product from a JSON map.
@@ -30,6 +31,11 @@ class Product {
         images: json['images'] != null
             ? (json['images'] as List<dynamic>).map((e) => e as String).toList()
             : (json['image_url'] != null ? [json['image_url'] as String] : []),
+        options: json['options'] != null
+            ? (json['options'] as List<dynamic>)
+                .map((e) => Option.fromJson(e as Map<String, dynamic>))
+                .toList()
+            : [],
         category: json['category'] as String,
         categories: json['categories'] != null
             ? (json['categories'] as List<dynamic>)
@@ -53,6 +59,7 @@ class Product {
   final String category;
   final List<String> categories;
   final List<String> images;
+  final List<Option> options;
 
   /// Optional store identifier for multi‑store support.
   final String? storeId;
@@ -79,6 +86,7 @@ class Product {
         'stock': stock,
         'specs': specs,
         'images': images,
+        'options': options.map((o) => o.toJson()).toList(),
       };
 
   /// Check if product is on sale.
@@ -105,6 +113,7 @@ class Product {
     int? stock,
     List<String>? specs,
     List<String>? images,
+    List<Option>? options,
     List<String>? categories,
   }) =>
       Product(
@@ -121,6 +130,28 @@ class Product {
         stock: stock ?? this.stock,
         specs: specs ?? this.specs,
         images: images ?? this.images,
+        options: options ?? this.options,
         categories: categories ?? this.categories,
       );
+}
+
+class Option {
+  Option({required this.id, required this.name, this.imageUrls = const []});
+
+  factory Option.fromJson(Map<String, dynamic> json) => Option(
+        id: json['id'] as String,
+        name: json['name'] as String,
+        imageUrls: json['image_urls'] != null
+            ? (json['image_urls'] as List<dynamic>)
+                .map((e) => e as String)
+                .toList()
+            : (json['image_url'] != null ? [json['image_url'] as String] : []),
+      );
+
+  final String id;
+  final String name;
+  final List<String> imageUrls;
+
+  Map<String, dynamic> toJson() =>
+      {'id': id, 'name': name, 'image_urls': imageUrls};
 }

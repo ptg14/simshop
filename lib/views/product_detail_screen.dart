@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../models/product.dart';
 import '../utils/currency_formatter.dart';
+import '../utils/responsive.dart';
 
 /// Product detail screen.
 class ProductDetailScreen extends StatefulWidget {
@@ -43,7 +44,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
             children: [
               /// Product image
               Container(
-                height: 300,
+                height: context.productDetailImageHeight,
                 width: double.infinity,
                 color: Colors.grey[200],
                 child: Stack(
@@ -113,7 +114,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
 
               /// Product details
               Padding(
-                padding: const EdgeInsets.all(16),
+                padding: EdgeInsets.all(context.horizontalPadding),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
@@ -132,47 +133,83 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                         style: TextStyle(
                           color: Colors.blue[800],
                           fontWeight: FontWeight.w500,
-                          fontSize: 12,
+                          fontSize: context.responsive<double>(
+                            mobile: 12,
+                            tablet: 13,
+                            desktop: 14,
+                          ),
                         ),
                       ),
                     ),
 
-                    const SizedBox(height: 12),
+                    SizedBox(
+                        height: context.responsive<double>(
+                      mobile: 12,
+                      tablet: 16,
+                      desktop: 20,
+                    )),
 
                     /// Product name
                     Text(
                       product.name,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontWeight: FontWeight.bold,
-                        fontSize: 20,
+                        fontSize: context.responsive<double>(
+                          mobile: 20,
+                          tablet: 24,
+                          desktop: 28,
+                        ),
                         height: 1.3,
                       ),
                     ),
 
-                    const SizedBox(height: 12),
+                    SizedBox(
+                        height: context.responsive<double>(
+                      mobile: 12,
+                      tablet: 16,
+                      desktop: 20,
+                    )),
 
                     /// Price
                     Row(
                       children: [
                         Text(
                           formatCurrency(product.price),
-                          style: const TextStyle(
+                          style: TextStyle(
                             color: Colors.red,
                             fontWeight: FontWeight.bold,
-                            fontSize: 24,
+                            fontSize: context.responsive<double>(
+                              mobile: 24,
+                              tablet: 28,
+                              desktop: 32,
+                            ),
                           ),
                         ),
                         if (product.isOnSale) ...[
-                          const SizedBox(width: 12),
+                          SizedBox(
+                              width: context.responsive<double>(
+                            mobile: 12,
+                            tablet: 16,
+                            desktop: 20,
+                          )),
                           Text(
                             formatCurrency(product.originalPrice ?? 0),
                             style: TextStyle(
                               color: Colors.grey[600],
                               decoration: TextDecoration.lineThrough,
-                              fontSize: 16,
+                              fontSize: context.responsive<double>(
+                                mobile: 16,
+                                tablet: 18,
+                                desktop: 20,
+                              ),
                             ),
                           ),
-                          const SizedBox(width: 12),
+                          SizedBox(
+                              width: context.responsive<double>(
+                            mobile: 12,
+                            tablet: 16,
+                            desktop: 20,
+                          )),
                           Container(
                             padding: const EdgeInsets.symmetric(
                               horizontal: 8,
@@ -184,10 +221,14 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                             ),
                             child: Text(
                               'Giảm ${product.discountPercentage}%',
-                              style: const TextStyle(
+                              style: TextStyle(
                                 color: Colors.white,
                                 fontWeight: FontWeight.bold,
-                                fontSize: 12,
+                                fontSize: context.responsive<double>(
+                                  mobile: 12,
+                                  tablet: 13,
+                                  desktop: 14,
+                                ),
                               ),
                             ),
                           ),
@@ -195,11 +236,20 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                       ],
                     ),
 
-                    const SizedBox(height: 16),
+                    SizedBox(
+                        height: context.responsive<double>(
+                      mobile: 16,
+                      tablet: 20,
+                      desktop: 24,
+                    )),
 
                     /// Stock info
                     Container(
-                      padding: const EdgeInsets.all(12),
+                      padding: EdgeInsets.all(context.responsive<double>(
+                        mobile: 12,
+                        tablet: 14,
+                        desktop: 16,
+                      )),
                       decoration: BoxDecoration(
                         color: Colors.amber[50],
                         border: Border.all(color: Colors.amber[200]!),
@@ -212,87 +262,174 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                           const SizedBox(width: 8),
                           Text(
                             'Còn ${product.stock ?? 0} sản phẩm',
-                            style: const TextStyle(fontWeight: FontWeight.w500),
+                            style: TextStyle(
+                              fontWeight: FontWeight.w500,
+                              fontSize: context.responsive<double>(
+                                mobile: 14,
+                                tablet: 15,
+                                desktop: 16,
+                              ),
+                            ),
                           ),
                         ],
                       ),
                     ),
 
-                    const SizedBox(height: 24),
+                    SizedBox(
+                        height: context.responsive<double>(
+                      mobile: 24,
+                      tablet: 28,
+                      desktop: 32,
+                    )),
 
                     /// Description
-                    const Text(
+                    Text(
                       'Mô tả sản phẩm',
                       style: TextStyle(
                         fontWeight: FontWeight.bold,
-                        fontSize: 16,
+                        fontSize: context.responsive<double>(
+                          mobile: 16,
+                          tablet: 18,
+                          desktop: 20,
+                        ),
                       ),
                     ),
 
-                    const SizedBox(height: 8),
+                    SizedBox(
+                        height: context.responsive<double>(
+                      mobile: 8,
+                      tablet: 10,
+                      desktop: 12,
+                    )),
 
                     Text(
                       product.description,
                       style: TextStyle(
                         color: Colors.grey[700],
                         height: 1.5,
+                        fontSize: context.responsive<double>(
+                          mobile: 14,
+                          tablet: 15,
+                          desktop: 16,
+                        ),
                       ),
                     ),
 
-                    const SizedBox(height: 24),
+                    SizedBox(
+                        height: context.responsive<double>(
+                      mobile: 24,
+                      tablet: 28,
+                      desktop: 32,
+                    )),
 
                     /// Specifications
                     if (product.specs.isNotEmpty) ...[
-                      const Text(
+                      Text(
                         'Thông số kỹ thuật',
                         style: TextStyle(
                           fontWeight: FontWeight.bold,
-                          fontSize: 16,
+                          fontSize: context.responsive<double>(
+                            mobile: 16,
+                            tablet: 18,
+                            desktop: 20,
+                          ),
                         ),
                       ),
-                      const SizedBox(height: 12),
+                      SizedBox(
+                          height: context.responsive<double>(
+                        mobile: 12,
+                        tablet: 14,
+                        desktop: 16,
+                      )),
                       ...product.specs.map((spec) => Padding(
-                            padding: const EdgeInsets.only(bottom: 8),
+                            padding: EdgeInsets.only(
+                              bottom: context.responsive<double>(
+                                mobile: 8,
+                                tablet: 10,
+                                desktop: 12,
+                              ),
+                            ),
                             child: Row(
                               children: [
-                                const Icon(Icons.check_circle_outline,
-                                    color: Colors.green, size: 20),
-                                const SizedBox(width: 12),
+                                Icon(Icons.check_circle_outline,
+                                    color: Colors.green,
+                                    size: context.responsive<double>(
+                                      mobile: 20,
+                                      tablet: 22,
+                                      desktop: 24,
+                                    )),
+                                SizedBox(
+                                    width: context.responsive<double>(
+                                  mobile: 12,
+                                  tablet: 14,
+                                  desktop: 16,
+                                )),
                                 Expanded(
-                                  child: Text(spec),
+                                  child: Text(
+                                    spec,
+                                    style: TextStyle(
+                                      fontSize: context.responsive<double>(
+                                        mobile: 14,
+                                        tablet: 15,
+                                        desktop: 16,
+                                      ),
+                                    ),
+                                  ),
                                 ),
                               ],
                             ),
                           )),
-                      const SizedBox(height: 24),
+                      SizedBox(
+                          height: context.responsive<double>(
+                        mobile: 24,
+                        tablet: 28,
+                        desktop: 32,
+                      )),
                     ],
 
                     /// Button to go to admin dashboard
                     SizedBox(
                       width: double.infinity,
-                      height: 56,
+                      height: context.responsive<double>(
+                        mobile: 56,
+                        tablet: 52,
+                        desktop: 48,
+                      ),
                       child: ElevatedButton(
                         onPressed: () => Navigator.pushNamed(context, '/admin'),
                         style: ElevatedButton.styleFrom(
                           backgroundColor: Colors.orange,
                         ),
-                        child: const Text(
+                        child: Text(
                           'VÀO BẢNG ĐIỀU KHIỂN ADMIN',
                           style: TextStyle(
                             color: Colors.white,
                             fontWeight: FontWeight.bold,
-                            fontSize: 16,
+                            fontSize: context.responsive<double>(
+                              mobile: 16,
+                              tablet: 15,
+                              desktop: 14,
+                            ),
                           ),
                         ),
                       ),
                     ),
 
-                    const SizedBox(height: 12),
+                    SizedBox(
+                        height: context.responsive<double>(
+                      mobile: 12,
+                      tablet: 14,
+                      desktop: 16,
+                    )),
 
                     /// Buy now button
                     SizedBox(
                       width: double.infinity,
-                      height: 56,
+                      height: context.responsive<double>(
+                        mobile: 56,
+                        tablet: 52,
+                        desktop: 48,
+                      ),
                       child: OutlinedButton(
                         onPressed: () {
                           ScaffoldMessenger.of(context).showSnackBar(
@@ -302,10 +439,16 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                             ),
                           );
                         },
-                        child: const Text(
+                        child: Text(
                           'MUA NGAY',
                           style: TextStyle(
-                              fontWeight: FontWeight.bold, fontSize: 16),
+                            fontWeight: FontWeight.bold,
+                            fontSize: context.responsive<double>(
+                              mobile: 16,
+                              tablet: 15,
+                              desktop: 14,
+                            ),
+                          ),
                         ),
                       ),
                     ),

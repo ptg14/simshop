@@ -55,7 +55,7 @@ class HomeViewModel extends ChangeNotifier {
   Future<void> loadCategories() async {
     try {
       final categories = await _productService.getCategories();
-      _categories = ['All', ...categories];
+      _categories = [...categories];
       notifyListeners();
     } catch (e) {
       _error = 'Failed to load categories: $e';

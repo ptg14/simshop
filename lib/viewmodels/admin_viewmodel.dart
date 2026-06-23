@@ -51,9 +51,9 @@ class AdminViewModel extends ChangeNotifier {
     // Load categories from the backend (fallback to static list on error).
     try {
       final categories = await _productService.getCategories();
-      _categories = ['All', ...categories];
+      _categories = [...categories];
     } catch (_) {
-      _categories = ['All', 'Design', 'Accessories'];
+      _categories = ['Design', 'Accessories'];
     }
 
     // Load products from the backend.
@@ -284,7 +284,7 @@ class AdminViewModel extends ChangeNotifier {
         : _products.where((p) => p.storeId == _selectedStore!.id).toList();
     return {
       'totalProducts': storeProducts.length,
-      'totalCategories': _categories.length - 1, // Exclude "All"
+      'totalCategories': _categories.length,
       'productsOnSale': storeProducts.where((p) => p.isOnSale).length,
       'lowStockProducts':
           storeProducts.where((p) => (p.stock ?? 0) < 10).length,

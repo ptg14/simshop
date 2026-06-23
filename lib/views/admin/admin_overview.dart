@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import '../../utils/responsive.dart';
 import '../../viewmodels/admin_viewmodel.dart';
 import '../../widgets/stat_card.dart';
 
@@ -14,21 +15,29 @@ class AdminOverviewScreen extends StatelessWidget {
           // This screen is displayed inside the AdminDashboard's Scaffold, so we
           // provide only the scrollable content.
           return SingleChildScrollView(
-            padding: const EdgeInsets.all(16),
+            padding: EdgeInsets.all(context.horizontalPadding),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text(
+                Text(
                   'Thống kê nhanh',
-                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                  style: TextStyle(
+                    fontSize: context.responsive<double>(
+                        mobile: 18, tablet: 19, desktop: 20),
+                    fontWeight: FontWeight.bold,
+                  ),
                 ),
-                const SizedBox(height: 16),
+                SizedBox(
+                    height: context.responsive<double>(
+                        mobile: 12, tablet: 14, desktop: 16)),
                 GridView.count(
-                  crossAxisCount: 2,
+                  crossAxisCount: context.adminStatColumns,
                   shrinkWrap: true,
                   physics: const NeverScrollableScrollPhysics(),
-                  crossAxisSpacing: 16,
-                  mainAxisSpacing: 16,
+                  crossAxisSpacing: context.responsive<double>(
+                      mobile: 12, tablet: 14, desktop: 16),
+                  mainAxisSpacing: context.responsive<double>(
+                      mobile: 12, tablet: 14, desktop: 16),
                   children: [
                     StatCard(
                       title: 'Tổng sản phẩm',

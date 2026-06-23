@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../models/product.dart';
+import '../utils/responsive.dart';
 import '../viewmodels/home_viewmodel.dart';
 import '../widgets/category_selector.dart';
 import '../widgets/image_carousel.dart';
@@ -20,7 +21,6 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void initState() {
     super.initState();
-    // Initialize the home view model after the first frame.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       context.read<HomeViewModel>().initialize();
     });
@@ -33,7 +33,8 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   Widget build(BuildContext context) => Scaffold(
         appBar: AppBar(
-          title: const Text('simshop - Quảng Cáo'),
+          title: Text(context.isMobile ? 'simshop' : 'simshop - Quảng Cáo'),
+          centerTitle: context.isMobile,
           actions: [
             IconButton(
               icon: const Icon(Icons.admin_panel_settings),
@@ -44,113 +45,127 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
         body: Consumer<HomeViewModel>(
           builder: (context, viewModel, _) {
-            if (viewModel.isLoading) {
+            if (viewModel.isLoading && viewModel.products.isEmpty) {
               return const Center(child: CircularProgressIndicator());
             }
-            if (viewModel.error != null) {
+            if (viewModel.error != null && viewModel.products.isEmpty) {
               return Center(child: Text(viewModel.error!));
             }
             return RefreshIndicator(
               onRefresh: viewModel.initialize,
               child: SingleChildScrollView(
                 physics: const AlwaysScrollableScrollPhysics(),
-                padding: const EdgeInsets.symmetric(vertical: 8),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    // Search bar
-                    ProductSearchBar(
-                      onSearch: viewModel.searchProducts,
-                      onClear: viewModel.resetSearch,
+                child: Center(
+                  child: Container(
+                    constraints: BoxConstraints(
+                      maxWidth: context.maxContentWidth,
                     ),
-                    // Promotional image carousel (replaces special promo banner)
-                    if (viewModel.getPromotionalProducts().isNotEmpty)
-                      const ImageCarousel(
-                        // Example placeholder images; replace with real URLs as needed
-                        imageUrls: [
-                          'https://picsum.photos/800/300?random=1',
-                          'https://picsum.photos/800/300?random=2',
-                          'https://picsum.photos/800/300?random=3',
-                        ],
-                        height: 200,
-                      ),
-                    // Category selector
-                    CategorySelector(
-                      categories: viewModel.categories,
-                      selectedCategory: viewModel.selectedCategory,
-                      onCategorySelected: viewModel.selectCategory,
-                    ),
-                    // Product grid or empty state
-                    if (viewModel.products.isEmpty)
-                      Center(
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(vertical: 64),
-                          child: Column(
-                            children: [
-                              const Icon(Icons.inventory_2_outlined,
-                                  size: 80, color: Colors.grey),
-                              const SizedBox(height: 16),
-                              const Text(
-                                'Không tìm thấy sản phẩm nào',
-                                style: TextStyle(
-                                  fontSize: 16,
-                                  color: Colors.grey,
-                                ),
-                              ),
-                              const SizedBox(height: 24),
-                              ElevatedButton(
-                                onPressed: () => viewModel.resetSearch(),
-                                child: const Text('Xóa bộ lọc'),
-                              ),
-                            ],
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        // Search bar
+                        Padding(
+                          padding: EdgeInsets.symmetric(
+                            horizontal: context.horizontalPadding,
+                            vertical: 8,
+                          ),
+                          child: ProductSearchBar(
+                            onSearch: viewModel.searchProducts,
+                            onClear: viewModel.resetSearch,
                           ),
                         ),
-                      )
-                    else
-                      LayoutBuilder(builder: (context, constraints) {
-                        final width = constraints.maxWidth;
-                        // ignore: unused_local_variable
-                        int crossAxisCount = 2;
-                        // ignore: unused_local_variable
-                        double aspect = 0.58;
-                        if (width > 1200) {
-                          crossAxisCount = 4;
-                          aspect = 0.62;
-                        } else if (width > 800) {
-                          crossAxisCount = 3;
-                          aspect = 0.6;
-                        }
-                        // Compute columns dynamically based on a target item width
-                        const double targetItemWidth = 200; // px
-                        final int dynamicCount = (width / targetItemWidth).floor();
-                        final int finalCount = dynamicCount.clamp(2, 6);
-                        final double itemWidth = width / finalCount;
-                        // Use a moderate height so cards don't become too tall.
-                        const double itemHeight = 260;
-                        final double finalAspect = itemWidth / itemHeight;
-
-                        return GridView.builder(
-                          shrinkWrap: true,
-                          physics: const NeverScrollableScrollPhysics(),
-                          padding: const EdgeInsets.symmetric(horizontal: 12),
-                          gridDelegate:
-                              SliverGridDelegateWithFixedCrossAxisCount(
-                            crossAxisCount: finalCount,
-                            childAspectRatio: finalAspect,
-                            crossAxisSpacing: 12,
-                            mainAxisSpacing: 12,
+                        // Promotional image carousel
+                        if (viewModel.getPromotionalProducts().isNotEmpty)
+                          Padding(
+                            padding: EdgeInsets.symmetric(
+                              horizontal: context.horizontalPadding,
+                            ),
+                            child: ImageCarousel(
+                              imageUrls: const [
+                                'https://picsum.photos/800/300?random=1',
+                                'https://picsum.photos/800/300?random=2',
+                                'https://picsum.photos/800/300?random=3',
+                              ],
+                              height: context.carouselHeight,
+                            ),
                           ),
-                          itemCount: viewModel.products.length,
-                          itemBuilder: (context, index) {
-                            final product = viewModel.products[index];
-                            return ProductCard(
-                              product: product,
-                              onTap: () => _navigateToProductDetail(product),
-                            );
-                          },
-                        );
-                      }),
-                  ],
+                        // Category selector
+                        CategorySelector(
+                          categories: viewModel.categories,
+                          selectedCategory: viewModel.selectedCategory,
+                          onCategorySelected: viewModel.selectCategory,
+                        ),
+                        // Product grid or empty state
+                        if (viewModel.products.isEmpty)
+                          Center(
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(vertical: 64),
+                              child: Column(
+                                children: [
+                                  const Icon(Icons.inventory_2_outlined,
+                                      size: 80, color: Colors.grey),
+                                  const SizedBox(height: 16),
+                                  const Text(
+                                    'Không tìm thấy sản phẩm nào',
+                                    style: TextStyle(
+                                      fontSize: 16,
+                                      color: Colors.grey,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 24),
+                                  ElevatedButton(
+                                    onPressed: () => viewModel.resetSearch(),
+                                    child: const Text('Xóa bộ lọc'),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          )
+                        else
+                          Padding(
+                            padding: EdgeInsets.symmetric(
+                              horizontal: context.horizontalPadding,
+                            ),
+                            child: LayoutBuilder(
+                              builder: (context, constraints) {
+                                final crossAxisCount = context.gridColumns;
+                                final spacing = context.gridSpacing;
+                                final aspect = context.responsive<double>(
+                                  mobile: 0.58,
+                                  tablet: 0.62,
+                                  desktop: 0.65,
+                                );
+
+                                return GridView.builder(
+                                  shrinkWrap: true,
+                                  physics: const NeverScrollableScrollPhysics(),
+                                  padding: EdgeInsets.only(
+                                    top: context.gridSpacing,
+                                    bottom: 16,
+                                  ),
+                                  gridDelegate:
+                                      SliverGridDelegateWithFixedCrossAxisCount(
+                                    crossAxisCount: crossAxisCount,
+                                    childAspectRatio: aspect,
+                                    crossAxisSpacing: spacing,
+                                    mainAxisSpacing: spacing,
+                                  ),
+                                  itemCount: viewModel.products.length,
+                                  itemBuilder: (context, index) {
+                                    final product = viewModel.products[index];
+                                    return ProductCard(
+                                      product: product,
+                                      onTap: () =>
+                                          _navigateToProductDetail(product),
+                                    );
+                                  },
+                                );
+                              },
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
                 ),
               ),
             );
@@ -158,5 +173,3 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
       );
 }
-
-// Removed cart functionality as this is an advertising site.

@@ -19,6 +19,16 @@ type Product struct {
 	Specs    []string `json:"specs"`
 	// Categories holds multiple category names for the product.
 	Categories []string `json:"categories,omitempty"`
+	// Options represent product variants (e.g., size/color) with optional image association.
+	Options []Option `json:"options,omitempty"`
+}
+
+// Option represents a product option/variant which may reference one of the product images.
+type Option struct {
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	// ImageURLs allows multiple images to be associated with this option.
+	ImageURLs []string `json:"image_urls,omitempty"`
 }
 
 // ProductFilter holds optional filter criteria for listing products.
