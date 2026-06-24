@@ -221,28 +221,37 @@ class _OptionsEditor extends StatelessWidget {
         const Text('Options', style: TextStyle(fontWeight: FontWeight.bold)),
         const SizedBox(height: 8),
         for (var i = 0; i < options.length; i++)
-          Row(
-            children: [
-              Expanded(
-                child: TextFormField(
-                  initialValue: options[i].name,
-                  decoration: const InputDecoration(labelText: 'Tên option'),
-                  onChanged: (v) {
-                    final updated = List<Option>.from(options);
-                    updated[i] =
-                        Option(id: options[i].id, name: v, imageUrls: []);
+          IntrinsicHeight(
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  child: TextFormField(
+                    initialValue: options[i].name,
+                    decoration: const InputDecoration(labelText: 'Tên option'),
+                    onChanged: (v) {
+                      // Preserve imageUrls across keystrokes — the
+                      // shared editor assigns images to options and
+                      // a name edit must not wipe them.
+                      final updated = List<Option>.from(options);
+                      updated[i] = Option(
+                        id: options[i].id,
+                        name: v,
+                        imageUrls: List<String>.from(options[i].imageUrls),
+                      );
+                      onChanged(updated);
+                    },
+                  ),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.delete, color: Colors.red),
+                  onPressed: () {
+                    final updated = List<Option>.from(options)..removeAt(i);
                     onChanged(updated);
                   },
                 ),
-              ),
-              IconButton(
-                icon: const Icon(Icons.delete, color: Colors.red),
-                onPressed: () {
-                  final updated = List<Option>.from(options)..removeAt(i);
-                  onChanged(updated);
-                },
-              ),
-            ],
+              ],
+            ),
           ),
         const SizedBox(height: 8),
         ElevatedButton.icon(

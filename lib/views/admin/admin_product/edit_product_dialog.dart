@@ -268,53 +268,56 @@ class _OptionsEditorWithImages extends StatelessWidget {
           const Text('Options', style: TextStyle(fontWeight: FontWeight.bold)),
           const SizedBox(height: 8),
           for (var i = 0; i < options.length; i++)
-            Row(
-              children: [
-                Expanded(
-                  flex: 3,
-                  child: TextFormField(
-                    initialValue: options[i].name,
-                    decoration:
-                        const InputDecoration(labelText: 'Tên option'),
-                    onChanged: (v) {
-                      final updated = List<Option>.from(options);
-                      updated[i] = Option(
-                        id: options[i].id,
-                        name: v,
-                        imageUrls: List<String>.from(options[i].imageUrls),
-                      );
+            IntrinsicHeight(
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(
+                    flex: 3,
+                    child: TextFormField(
+                      initialValue: options[i].name,
+                      decoration:
+                          const InputDecoration(labelText: 'Tên option'),
+                      onChanged: (v) {
+                        final updated = List<Option>.from(options);
+                        updated[i] = Option(
+                          id: options[i].id,
+                          name: v,
+                          imageUrls: List<String>.from(options[i].imageUrls),
+                        );
+                        onChanged(updated);
+                      },
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    flex: 2,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text('Ảnh', style: TextStyle(fontSize: 12)),
+                        const SizedBox(height: 6),
+                        _OptionImageRow(
+                          option: options[i],
+                          existingImages: existingImages,
+                          onChanged: (updated) {
+                            final list = List<Option>.from(options);
+                            list[i] = updated;
+                            onChanged(list);
+                          },
+                        ),
+                      ],
+                    ),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.delete, color: Colors.red),
+                    onPressed: () {
+                      final updated = List<Option>.from(options)..removeAt(i);
                       onChanged(updated);
                     },
                   ),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  flex: 2,
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text('Ảnh', style: TextStyle(fontSize: 12)),
-                      const SizedBox(height: 6),
-                      _OptionImageRow(
-                        option: options[i],
-                        existingImages: existingImages,
-                        onChanged: (updated) {
-                          final list = List<Option>.from(options);
-                          list[i] = updated;
-                          onChanged(list);
-                        },
-                      ),
-                    ],
-                  ),
-                ),
-                IconButton(
-                  icon: const Icon(Icons.delete, color: Colors.red),
-                  onPressed: () {
-                    final updated = List<Option>.from(options)..removeAt(i);
-                    onChanged(updated);
-                  },
-                ),
-              ],
+                ],
+              ),
             ),
           const SizedBox(height: 8),
           ElevatedButton.icon(
