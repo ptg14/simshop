@@ -1,13 +1,21 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
+import 'package:provider/provider.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../models/product.dart';
 import '../utils/currency_formatter.dart';
-import '../utils/page_transitions.dart';
 import '../utils/responsive.dart';
+import '../viewmodels/site_config_viewmodel.dart';
 import '../widgets/network_image.dart';
 import '../widgets/site_info_footer.dart';
-import 'admin/admin_dashboard.dart';
+
+/// Build a Google Maps "search" URL for [address]. The query parameter
+/// is URL-encoded so Vietnamese diacritics and commas round-trip
+/// safely through the browser's intent dispatch on Android and
+/// `openURL:` on iOS.
+String buildGoogleMapsSearchUrl(String address) =>
+    'https://www.google.com/maps/search/?api=1&query=${Uri.encodeComponent(address)}';
 
 /// Product detail screen.
 class ProductDetailScreen extends StatefulWidget {
@@ -29,8 +37,9 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
     product = widget.product;
   }
 
-  void _openAdmin() {
-    Navigator.of(context).push(fadeSlideRoute(const AdminDashboard()));
+  Future<void> _openMap(String address) async {
+    final uri = Uri.parse(buildGoogleMapsSearchUrl(address));
+    await launchUrl(uri, mode: LaunchMode.externalApplication);
   }
 
   void _toggleFavorite() {
@@ -397,47 +406,31 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                         )),
                       ],
 
-                      /// Admin CTA
-                      SizedBox(
-                        width: double.infinity,
-                        height: context.responsive<double>(
-                          mobile: 56,
-                          tablet: 52,
-                          desktop: 48,
-                        ),
-                        child: FilledButton.icon(
-                          onPressed: _openAdmin,
-                          icon: const Icon(Icons.admin_panel_settings),
-                          label: const Text('VÀO BẢNG ĐIỀU KHIỂN ADMIN'),
-                        ),
-                      ),
-
-                      SizedBox(
-                          height: context.responsive<double>(
-                        mobile: 12,
-                        tablet: 14,
-                        desktop: 16,
-                      )),
-
-                      /// Buy now
-                      SizedBox(
-                        width: double.infinity,
-                        height: context.responsive<double>(
-                          mobile: 56,
-                          tablet: 52,
-                          desktop: 48,
-                        ),
-                        child: OutlinedButton(
-                          onPressed: () {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(
-                                content: Text(
-                                    'Chức năng mua ngay sẽ được cập nhật'),
-                              ),
-                            );
-                          },
-                          child: const Text('MUA NGAY'),
-                        ),
+                      /// Buy at store CTA: opens Google Maps and searches
+                      /// for the store address. Hidden entirely when
+                      /// the address is empty so end users on an
+                      /// unconfigured install don't see a dead button.
+                      Consumer<SiteConfigViewModel>(
+                        builder: (context, vm, _) {
+                          final address = vm.siteInfo.address;
+                          if (address.isEmpty) {
+                            return const SizedBox.shrink();
+                          }
+                          return SizedBox(
+                            key: const Key('buy-at-store-cta'),
+                            width: double.infinity,
+                            height: context.responsive<double>(
+                              mobile: 56,
+                              tablet: 52,
+                              desktop: 48,
+                            ),
+                            child: FilledButton.icon(
+                              onPressed: () => _openMap(address),
+                              icon: const Icon(Icons.place_outlined),
+                              label: Text(address),
+                            ),
+                          );
+                        },
                       ),
 
                       const SizedBox(height: 32),
