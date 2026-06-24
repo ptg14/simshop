@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'theme/app_theme.dart';
 import 'viewmodels/admin_viewmodel.dart';
+import 'viewmodels/articles_viewmodel.dart';
 import 'viewmodels/home_viewmodel.dart';
 import 'viewmodels/site_config_viewmodel.dart';
 import 'views/home_screen.dart';
@@ -35,6 +36,7 @@ class MyApp extends StatelessWidget {
           ChangeNotifierProvider(create: (_) => HomeViewModel()),
           ChangeNotifierProvider(create: (_) => AdminViewModel()),
           ChangeNotifierProvider(create: (_) => SiteConfigViewModel()..load()),
+          ChangeNotifierProvider(create: (_) => ArticlesViewModel()..load()),
         ],
         child: MaterialApp(
           title: 'Sample E-commerce App',

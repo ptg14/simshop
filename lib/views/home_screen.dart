@@ -5,6 +5,7 @@ import '../models/article.dart';
 import '../models/product.dart';
 import '../utils/page_transitions.dart';
 import '../utils/responsive.dart';
+import '../viewmodels/articles_viewmodel.dart';
 import '../viewmodels/home_viewmodel.dart';
 import '../viewmodels/site_config_viewmodel.dart';
 import '../widgets/category_selector.dart';
@@ -97,31 +98,42 @@ class _HomeScreenState extends State<HomeScreen> {
                           onSearch: viewModel.searchProducts,
                           onClear: viewModel.resetSearch,
                         ),
-                        // Promotional image carousel. Slice 1 uses hardcoded
-                        // mock banners; slice 3 swaps in viewModel.banners.
-                        if (viewModel.getPromotionalProducts().isNotEmpty)
-                          ImageCarousel(
-                            imageUrls: const [
-                              'https://picsum.photos/800/300?random=1',
-                              'https://picsum.photos/800/300?random=2',
-                              'https://picsum.photos/800/300?random=3',
-                            ],
-                            height: context.carouselHeight,
-                            onTap: (index) {
-                              Navigator.of(context).push(openArticleRoute(
-                                Article(
-                                  id: 'mock-$index',
-                                  title: 'Ưu đãi tháng ${index + 1}',
-                                  body: '## Điểm nổi bật\n\n'
-                                      '- Giảm giá lên tới **30%**\n'
-                                      '- Áp dụng cho nhiều danh mục\n'
-                                      '- Thời gian có hạn\n\n'
-                                      '_Bài viết này là mẫu. Trong slice 3, '
-                                      'banner thật sẽ mở bài viết từ backend._',
-                                ),
-                              ));
-                            },
-                          ),
+                        // Promotional banner carousel. Pulled from the
+                        // backend via ArticlesViewModel; each slide carries
+                        // an articleId which the tap handler opens via
+                        // ArticleScreen (slice 4 wires the fetch-by-id).
+                        Consumer<ArticlesViewModel>(
+                          builder: (context, articlesVm, _) {
+                            final banners = articlesVm.banners;
+                            if (banners.isEmpty) {
+                              return const SizedBox.shrink();
+                            }
+                            return ImageCarousel(
+                              imageUrls: banners
+                                  .map((b) => b.imageUrl)
+                                  .toList(growable: false),
+                              height: context.carouselHeight,
+                              onTap: (index) {
+                                final articleId = banners[index].articleId;
+                                if (articleId == null || articleId.isEmpty) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    const SnackBar(
+                                      content: Text('Bài viết chưa được gắn vào banner này'),
+                                    ),
+                                  );
+                                  return;
+                                }
+                                Navigator.of(context).push(openArticleRoute(
+                                  Article(
+                                    id: articleId,
+                                    title: banners[index].title,
+                                    body: '',
+                                  ),
+                                ));
+                              },
+                            );
+                          },
+                        ),
                         // Category selector (Large + sub rows).
                         CategorySelector(
                           largeCategories: viewModel.largeCategories,
