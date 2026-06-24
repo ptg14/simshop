@@ -45,6 +45,8 @@ func New(productRepo *handler.ProductRepo, uploadCfg *handler.UploadConfig, allo
 
 	// Categories
 	r.HandleFunc("/api/categories", handler.GetCategoriesHandler(productRepo)).Methods(http.MethodGet)
+	// Structured categories with their large-category parent (for frontend hierarchy).
+	r.HandleFunc("/api/categories/with-parent", handler.GetCategoriesWithParentHandler(productRepo)).Methods(http.MethodGet)
 	categoriesWrite := r.PathPrefix("/api/categories").Subrouter()
 	categoriesWrite.Use(rateLimit)
 	categoriesWrite.HandleFunc("", handler.CreateCategoryHandler(productRepo)).Methods(http.MethodPost)
