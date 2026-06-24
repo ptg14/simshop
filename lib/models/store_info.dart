@@ -14,6 +14,7 @@ class StoreInfo {
     this.phone = '',
     this.email = '',
     this.address = '',
+    this.googleMapsUrl = '',
   });
 
   /// Empty / blank constructor used when the API returns no row.
@@ -24,7 +25,8 @@ class StoreInfo {
         logoUrl = '',
         phone = '',
         email = '',
-        address = '';
+        address = '',
+        googleMapsUrl = '';
 
   factory StoreInfo.fromJson(Map<String, dynamic> json) => StoreInfo(
         name: (json['name'] as String?) ?? '',
@@ -33,6 +35,7 @@ class StoreInfo {
         phone: (json['phone'] as String?) ?? '',
         email: (json['email'] as String?) ?? '',
         address: (json['address'] as String?) ?? '',
+        googleMapsUrl: (json['google_maps_url'] as String?) ?? '',
       );
 
   final String name;
@@ -42,6 +45,11 @@ class StoreInfo {
   final String email;
   final String address;
 
+  /// Google Maps URL that the product detail "Buy at store" CTA
+  /// launches directly. When empty, the CTA falls back to building
+  /// a directions URL from [address]. Edited in admin settings.
+  final String googleMapsUrl;
+
   /// True when no fields have been populated. Used by the UI to show
   /// a fallback rather than empty strings.
   bool get isEmpty =>
@@ -50,7 +58,8 @@ class StoreInfo {
       logoUrl.isEmpty &&
       phone.isEmpty &&
       email.isEmpty &&
-      address.isEmpty;
+      address.isEmpty &&
+      googleMapsUrl.isEmpty;
 
   StoreInfo copyWith({
     String? name,
@@ -59,6 +68,7 @@ class StoreInfo {
     String? phone,
     String? email,
     String? address,
+    String? googleMapsUrl,
   }) =>
       StoreInfo(
         name: name ?? this.name,
@@ -67,6 +77,7 @@ class StoreInfo {
         phone: phone ?? this.phone,
         email: email ?? this.email,
         address: address ?? this.address,
+        googleMapsUrl: googleMapsUrl ?? this.googleMapsUrl,
       );
 
   Map<String, dynamic> toJson() => {
@@ -76,6 +87,7 @@ class StoreInfo {
         'phone': phone,
         'email': email,
         'address': address,
+        'google_maps_url': googleMapsUrl,
       };
 
   @override
@@ -88,9 +100,10 @@ class StoreInfo {
           logoUrl == other.logoUrl &&
           phone == other.phone &&
           email == other.email &&
-          address == other.address;
+          address == other.address &&
+          googleMapsUrl == other.googleMapsUrl;
 
   @override
-  int get hashCode =>
-      Object.hash(name, description, logoUrl, phone, email, address);
+  int get hashCode => Object.hash(name, description, logoUrl, phone, email,
+      address, googleMapsUrl);
 }

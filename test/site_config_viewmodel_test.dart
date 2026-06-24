@@ -92,4 +92,55 @@ void main() {
       expect(vm.siteInfo.name, 'simshop');
     });
   });
+
+  // Slice 2: pin the JSON wire format for the new google_maps_url
+  // field. Must match the Go server tag `google_maps_url` exactly so
+  // the strict JSON decoder doesn't 400 (see lib/models/article.dart
+  // for a previous bug in the same shape).
+  group('StoreInfo JSON wire format', () {
+    test('fromJson reads google_maps_url from the Go server response', () {
+      final info = StoreInfo.fromJson({
+        'id': 1,
+        'name': 'Cửa hàng ABC',
+        'address': '12 Nguyễn Huệ',
+        'google_maps_url':
+            'https://www.google.com/maps/dir/?api=1&destination=12+Nguyen+Hue',
+      });
+      expect(info.googleMapsUrl,
+          'https://www.google.com/maps/dir/?api=1&destination=12+Nguyen+Hue');
+    });
+
+    test('toJson writes google_maps_url (matches Go server tag)', () {
+      const info = StoreInfo(
+        name: 'Cửa hàng ABC',
+        googleMapsUrl:
+            'https://www.google.com/maps/dir/?api=1&destination=12+Nguyen+Hue',
+      );
+      final json = info.toJson();
+      expect(json['google_maps_url'],
+          'https://www.google.com/maps/dir/?api=1&destination=12+Nguyen+Hue');
+      // No 'body' or other shape mismatches.
+      expect(json.containsKey('googleMapsUrl'), isFalse,
+          reason: 'client must send snake_case to match Go tag');
+    });
+
+    test('default googleMapsUrl is empty and isEmpty stays correct', () {
+      const info = StoreInfo(name: 'X');
+      expect(info.googleMapsUrl, '');
+      expect(info.isEmpty, isFalse,
+          reason: 'name is set so isEmpty must be false');
+
+      const blank = StoreInfo.empty();
+      expect(blank.isEmpty, isTrue);
+    });
+
+    test('copyWith preserves untouched fields', () {
+      const a = StoreInfo(name: 'A', googleMapsUrl: 'https://x');
+      final b = a.copyWith(address: '12 Nguyễn Huệ');
+      expect(b.name, 'A');
+      expect(b.googleMapsUrl, 'https://x',
+          reason: 'untouched field must survive copyWith');
+      expect(b.address, '12 Nguyễn Huệ');
+    });
+  });
 }
