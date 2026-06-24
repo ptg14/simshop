@@ -121,48 +121,104 @@ void main() {
   // Slice 1, case 3: when StoreInfo has no address, the CTA must
   // not render at all — the user said "nếu chưa có thông tin địa chỉ
   // thì không cần hiện địa chỉ, nút khi này không có tác dụng gì".
+  // Slice 4 strengthens this: hide the CTA when BOTH googleMapsUrl
+  // and address are empty (the previous test only covered address).
   testWidgets(
-      'ProductDetailScreen: hides the buy CTA when address is empty',
+      'ProductDetailScreen: hides the buy CTA when both URL and address are empty',
       (tester) async {
     final product = _buildProduct();
 
     await tester.pumpWidget(_wrap(
       ProductDetailScreen(product: product),
-      // Default empty StoreInfo.
+      // Default empty StoreInfo (no address, no google_maps_url).
     ));
     await tester.pumpAndSettle();
 
     // The CTA wrapper carries a Key so we can scope the search.
     expect(find.byKey(const Key('buy-at-store-cta')), findsNothing,
-        reason: 'CTA wrapper must not render when address is empty');
+        reason: 'CTA wrapper must not render when both URL and address are empty');
   });
 
-  // Slice 2: pin the URL builder. Lives at the top level of
+  // Slice 4: pin the URL builder. Lives at the top level of
   // product_detail_screen.dart so it can be unit-tested without a
-  // widget tree. URL-encode rules from `Uri.encodeComponent`:
+  // widget tree. The prefix is the Google Maps *directions* URL
+  // (`/maps/dir/`) so Maps opens with origin=current location and
+  // destination=address. URL-encode rules from `Uri.encodeComponent`:
   //   - space -> %20
   //   - ','   -> %2C
   //   - multi-byte UTF-8 chars (e.g. 'ễ' = U+1EB5) -> %E1%BB%85
   //   - ASCII letters and digits are passed through.
-  test('buildGoogleMapsSearchUrl: ASCII address encodes spaces only', () {
-    expect(buildGoogleMapsSearchUrl('123 Main St'),
-        'https://www.google.com/maps/search/?api=1&query=123%20Main%20St');
+  test('buildGoogleMapsDirectionsUrl: ASCII address encodes spaces only', () {
+    expect(buildGoogleMapsDirectionsUrl('123 Main St'),
+        'https://www.google.com/maps/dir/?api=1&destination=123%20Main%20St');
   });
 
-  test('buildGoogleMapsSearchUrl: Vietnamese diacritics are UTF-8 escaped',
+  test(
+      'buildGoogleMapsDirectionsUrl: Vietnamese diacritics are UTF-8 escaped',
       () {
     // 'ễ' is U+1EB5 → UTF-8 0xE1 0xBB 0x85 → %E1%BB%85
     // 'ệ' is U+1EC7 → UTF-8 0xE1 0xBB 0x87 → %E1%BB%87
     // ','  is U+002C → %2C
     // ' '  is U+0020 → %20
-    expect(buildGoogleMapsSearchUrl('123 Nguyễn Huệ, Q.1'),
-        'https://www.google.com/maps/search/?api=1&query=123%20Nguy%E1%BB%85n%20Hu%E1%BB%87%2C%20Q.1');
+    expect(buildGoogleMapsDirectionsUrl('123 Nguyễn Huệ, Q.1'),
+        'https://www.google.com/maps/dir/?api=1&destination=123%20Nguy%E1%BB%85n%20Hu%E1%BB%87%2C%20Q.1');
   });
 
-  test('buildGoogleMapsSearchUrl: empty address returns the prefix only', () {
+  test('buildGoogleMapsDirectionsUrl: empty address returns the prefix only',
+      () {
     // Caller is expected to short-circuit on empty input; this test
     // pins the current behavior (no special handling).
-    expect(buildGoogleMapsSearchUrl(''),
-        'https://www.google.com/maps/search/?api=1&query=');
+    expect(buildGoogleMapsDirectionsUrl(''),
+        'https://www.google.com/maps/dir/?api=1&destination=');
+  });
+
+  // Slice 4: pin the three-tier URL resolver that the CTA uses.
+  // Tier 1: googleMapsUrl set → return it as-is.
+  // Tier 2: googleMapsUrl empty, address set → return the built
+  //         directions URL with destination=address.
+  // Tier 3: both empty → return '' (caller hides the button).
+  group('resolveStoreMapUrl', () {
+    test('tier 1: returns the configured googleMapsUrl verbatim', () {
+      const info = StoreInfo(
+        address: '123 Nguyễn Huệ',
+        googleMapsUrl:
+            'https://www.google.com/maps/dir/?api=1&destination=12+Nguyen+Hue&travelmode=driving',
+      );
+      expect(resolveStoreMapUrl(info),
+          'https://www.google.com/maps/dir/?api=1&destination=12+Nguyen+Hue&travelmode=driving');
+    });
+
+    test('tier 2: builds a directions URL from the address when URL is empty',
+        () {
+      const info = StoreInfo(address: '123 Nguyễn Huệ');
+      expect(resolveStoreMapUrl(info),
+          'https://www.google.com/maps/dir/?api=1&destination=123%20Nguy%E1%BB%85n%20Hu%E1%BB%87');
+    });
+
+    test('tier 3: returns empty string when both are empty', () {
+      const info = StoreInfo();
+      expect(resolveStoreMapUrl(info), '');
+    });
+  });
+
+  // Slice 4: the CTA shows the address as the label regardless of
+  // which tier was used to resolve the URL. Test that the label
+  // matches the address even when a googleMapsUrl is configured.
+  testWidgets(
+      'ProductDetailScreen: CTA label is the address even when googleMapsUrl is set',
+      (tester) async {
+    final product = _buildProduct();
+
+    await tester.pumpWidget(_wrap(
+      ProductDetailScreen(product: product),
+      storeInfo: const StoreInfo(
+        address: '12 Nguyễn Huệ',
+        googleMapsUrl: 'https://www.google.com/maps/dir/?api=1&destination=foo',
+      ),
+    ));
+    await tester.pumpAndSettle();
+
+    // The address appears as the button label.
+    expect(find.text('12 Nguyễn Huệ'), findsWidgets);
   });
 }

@@ -4,18 +4,34 @@ import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../models/product.dart';
+import '../models/store_info.dart';
 import '../utils/currency_formatter.dart';
 import '../utils/responsive.dart';
 import '../viewmodels/site_config_viewmodel.dart';
 import '../widgets/network_image.dart';
 import '../widgets/site_info_footer.dart';
 
-/// Build a Google Maps "search" URL for [address]. The query parameter
-/// is URL-encoded so Vietnamese diacritics and commas round-trip
-/// safely through the browser's intent dispatch on Android and
-/// `openURL:` on iOS.
-String buildGoogleMapsSearchUrl(String address) =>
-    'https://www.google.com/maps/search/?api=1&query=${Uri.encodeComponent(address)}';
+/// Build a Google Maps *directions* URL with [address] as the
+/// destination. The `origin` parameter is omitted so Maps uses the
+/// device's current location automatically. URL-encoding handles
+/// Vietnamese diacritics and commas so they round-trip through
+/// Android Intent and iOS `openURL:` intact.
+String buildGoogleMapsDirectionsUrl(String address) =>
+    'https://www.google.com/maps/dir/?api=1&destination=${Uri.encodeComponent(address)}';
+
+/// Resolve the URL the product detail "Buy at store" CTA should
+/// launch, following the user's three-tier flow:
+///
+///   1. [StoreInfo.googleMapsUrl] set → return it verbatim (admin
+///      controls the destination and may pre-set travel mode, etc.).
+///   2. Only [StoreInfo.address] set → return a built directions URL
+///      with the address as the destination.
+///   3. Both empty → return '' (caller hides the button).
+String resolveStoreMapUrl(StoreInfo info) {
+  if (info.googleMapsUrl.isNotEmpty) return info.googleMapsUrl;
+  if (info.address.isNotEmpty) return buildGoogleMapsDirectionsUrl(info.address);
+  return '';
+}
 
 /// Product detail screen.
 class ProductDetailScreen extends StatefulWidget {
@@ -37,8 +53,8 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
     product = widget.product;
   }
 
-  Future<void> _openMap(String address) async {
-    final uri = Uri.parse(buildGoogleMapsSearchUrl(address));
+  Future<void> _openMap(String url) async {
+    final uri = Uri.parse(url);
     await launchUrl(uri, mode: LaunchMode.externalApplication);
   }
 
@@ -406,14 +422,19 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                         )),
                       ],
 
-                      /// Buy at store CTA: opens Google Maps and searches
-                      /// for the store address. Hidden entirely when
-                      /// the address is empty so end users on an
-                      /// unconfigured install don't see a dead button.
+                      /// Buy at store CTA: opens Google Maps. Three-tier
+                      /// resolution:
+                      ///   1. configured googleMapsUrl -> launch as-is
+                      ///   2. configured address -> launch directions
+                      ///      URL with the address as destination
+                      ///   3. both empty -> no button
+                      /// Label is always the address so the user sees
+                      /// where they're going regardless of tier.
                       Consumer<SiteConfigViewModel>(
                         builder: (context, vm, _) {
-                          final address = vm.siteInfo.address;
-                          if (address.isEmpty) {
+                          final info = vm.siteInfo;
+                          final url = resolveStoreMapUrl(info);
+                          if (url.isEmpty) {
                             return const SizedBox.shrink();
                           }
                           return SizedBox(
@@ -425,9 +446,9 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                               desktop: 48,
                             ),
                             child: FilledButton.icon(
-                              onPressed: () => _openMap(address),
+                              onPressed: () => _openMap(url),
                               icon: const Icon(Icons.place_outlined),
-                              label: Text(address),
+                              label: Text(info.address),
                             ),
                           );
                         },
