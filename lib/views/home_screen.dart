@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../models/article.dart';
 import '../models/product.dart';
 import '../utils/page_transitions.dart';
 import '../utils/responsive.dart';
@@ -12,6 +13,7 @@ import '../widgets/product_card.dart';
 import '../widgets/search_bar.dart';
 import '../widgets/site_info_footer.dart';
 import 'admin/admin_dashboard.dart';
+import 'article_screen.dart';
 import 'product_detail_screen.dart';
 
 /// Home screen displaying products and promotions.
@@ -95,7 +97,8 @@ class _HomeScreenState extends State<HomeScreen> {
                           onSearch: viewModel.searchProducts,
                           onClear: viewModel.resetSearch,
                         ),
-                        // Promotional image carousel
+                        // Promotional image carousel. Slice 1 uses hardcoded
+                        // mock banners; slice 3 swaps in viewModel.banners.
                         if (viewModel.getPromotionalProducts().isNotEmpty)
                           ImageCarousel(
                             imageUrls: const [
@@ -104,6 +107,20 @@ class _HomeScreenState extends State<HomeScreen> {
                               'https://picsum.photos/800/300?random=3',
                             ],
                             height: context.carouselHeight,
+                            onTap: (index) {
+                              Navigator.of(context).push(openArticleRoute(
+                                Article(
+                                  id: 'mock-$index',
+                                  title: 'Ưu đãi tháng ${index + 1}',
+                                  body: '## Điểm nổi bật\n\n'
+                                      '- Giảm giá lên tới **30%**\n'
+                                      '- Áp dụng cho nhiều danh mục\n'
+                                      '- Thời gian có hạn\n\n'
+                                      '_Bài viết này là mẫu. Trong slice 3, '
+                                      'banner thật sẽ mở bài viết từ backend._',
+                                ),
+                              ));
+                            },
                           ),
                         // Category selector (Large + sub rows).
                         CategorySelector(

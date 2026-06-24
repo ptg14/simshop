@@ -90,8 +90,12 @@ ios/
 linux/
 macos/
 windows/
+
+test/
 backend/backend
 backend/go.mod
 backend/go.sum
 backend/localhost:8080
 backend/uploads/
+.metadata
+pubspec.lock

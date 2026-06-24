@@ -11,11 +11,16 @@ class ImageCarousel extends StatefulWidget {
     required this.imageUrls,
     this.height,
     this.autoScrollDuration = const Duration(seconds: 3),
+    this.onTap,
   });
 
   final List<String> imageUrls;
   final double? height;
   final Duration autoScrollDuration;
+
+  /// Called when the user taps a slide. Receives the slide index.
+  /// When null (default), the carousel is non-interactive.
+  final void Function(int index)? onTap;
 
   @override
   State<ImageCarousel> createState() => _ImageCarouselState();
@@ -69,10 +74,17 @@ class _ImageCarouselState extends State<ImageCarousel> {
                 controller: _controller,
                 onPageChanged: (i) => setState(() => _current = i),
                 itemCount: widget.imageUrls.length,
-                itemBuilder: (context, index) => AppNetworkImage(
-                  url: widget.imageUrls[index],
-                  fit: BoxFit.cover,
-                ),
+                itemBuilder: (context, index) {
+                  final child = AppNetworkImage(
+                    url: widget.imageUrls[index],
+                    fit: BoxFit.cover,
+                  );
+                  if (widget.onTap == null) return child;
+                  return InkWell(
+                    onTap: () => widget.onTap!(index),
+                    child: child,
+                  );
+                },
               ),
             ),
             if (widget.imageUrls.length > 1)
