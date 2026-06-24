@@ -72,23 +72,32 @@ class OptionsEditorWithImages extends StatelessWidget {
                     const SizedBox(width: 8),
                     Expanded(
                       flex: 2,
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const Text('Ảnh',
-                              style: TextStyle(fontSize: 12)),
-                          const SizedBox(height: 6),
-                          _OptionImageRow(
-                            option: options[i],
-                            existingImages: existingImages,
-                            newImageBytes: newImageBytes,
-                            onChanged: (updated) {
-                              final list = List<Option>.from(options);
-                              list[i] = updated;
-                              onChanged(list);
-                            },
-                          ),
-                        ],
+                      // Material's TextFormField reserves ~8px of top
+                      // padding inside its decorator so the floating
+                      // label has breathing room above the border. We
+                      // mirror that offset here so the "Ảnh" header
+                      // aligns with the floating "Tên option" label
+                      // instead of sitting flush to the top of the row.
+                      child: Padding(
+                        padding: const EdgeInsets.only(top: 8),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text('Ảnh',
+                                style: TextStyle(fontSize: 12)),
+                            const SizedBox(height: 6),
+                            _OptionImageRow(
+                              option: options[i],
+                              existingImages: existingImages,
+                              newImageBytes: newImageBytes,
+                              onChanged: (updated) {
+                                final list = List<Option>.from(options);
+                                list[i] = updated;
+                                onChanged(list);
+                              },
+                            ),
+                          ],
+                        ),
                       ),
                     ),
                     IconButton(
