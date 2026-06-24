@@ -4,6 +4,7 @@ import '../utils/currency_formatter.dart';
 import '../utils/page_transitions.dart';
 import '../utils/responsive.dart';
 import '../widgets/network_image.dart';
+import '../widgets/site_info_footer.dart';
 import 'admin/admin_dashboard.dart';
 
 /// Product detail screen.
@@ -445,6 +446,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                     ],
                   ),
                 ),
+                const SiteInfoFooter(),
               ],
             ),
           ),

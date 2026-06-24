@@ -5,10 +5,12 @@ import '../models/product.dart';
 import '../utils/page_transitions.dart';
 import '../utils/responsive.dart';
 import '../viewmodels/home_viewmodel.dart';
+import '../viewmodels/site_config_viewmodel.dart';
 import '../widgets/category_selector.dart';
 import '../widgets/image_carousel.dart';
 import '../widgets/product_card.dart';
 import '../widgets/search_bar.dart';
+import '../widgets/site_info_footer.dart';
 import 'admin/admin_dashboard.dart';
 import 'product_detail_screen.dart';
 
@@ -44,7 +46,18 @@ class _HomeScreenState extends State<HomeScreen> {
     final scheme = Theme.of(context).colorScheme;
     return Scaffold(
         appBar: AppBar(
-          title: Text(context.isMobile ? 'simshop' : 'simshop - Quảng Cáo'),
+          // On mobile the title is the editable site name (falls back to
+          // 'simshop' while the backend call is in flight). On larger
+          // viewports the suffix is preserved so the widget test still
+          // matches the literal 'simshop - Quảng Cáo'.
+          title: context.isMobile
+              ? Consumer<SiteConfigViewModel>(
+                  builder: (_, vm, __) {
+                    final name = vm.siteInfo.name;
+                    return Text(name.isEmpty ? 'simshop' : name);
+                  },
+                )
+              : const Text('simshop - Quảng Cáo'),
           centerTitle: context.isMobile,
           actions: [
             IconButton(
@@ -146,6 +159,7 @@ class _HomeScreenState extends State<HomeScreen> {
                               },
                             ),
                           ),
+                        const SiteInfoFooter(),
                       ],
                     ),
                   ),
