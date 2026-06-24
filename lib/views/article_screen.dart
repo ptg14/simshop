@@ -140,12 +140,19 @@ class _ArticleBody extends StatelessWidget {
                       ),
                 ),
                 const SizedBox(height: 12),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: products
-                      .map((p) => _ProductChip(stub: p))
-                      .toList(growable: false),
+                // Vertical list of products (one per row), not a
+                // chip wrap. User feedback: chips read as a tag cloud
+                // and obscured the article's CTA; a list surfaces each
+                // product as a tappable card with image + name.
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    for (final stub in products)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 8),
+                        child: _ProductRow(stub: stub),
+                      ),
+                  ],
                 ),
               ],
               const SizedBox(height: 32),
@@ -157,32 +164,80 @@ class _ArticleBody extends StatelessWidget {
   }
 }
 
-class _ProductChip extends StatelessWidget {
-  const _ProductChip({required this.stub});
+/// A single product row inside the article body. Renders as a
+/// tappable Card with a leading thumbnail, the product name, and a
+/// chevron hint so the row reads as "tap to open the product".
+class _ProductRow extends StatelessWidget {
+  const _ProductRow({required this.stub});
   final ProductStub stub;
 
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    return ActionChip(
-      avatar: stub.imageUrl.isEmpty
-          ? Icon(Icons.shopping_bag_outlined, size: 18, color: scheme.primary)
-          : ClipRRect(
-              borderRadius: BorderRadius.circular(4),
-              child: Image.network(
-                stub.imageUrl,
-                width: 24,
-                height: 24,
-                fit: BoxFit.cover,
-                errorBuilder: (_, __, ___) => Icon(
-                  Icons.shopping_bag_outlined,
-                  size: 18,
-                  color: scheme.primary,
+    final theme = Theme.of(context);
+    return Card(
+      margin: EdgeInsets.zero,
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: () => _openProduct(context),
+        child: Padding(
+          padding: const EdgeInsets.all(8),
+          child: Row(
+            children: [
+              // Thumbnail (or placeholder icon).
+              Container(
+                width: 56,
+                height: 56,
+                decoration: BoxDecoration(
+                  color: scheme.surfaceContainerHighest,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                clipBehavior: Clip.antiAlias,
+                child: stub.imageUrl.isEmpty
+                    ? Icon(Icons.shopping_bag_outlined,
+                        color: scheme.onSurfaceVariant)
+                    : Image.network(
+                        stub.imageUrl,
+                        width: 56,
+                        height: 56,
+                        fit: BoxFit.cover,
+                        errorBuilder: (_, __, ___) => Icon(
+                          Icons.shopping_bag_outlined,
+                          color: scheme.onSurfaceVariant,
+                        ),
+                      ),
+              ),
+              const SizedBox(width: 12),
+              // Name (left-aligned, ellipsized).
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      stub.name.isEmpty ? stub.id : stub.name,
+                      style: theme.textTheme.bodyLarge?.copyWith(
+                        fontWeight: FontWeight.w600,
+                        color: scheme.onSurface,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      'Xem chi tiết',
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: scheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ],
                 ),
               ),
-            ),
-      label: Text(stub.name.isEmpty ? stub.id : stub.name),
-      onPressed: () => _openProduct(context),
+              Icon(Icons.chevron_right, color: scheme.onSurfaceVariant),
+            ],
+          ),
+        ),
+      ),
     );
   }
 
