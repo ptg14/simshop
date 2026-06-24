@@ -160,6 +160,35 @@ func runMigrations(db *sql.DB) error {
 		return err
 	}
 
+	// Articles: editorial content referenced by banner_slides. Body is
+	// Markdown; product_ids is a JSON array of product IDs the article
+	// mentions (rendered as chips in the article screen).
+	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS articles (
+		id TEXT PRIMARY KEY,
+		title TEXT NOT NULL,
+		body_markdown TEXT NOT NULL DEFAULT '',
+		cover_image_url TEXT NOT NULL DEFAULT '',
+		product_ids TEXT NOT NULL DEFAULT '[]',
+		created_at INTEGER NOT NULL
+	)`); err != nil {
+		return err
+	}
+
+	// Banner slides shown on the home carousel. Carries a 1-1
+	// article_id; ON DELETE SET NULL so deleting an article leaves a
+	// banner that goes nowhere rather than 500-ing the home carousel.
+	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS banner_slides (
+		id TEXT PRIMARY KEY,
+		image_url TEXT NOT NULL,
+		title TEXT NOT NULL DEFAULT '',
+		subtitle TEXT NOT NULL DEFAULT '',
+		ord INTEGER NOT NULL DEFAULT 0,
+		article_id TEXT,
+		FOREIGN KEY(article_id) REFERENCES articles(id) ON DELETE SET NULL
+	)`); err != nil {
+		return err
+	}
+
 	return nil
 }
 

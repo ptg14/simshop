@@ -9,7 +9,7 @@ import (
 )
 
 // New returns a mux.Router with all routes and middleware registered.
-func New(productRepo *handler.ProductRepo, storeRepo *handler.StoreRepo, uploadCfg *handler.UploadConfig, allowedOrigin string) *mux.Router {
+func New(productRepo *handler.ProductRepo, storeRepo *handler.StoreRepo, articleRepo *handler.ArticleRepo, uploadCfg *handler.UploadConfig, allowedOrigin string) *mux.Router {
 	r := mux.NewRouter()
 	// Global middleware – use configurable allowed origin.
 	r.Use(middleware.CORSMiddleware(allowedOrigin))
@@ -65,6 +65,24 @@ func New(productRepo *handler.ProductRepo, storeRepo *handler.StoreRepo, uploadC
 	storeInfoWrite := r.PathPrefix("/api/store-info").Subrouter()
 	storeInfoWrite.Use(rateLimit)
 	storeInfoWrite.HandleFunc("", handler.UpdateStoreInfoHandler(storeRepo)).Methods(http.MethodPut)
+
+	// Banners (carousel). GET is public; mutating routes are rate-limited.
+	r.HandleFunc("/api/banners", handler.ListBannersHandler(articleRepo)).Methods(http.MethodGet)
+	bannersWrite := r.PathPrefix("/api/banners").Subrouter()
+	bannersWrite.Use(rateLimit)
+	bannersWrite.HandleFunc("", handler.CreateBannerHandler(articleRepo)).Methods(http.MethodPost)
+	bannersWrite.HandleFunc("/{id}", handler.UpdateBannerHandler(articleRepo)).Methods(http.MethodPut)
+	bannersWrite.HandleFunc("/{id}", handler.DeleteBannerHandler(articleRepo)).Methods(http.MethodDelete)
+
+	// Articles. The GET on /:id joins the products the article
+	// mentions (used by the home carousel tap → article screen flow).
+	r.HandleFunc("/api/articles/{id}", handler.GetArticleWithProductsHandler(articleRepo, productRepo)).Methods(http.MethodGet)
+	r.HandleFunc("/api/articles", handler.ListArticlesHandler(articleRepo)).Methods(http.MethodGet)
+	articlesWrite := r.PathPrefix("/api/articles").Subrouter()
+	articlesWrite.Use(rateLimit)
+	articlesWrite.HandleFunc("", handler.CreateArticleHandler(articleRepo)).Methods(http.MethodPost)
+	articlesWrite.HandleFunc("/{id}", handler.UpdateArticleHandler(articleRepo)).Methods(http.MethodPut)
+	articlesWrite.HandleFunc("/{id}", handler.DeleteArticleHandler(articleRepo)).Methods(http.MethodDelete)
 
 	// Upload route with rate limiting.
 	uploadWrite := r.PathPrefix("/api/upload").Subrouter()

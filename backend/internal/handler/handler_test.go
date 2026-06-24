@@ -48,6 +48,10 @@ func newTestServer(t *testing.T) (*httptest.Server, *sql.DB, func()) {
 		t.Fatalf("open db: %v", err)
 	}
 	database.SetMaxOpenConns(1)
+	// Enable FK enforcement so ON DELETE SET NULL actually fires.
+	if _, err := database.Exec(`PRAGMA foreign_keys = ON`); err != nil {
+		t.Fatalf("enable FK: %v", err)
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	if err := database.PingContext(ctx); err != nil {
@@ -62,9 +66,10 @@ func newTestServer(t *testing.T) (*httptest.Server, *sql.DB, func()) {
 
 	productRepo := db.NewProductRepo(database)
 	storeRepo := db.NewStoreRepo(database)
+	articleRepo := db.NewArticleRepo(database)
 	uploadCfg := uploadConfigForTest(uploadsDir)
 
-	r := router.New(productRepo, storeRepo, uploadCfg, "*")
+	r := router.New(productRepo, storeRepo, articleRepo, uploadCfg, "*")
 	srv := httptest.NewServer(r)
 
 	cleanup := func() {
@@ -128,6 +133,24 @@ func applyMigrations(d *db.DB) error {
             address TEXT NOT NULL DEFAULT ''
         )`,
 		`INSERT OR IGNORE INTO store_info (id) VALUES (1)`,
+		`ALTER TABLE products ADD COLUMN categories TEXT`,
+		`CREATE TABLE IF NOT EXISTS articles (
+			id TEXT PRIMARY KEY,
+			title TEXT NOT NULL,
+			body_markdown TEXT NOT NULL DEFAULT '',
+			cover_image_url TEXT NOT NULL DEFAULT '',
+			product_ids TEXT NOT NULL DEFAULT '[]',
+			created_at INTEGER NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS banner_slides (
+			id TEXT PRIMARY KEY,
+			image_url TEXT NOT NULL,
+			title TEXT NOT NULL DEFAULT '',
+			subtitle TEXT NOT NULL DEFAULT '',
+			ord INTEGER NOT NULL DEFAULT 0,
+			article_id TEXT,
+			FOREIGN KEY(article_id) REFERENCES articles(id) ON DELETE SET NULL
+		)`,
 	}
 	for _, s := range stmts {
 		if _, err := d.Exec(s); err != nil {
@@ -254,4 +277,210 @@ func readAll(resp *http.Response) ([]byte, error) {
 	var buf bytes.Buffer
 	_, err := buf.ReadFrom(resp.Body)
 	return buf.Bytes(), err
+}
+
+// ---------- Banner + article tests ----------
+
+// TestBannerListEmpty asserts GET /api/banners returns an empty list
+// (not 404) on a fresh database so the home carousel can render
+// without special-casing.
+func TestBannerListEmpty(t *testing.T) {
+	srv, _, cleanup := newTestServer(t)
+	defer cleanup()
+
+	resp, err := http.Get(srv.URL + "/api/banners")
+	if err != nil {
+		t.Fatalf("GET: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	var got map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	arr, ok := got["banners"].([]any)
+	if !ok {
+		t.Fatalf("banners field missing or not array: %v", got["banners"])
+	}
+	if len(arr) != 0 {
+		t.Errorf("len(banners) = %d, want 0", len(arr))
+	}
+}
+
+// TestArticleCreateAndGetWithProducts exercises the full article CRUD
+// plus the joined /api/articles/:id endpoint. Creates a product,
+// creates an article that mentions the product, GETs the joined
+// payload, and asserts the product stub is returned with the chip
+// fields populated.
+func TestArticleCreateAndGetWithProducts(t *testing.T) {
+	srv, database, cleanup := newTestServer(t)
+	defer cleanup()
+
+	// Seed a product the article will reference.
+	if _, err := database.Exec(`INSERT INTO products (id, name, description, price, image_url, category, rating, specs) VALUES (?, ?, ?, ?, ?, ?, ?, '[]')`,
+		"p-1", "Áo thun", "Cotton 100%", 99000.0, "http://example.com/shirt.jpg", "Thời trang", 4.5); err != nil {
+		t.Fatalf("seed product: %v", err)
+	}
+
+	// Create article.
+	body := strings.NewReader(`{
+		"id": "a-1",
+		"title": "BST mùa hè",
+		"body_markdown": "## Mới về\n\nBộ sưu tập mới.",
+		"cover_image_url": "http://localhost:8080/uploads/cover.jpg",
+		"product_ids": ["p-1"]
+	}`)
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/api/articles", body)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("POST: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		body, _ := readAll(resp)
+		t.Fatalf("POST status = %d, body=%s", resp.StatusCode, string(body))
+	}
+
+	// Debug: what did the server actually store?
+	var storedProductIDs string
+	if err := database.QueryRow(`SELECT product_ids FROM articles WHERE id = 'a-1'`).Scan(&storedProductIDs); err != nil {
+		t.Fatalf("re-read stored product_ids: %v", err)
+	}
+	if storedProductIDs != `["p-1"]` {
+		t.Errorf("stored product_ids = %q, want [\"p-1\"]", storedProductIDs)
+	}
+
+	// GET joined payload.
+	resp2, err := http.Get(srv.URL + "/api/articles/a-1")
+	if err != nil {
+		t.Fatalf("GET: %v", err)
+	}
+	defer resp2.Body.Close()
+	if resp2.StatusCode != http.StatusOK {
+		body, _ := readAll(resp2)
+		t.Fatalf("GET status = %d, body=%s", resp2.StatusCode, string(body))
+	}
+	var got map[string]any
+	if err := json.NewDecoder(resp2.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	article, ok := got["article"].(map[string]any)
+	if !ok {
+		t.Fatalf("article field missing: %v", got)
+	}
+	if article["title"] != "BST mùa hè" {
+		t.Errorf("article.title = %v, want BST mùa hè", article["title"])
+	}
+	products, ok := got["products"].([]any)
+	if !ok {
+		t.Fatalf("products field missing: %v", got)
+	}
+	if len(products) != 1 {
+		t.Fatalf("len(products) = %d, want 1", len(products))
+	}
+	p0 := products[0].(map[string]any)
+	if p0["id"] != "p-1" {
+		t.Errorf("product.id = %v, want p-1", p0["id"])
+	}
+	if p0["name"] != "Áo thun" {
+		t.Errorf("product.name = %v, want Áo thun", p0["name"])
+	}
+}
+
+// TestArticleMissingProductSkippedInJoin asserts the join silently
+// drops product IDs that no longer exist (e.g., the referenced
+// product was deleted). The article itself is still returned.
+func TestArticleMissingProductSkippedInJoin(t *testing.T) {
+	srv, _, cleanup := newTestServer(t)
+	defer cleanup()
+
+	body := strings.NewReader(`{
+		"id": "a-2",
+		"title": "Bài viết",
+		"body_markdown": "x",
+		"product_ids": ["nonexistent"]
+	}`)
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/api/articles", body)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("POST: %v", err)
+	}
+	resp.Body.Close()
+
+	resp2, err := http.Get(srv.URL + "/api/articles/a-2")
+	if err != nil {
+		t.Fatalf("GET: %v", err)
+	}
+	defer resp2.Body.Close()
+	var got map[string]any
+	if err := json.NewDecoder(resp2.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	products := got["products"].([]any)
+	if len(products) != 0 {
+		t.Errorf("len(products) = %d, want 0", len(products))
+	}
+}
+
+// TestArticleDeleteCascadesBannerFK asserts that deleting an article
+// leaves existing banner_slides with article_id set to NULL — so the
+// home carousel keeps rendering but a tap leads to a friendly empty
+// state.
+func TestArticleDeleteCascadesBannerFK(t *testing.T) {
+	srv, database, cleanup := newTestServer(t)
+	defer cleanup()
+
+	if _, err := database.Exec(`INSERT INTO articles (id, title, body_markdown, product_ids, created_at) VALUES (?, ?, ?, '[]', ?)`,
+		"a-3", "Bài viết", "x", time.Now().Unix()); err != nil {
+		t.Fatalf("seed article: %v", err)
+	}
+	if _, err := database.Exec(`INSERT INTO banner_slides (id, image_url, ord, article_id) VALUES (?, ?, ?, ?)`,
+		"b-1", "http://example.com/img.jpg", 0, "a-3"); err != nil {
+		t.Fatalf("seed banner: %v", err)
+	}
+
+	req, _ := http.NewRequest(http.MethodDelete, srv.URL+"/api/articles/a-3", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("DELETE: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("DELETE status = %d, want 204", resp.StatusCode)
+	}
+
+	var articleID sql.NullString
+	if err := database.QueryRow(`SELECT article_id FROM banner_slides WHERE id = 'b-1'`).Scan(&articleID); err != nil {
+		t.Fatalf("re-read: %v", err)
+	}
+	if articleID.Valid {
+		t.Errorf("article_id should be NULL after delete, got %q", articleID.String)
+	}
+}
+
+// TestBannerCreateRequiresImageURL asserts the only required-field
+// check on banners.
+func TestBannerCreateRequiresImageURL(t *testing.T) {
+	srv, _, cleanup := newTestServer(t)
+	defer cleanup()
+
+	body := strings.NewReader(`{"id": "b-2", "title": "no img"}`)
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/api/banners", body)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("POST: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", resp.StatusCode)
+	}
+	respBody, _ := readAll(resp)
+	if !bytes.Contains(respBody, []byte("image_url is required")) {
+		t.Errorf("body = %s, want it to mention 'image_url is required'", string(respBody))
+	}
 }
