@@ -85,4 +85,33 @@ void main() {
 
     expect(find.text('Bài viết đã bị xóa'), findsOneWidget);
   });
+
+  // Regression: the cover image (when present) must render *before* the
+  // title, so the article reads as Banner → Body → Products. This pins
+  // the order at `lib/views/article_screen.dart:99-151` against future
+  // refactors that might swap the layout.
+  testWidgets('ArticleScreen renders cover image before the title',
+      (tester) async {
+    const article = Article(
+      id: 'a-1',
+      title: 'Khuyến mãi tháng 6',
+      body: 'Nội dung ngắn.',
+      coverImageUrl: 'https://example.test/cover.jpg',
+    );
+    final svc = _FakeArticleService(articles: [article]);
+
+    await tester.pumpWidget(_wrap(
+      const ArticleScreen(articleId: 'a-1'),
+      svc,
+    ));
+    await tester.pumpAndSettle();
+
+    // The cover image (Image.network) must be vertically above the
+    // title text. We compare widget top coordinates (dy in screen
+    // space). The 1px tolerance guards against sub-pixel rounding.
+    final coverTop = tester.getTopLeft(find.byType(Image)).dy;
+    final titleTop = tester.getTopLeft(find.text('Khuyến mãi tháng 6')).dy;
+    expect(coverTop, lessThan(titleTop),
+        reason: 'cover image must render above the title');
+  });
 }
