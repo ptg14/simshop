@@ -24,7 +24,13 @@ class AdminDashboard extends StatelessWidget {
               ? NavigationRail(
                   selectedIndex: _getTabIndex(viewModel.selectedTab),
                   onDestinationSelected: (index) {
-                    const tabs = ['overview', 'products', 'categories', 'settings'];
+                    const tabs = [
+                      'overview',
+                      'products',
+                      'categories',
+                      'articles',
+                      'settings',
+                    ];
                     viewModel.selectTab(tabs[index]);
                   },
                   labelType: context.useFullNavigationRail
@@ -45,6 +51,11 @@ class AdminDashboard extends StatelessWidget {
                       icon: Icon(Icons.category_outlined),
                       selectedIcon: Icon(Icons.category),
                       label: Text('Danh mục'),
+                    ),
+                    NavigationRailDestination(
+                      icon: Icon(Icons.article_outlined),
+                      selectedIcon: Icon(Icons.article),
+                      label: Text('Bài viết'),
                     ),
                     NavigationRailDestination(
                       icon: Icon(Icons.settings_outlined),
@@ -87,6 +98,7 @@ class AdminDashboard extends StatelessWidget {
                         (tab: 'overview', label: 'Tổng quan', icon: Icons.dashboard_outlined),
                         (tab: 'products', label: 'Sản phẩm', icon: Icons.inventory_2_outlined),
                         (tab: 'categories', label: 'Danh mục', icon: Icons.category_outlined),
+                        (tab: 'articles', label: 'Bài viết', icon: Icons.article_outlined),
                         (tab: 'settings', label: 'Cài đặt', icon: Icons.settings_outlined),
                       ].map(
                         (t) => ListTile(
@@ -135,8 +147,10 @@ class AdminDashboard extends StatelessWidget {
         return 1;
       case 'categories':
         return 2;
-      case 'settings':
+      case 'articles':
         return 3;
+      case 'settings':
+        return 4;
       default:
         return 0;
     }
@@ -150,6 +164,8 @@ class AdminDashboard extends StatelessWidget {
         return const AdminProductsScreen();
       case 'categories':
         return const AdminCategoriesScreen();
+      case 'articles':
+        return const AdminArticlesScreen();
       case 'settings':
         return const AdminSettingsScreen();
       default:

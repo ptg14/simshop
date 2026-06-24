@@ -29,7 +29,7 @@ class AdminViewModel extends ChangeNotifier {
   // UI states
   bool _isLoading = false;
   String? _error;
-  String _selectedTab = 'overview'; // overview, products, categories, settings
+  String _selectedTab = 'overview'; // overview, products, categories, articles, settings
 
   // Getters
   List<Product> get products => _products;
