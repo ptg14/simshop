@@ -9,7 +9,7 @@ import (
 )
 
 // New returns a mux.Router with all routes and middleware registered.
-func New(productRepo *handler.ProductRepo, uploadCfg *handler.UploadConfig, allowedOrigin string) *mux.Router {
+func New(productRepo *handler.ProductRepo, storeRepo *handler.StoreRepo, uploadCfg *handler.UploadConfig, allowedOrigin string) *mux.Router {
 	r := mux.NewRouter()
 	// Global middleware – use configurable allowed origin.
 	r.Use(middleware.CORSMiddleware(allowedOrigin))
@@ -58,6 +58,13 @@ func New(productRepo *handler.ProductRepo, uploadCfg *handler.UploadConfig, allo
 	largeCategoriesWrite.Use(rateLimit)
 	largeCategoriesWrite.HandleFunc("", handler.CreateLargeCategoryHandler(productRepo)).Methods(http.MethodPost)
 	largeCategoriesWrite.HandleFunc("/{name}", handler.DeleteLargeCategoryHandler(productRepo)).Methods(http.MethodDelete)
+
+	// Site info (singleton). GET is public (used by home + product detail),
+	// PUT is admin-only and rate-limited.
+	r.HandleFunc("/api/store-info", handler.GetStoreInfoHandler(storeRepo)).Methods(http.MethodGet)
+	storeInfoWrite := r.PathPrefix("/api/store-info").Subrouter()
+	storeInfoWrite.Use(rateLimit)
+	storeInfoWrite.HandleFunc("", handler.UpdateStoreInfoHandler(storeRepo)).Methods(http.MethodPut)
 
 	// Upload route with rate limiting.
 	uploadWrite := r.PathPrefix("/api/upload").Subrouter()

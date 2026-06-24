@@ -140,6 +140,26 @@ func runMigrations(db *sql.DB) error {
 		// ignore error; column may already exist
 	}
 
+	// Singleton site identity / branding row. The table holds at most one
+	// row (id = 1) so the API never 404s on a missing site config.
+	// Default values match the existing hardcoded values in the admin
+	// settings UI so first-run behavior is unchanged.
+	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS store_info (
+		id INTEGER PRIMARY KEY CHECK (id = 1),
+		name TEXT NOT NULL DEFAULT 'simshop',
+		description TEXT NOT NULL DEFAULT '',
+		logo_url TEXT NOT NULL DEFAULT '',
+		phone TEXT NOT NULL DEFAULT '',
+		email TEXT NOT NULL DEFAULT '',
+		address TEXT NOT NULL DEFAULT ''
+	)`); err != nil {
+		return err
+	}
+	// Ensure the single row exists even if the table was created empty.
+	if _, err := db.Exec(`INSERT OR IGNORE INTO store_info (id) VALUES (1)`); err != nil {
+		return err
+	}
+
 	return nil
 }
 

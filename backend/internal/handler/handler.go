@@ -34,6 +34,9 @@ type UploadConfig struct {
 // ProductRepo re-exports the db.ProductRepo type so the router can reference it.
 type ProductRepo = db.ProductRepo
 
+// StoreRepo re-exports the db.StoreRepo type so the router can reference it.
+type StoreRepo = db.StoreRepo
+
 // maxJSONBodySize limits the size of JSON request bodies to 1 MB.
 const maxJSONBodySize = 1 << 20
 
@@ -309,6 +312,98 @@ func DeleteProductHandler(repo *ProductRepo) http.HandlerFunc {
 		}
 		w.WriteHeader(http.StatusNoContent)
 	}
+}
+
+// GetStoreInfoHandler returns the singleton site identity / branding row.
+// The migration guarantees the row exists, so this never returns 404.
+func GetStoreInfoHandler(repo *StoreRepo) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		info, err := repo.Get()
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "Failed to load site info")
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(info)
+	}
+}
+
+// UpdateStoreInfoHandler replaces the editable fields on the site info row.
+// Name is required; all other fields are optional (stored as empty strings
+// when blank). Field-length limits match the handler-side validation below
+// so a malformed client payload is rejected before reaching the DB.
+func UpdateStoreInfoHandler(repo *StoreRepo) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Name        string `json:"name"`
+			Description string `json:"description"`
+			LogoURL     string `json:"logo_url"`
+			Phone       string `json:"phone"`
+			Email       string `json:"email"`
+			Address     string `json:"address"`
+		}
+		if err := readJSONBody(r, &body); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if err := validateStoreInfo(&body); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		info, err := repo.Update(body.Name, body.Description, body.LogoURL, body.Phone, body.Email, body.Address)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "Failed to save site info")
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(info)
+	}
+}
+
+// validateStoreInfo trims whitespace and enforces length limits. Name is
+// the only required field; contact fields are optional but must fit within
+// their cap so an attacker can't blow up the response payload.
+func validateStoreInfo(body *struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	LogoURL     string `json:"logo_url"`
+	Phone       string `json:"phone"`
+	Email       string `json:"email"`
+	Address     string `json:"address"`
+}) error {
+	body.Name = strings.TrimSpace(body.Name)
+	body.Description = strings.TrimSpace(body.Description)
+	body.LogoURL = strings.TrimSpace(body.LogoURL)
+	body.Phone = strings.TrimSpace(body.Phone)
+	body.Email = strings.TrimSpace(body.Email)
+	body.Address = strings.TrimSpace(body.Address)
+
+	if body.Name == "" {
+		return errors.New("name is required")
+	}
+	var errs []string
+	if len(body.Name) > 80 {
+		errs = append(errs, "name must be 80 characters or fewer")
+	}
+	if len(body.Description) > 500 {
+		errs = append(errs, "description must be 500 characters or fewer")
+	}
+	if len(body.LogoURL) > 1000 {
+		errs = append(errs, "logo_url must be 1000 characters or fewer")
+	}
+	if len(body.Phone) > 50 {
+		errs = append(errs, "phone must be 50 characters or fewer")
+	}
+	if len(body.Email) > 200 {
+		errs = append(errs, "email must be 200 characters or fewer")
+	}
+	if len(body.Address) > 300 {
+		errs = append(errs, "address must be 300 characters or fewer")
+	}
+	if len(errs) > 0 {
+		return errors.New(strings.Join(errs, "; "))
+	}
+	return nil
 }
 
 // validateProduct checks required fields and trims whitespace.
