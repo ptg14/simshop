@@ -254,6 +254,7 @@ class _SiteConfigSectionState extends State<_SiteConfigSection> {
   final _phoneCtrl = TextEditingController();
   final _emailCtrl = TextEditingController();
   final _addressCtrl = TextEditingController();
+  final _googleMapsUrlCtrl = TextEditingController();
 
   // Logo upload state.
   String _logoUrl = '';
@@ -284,6 +285,7 @@ class _SiteConfigSectionState extends State<_SiteConfigSection> {
     _phoneCtrl.dispose();
     _emailCtrl.dispose();
     _addressCtrl.dispose();
+    _googleMapsUrlCtrl.dispose();
     super.dispose();
   }
 
@@ -293,6 +295,7 @@ class _SiteConfigSectionState extends State<_SiteConfigSection> {
     _phoneCtrl.text = info.phone;
     _emailCtrl.text = info.email;
     _addressCtrl.text = info.address;
+    _googleMapsUrlCtrl.text = info.googleMapsUrl;
     _logoUrl = info.logoUrl;
   }
 
@@ -375,6 +378,7 @@ class _SiteConfigSectionState extends State<_SiteConfigSection> {
       phone: _phoneCtrl.text.trim(),
       email: _emailCtrl.text.trim(),
       address: _addressCtrl.text.trim(),
+      googleMapsUrl: _googleMapsUrlCtrl.text.trim(),
     );
 
     final ok = await vm.update(info);
@@ -498,6 +502,24 @@ class _SiteConfigSectionState extends State<_SiteConfigSection> {
                       ),
                       maxLines: 2,
                       maxLength: 300,
+                    ),
+                    const SizedBox(height: 12),
+                    // Google Maps URL — when set, takes precedence over
+                    // the address above as the destination the product
+                    // detail CTA opens. Leave empty to fall back to
+                    // the address (client builds a directions URL).
+                    TextField(
+                      controller: _googleMapsUrlCtrl,
+                      decoration: const InputDecoration(
+                        labelText: 'Google Maps URL',
+                        helperText:
+                            'Khi khách ấn nút mua tại cửa hàng sẽ mở URL này. Để trống nếu muốn dùng địa chỉ ở trên.',
+                        prefixIcon: Icon(Icons.map_outlined),
+                        hintText:
+                            'https://www.google.com/maps/dir/?api=1&destination=...',
+                      ),
+                      keyboardType: TextInputType.url,
+                      maxLength: 1000,
                     ),
 
                     const SizedBox(height: 8),
