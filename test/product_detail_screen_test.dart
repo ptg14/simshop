@@ -136,4 +136,33 @@ void main() {
     expect(find.byKey(const Key('buy-at-store-cta')), findsNothing,
         reason: 'CTA wrapper must not render when address is empty');
   });
+
+  // Slice 2: pin the URL builder. Lives at the top level of
+  // product_detail_screen.dart so it can be unit-tested without a
+  // widget tree. URL-encode rules from `Uri.encodeComponent`:
+  //   - space -> %20
+  //   - ','   -> %2C
+  //   - multi-byte UTF-8 chars (e.g. 'ễ' = U+1EB5) -> %E1%BB%85
+  //   - ASCII letters and digits are passed through.
+  test('buildGoogleMapsSearchUrl: ASCII address encodes spaces only', () {
+    expect(buildGoogleMapsSearchUrl('123 Main St'),
+        'https://www.google.com/maps/search/?api=1&query=123%20Main%20St');
+  });
+
+  test('buildGoogleMapsSearchUrl: Vietnamese diacritics are UTF-8 escaped',
+      () {
+    // 'ễ' is U+1EB5 → UTF-8 0xE1 0xBB 0x85 → %E1%BB%85
+    // 'ệ' is U+1EC7 → UTF-8 0xE1 0xBB 0x87 → %E1%BB%87
+    // ','  is U+002C → %2C
+    // ' '  is U+0020 → %20
+    expect(buildGoogleMapsSearchUrl('123 Nguyễn Huệ, Q.1'),
+        'https://www.google.com/maps/search/?api=1&query=123%20Nguy%E1%BB%85n%20Hu%E1%BB%87%2C%20Q.1');
+  });
+
+  test('buildGoogleMapsSearchUrl: empty address returns the prefix only', () {
+    // Caller is expected to short-circuit on empty input; this test
+    // pins the current behavior (no special handling).
+    expect(buildGoogleMapsSearchUrl(''),
+        'https://www.google.com/maps/search/?api=1&query=');
+  });
 }
