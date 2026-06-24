@@ -1,4 +1,5 @@
-import 'package:flutter/foundation.dart';
+import 'package:flutter/foundation.dart' hide Category;
+import '../models/category.dart';
 import '../models/product.dart';
 import '../models/store.dart';
 import '../services/product_service.dart';
@@ -14,6 +15,13 @@ class AdminViewModel extends ChangeNotifier {
   final List<Product> _products = [];
   List<String> _categories = [];
 
+  // 2-level category hierarchy. The flat [_categories] list is kept for the
+  // legacy picker / counts; structured lists are used by the new picker and
+  // categories management screen.
+  final List<String> _largeCategories = [];
+  final List<Category> _subCategories = [];
+  String? _selectedLargeCategory;
+
   // Store management (admin can select a store)
   final List<Store> _stores = [];
   Store? _selectedStore;
@@ -26,6 +34,9 @@ class AdminViewModel extends ChangeNotifier {
   // Getters
   List<Product> get products => _products;
   List<String> get categories => _categories;
+  List<String> get largeCategories => List.unmodifiable(_largeCategories);
+  List<Category> get subCategories => List.unmodifiable(_subCategories);
+  String? get selectedLargeCategory => _selectedLargeCategory;
   bool get isLoading => _isLoading;
   String? get error => _error;
   String get selectedTab => _selectedTab;
@@ -58,6 +69,10 @@ class AdminViewModel extends ChangeNotifier {
       // If backend unavailable, keep empty list.
     }
 
+    // Load structured category hierarchy (Large + subs with parent).
+    await loadLargeCategories();
+    await loadSubCategories();
+
     // Initialize dummy stores (replace with real service call in production)
     _stores.addAll([
       const Store(id: 'store1', name: 'Cửa hàng 1'),
@@ -73,10 +88,132 @@ class AdminViewModel extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Upload an image (File, XFile, or bytes) and return the URL.
-  Future<String?> uploadImage(dynamic file) async {
+  /// Set the active Large category for the admin product-form picker.
+  void selectLargeCategory(String? name) {
+    if (_selectedLargeCategory != name) {
+      _selectedLargeCategory = name;
+      notifyListeners();
+    }
+  }
+
+  /// Fetch the list of Large categories from the backend.
+  Future<void> loadLargeCategories() async {
     try {
-      final url = await _productService.uploadImage(file);
+      final list = await _productService.getLargeCategories();
+      _largeCategories
+        ..clear()
+        ..addAll(list);
+      notifyListeners();
+    } catch (_) {
+      // Keep previous value on failure; do not block the admin screen.
+    }
+  }
+
+  /// Fetch all sub-categories together with their parent Large category.
+  Future<void> loadSubCategories() async {
+    try {
+      final list = await _productService.getCategoriesWithParent();
+      _subCategories
+        ..clear()
+        ..addAll(list);
+      notifyListeners();
+    } catch (_) {
+      // Keep previous value on failure.
+    }
+  }
+
+  /// Persist a new Large category and refresh local state.
+  /// Returns true on success.
+  Future<bool> addLargeCategory(String name) async {
+    final trimmed = name.trim();
+    if (trimmed.isEmpty) return false;
+    try {
+      await (_productService as RealProductService)
+          .createLargeCategory(trimmed);
+    } catch (_) {
+      return false;
+    }
+    if (!_largeCategories.contains(trimmed)) {
+      _largeCategories.add(trimmed);
+      _largeCategories.sort();
+      _selectedLargeCategory = trimmed;
+    }
+    notifyListeners();
+    return true;
+  }
+
+  /// Delete a Large category. Its subs become orphans (`largeCategory == null`).
+  /// Returns true on success.
+  Future<bool> deleteLargeCategory(String name) async {
+    try {
+      await (_productService as RealProductService).deleteLargeCategory(name);
+    } catch (_) {
+      return false;
+    }
+    _largeCategories.remove(name);
+    if (_selectedLargeCategory == name) _selectedLargeCategory = null;
+    // Mark the sub's parent as null without a backend round-trip — the FK
+    // ON DELETE SET NULL will already have done it.
+    for (var i = 0; i < _subCategories.length; i++) {
+      if (_subCategories[i].largeCategory == name) {
+        _subCategories[i] = Category(
+          name: _subCategories[i].name,
+          largeCategory: null,
+        );
+      }
+    }
+    notifyListeners();
+    return true;
+  }
+
+  /// Add a new sub-category under [largeCategoryName] and refresh state.
+  /// Auto-selects the new sub. Returns true on success.
+  Future<bool> addCategoryWithParent(
+      String name, String largeCategoryName) async {
+    final trimmed = name.trim();
+    if (trimmed.isEmpty || largeCategoryName.isEmpty) return false;
+    try {
+      await (_productService as RealProductService)
+          .createCategoryWithParent(trimmed, largeCategoryName);
+    } catch (_) {
+      return false;
+    }
+    // Refresh sub-categories list to reflect the new row.
+    await loadSubCategories();
+    return true;
+  }
+
+  /// Remove a sub-category by name. Returns true on success.
+  Future<bool> deleteSubCategory(String name) async {
+    try {
+      await (_productService as RealProductService).deleteCategory(name);
+    } catch (_) {
+      return false;
+    }
+    _subCategories.removeWhere((c) => c.name == name);
+    _categories.remove(name);
+    notifyListeners();
+    return true;
+  }
+
+  /// Upload an image (File, XFile, or bytes) and return the URL.
+  ///
+  /// [productName] / [productId] / [startIndex] are forwarded to the
+  /// backend so the server can build a descriptive filename
+  /// (`YYYYMMDD-<slug>-<index>.<ext>`).
+  Future<String?> uploadImage(
+    dynamic file, {
+    String? productName,
+    String? productId,
+    int startIndex = 1,
+  }) async {
+    try {
+      final url = await _productService.uploadImage(
+        file,
+        productName: productName,
+        productId: productId,
+        startIndex: startIndex,
+      );
       return url;
     } catch (e) {
       _error = 'Lỗi tải ảnh lên: $e';
@@ -85,10 +222,19 @@ class AdminViewModel extends ChangeNotifier {
   }
 
   /// Upload multiple images and return their URLs.
-  Future<List<String>?> uploadImages(List<dynamic> files) async {
+  Future<List<String>?> uploadImages(
+    List<dynamic> files, {
+    String? productName,
+    String? productId,
+    int startIndex = 1,
+  }) async {
     try {
-      final urls =
-          await (_productService as RealProductService).uploadImages(files);
+      final urls = await (_productService as RealProductService).uploadImages(
+        files,
+        productName: productName,
+        productId: productId,
+        startIndex: startIndex,
+      );
       return urls;
     } catch (e) {
       _error = 'Lỗi tải nhiều ảnh lên: $e';
@@ -108,12 +254,21 @@ class AdminViewModel extends ChangeNotifier {
 
       // Upload images first if provided. Accept either single file or a list.
       if (imageFile != null) {
+        // Pass the (user-entered) name so the backend can build
+        // descriptive filenames. No productId yet — backend derives a
+        // short hash from the name+random suffix.
         if (imageFile is List) {
-          final urls = await uploadImages(List<dynamic>.from(imageFile));
+          final urls = await uploadImages(
+            List<dynamic>.from(imageFile),
+            productName: product.name,
+          );
           if (urls != null) images = urls;
           if (urls != null && urls.isNotEmpty) imageUrl = urls.first;
         } else {
-          final url = await _productService.uploadImage(imageFile);
+          final url = await _productService.uploadImage(
+            imageFile,
+            productName: product.name,
+          );
           if (url != null) {
             images = [url];
             imageUrl = url;
@@ -151,16 +306,25 @@ class AdminViewModel extends ChangeNotifier {
       String? imageUrl = product.imageUrl;
       List<String> images = product.images;
 
-      // Upload new images if provided.
+      // Upload new images if provided. For updates we have a known ID
+      // and the new name — both are sent so the backend can slug them.
       if (imageFile != null) {
         if (imageFile is List) {
-          final urls = await uploadImages(List<dynamic>.from(imageFile));
+          final urls = await uploadImages(
+            List<dynamic>.from(imageFile),
+            productName: product.name,
+            productId: id,
+          );
           if (urls != null) {
             images = urls;
             if (urls.isNotEmpty) imageUrl = urls.first;
           }
         } else {
-          final url = await _productService.uploadImage(imageFile);
+          final url = await _productService.uploadImage(
+            imageFile,
+            productName: product.name,
+            productId: id,
+          );
           if (url != null) {
             images = [url];
             imageUrl = url;

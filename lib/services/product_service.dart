@@ -4,6 +4,7 @@ import 'dart:typed_data';
 import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
 
+import '../models/category.dart';
 import '../models/product.dart';
 
 /// Response wrapper for paginated product list from backend.
@@ -44,6 +45,23 @@ abstract class IProductService {
   Future<void> deleteCategory(String name);
   Future<List<Product>> searchProducts(String query);
 
+  // ---- Large / parent categories ----
+  /// Fetch the list of "Large" (parent) category names.
+  Future<List<String>> getLargeCategories();
+
+  /// Fetch every sub-category together with its parent Large category name.
+  Future<List<Category>> getCategoriesWithParent();
+
+  /// Persist a new Large category.
+  Future<void> createLargeCategory(String name);
+
+  /// Delete a Large category. Subs become orphan (`largeCategory == null`).
+  Future<void> deleteLargeCategory(String name);
+
+  /// Persist a new sub-category and link it to the given Large category.
+  /// If [largeCategoryName] does not exist, the backend will create it.
+  Future<void> createCategoryWithParent(String name, String largeCategoryName);
+
   /// Create a new product and return the created product (with server-generated ID).
   Future<Product> createProduct(Product product);
 
@@ -54,7 +72,27 @@ abstract class IProductService {
   Future<void> deleteProduct(String id);
 
   /// Upload an image file and return the image URL.
-  Future<String?> uploadImage(dynamic file);
+  ///
+  /// [productName] / [productId] / [startIndex] are forwarded to the
+  /// backend as multipart form fields so the server can build a
+  /// descriptive filename (YYYYMMDD-<slug>-<index>.<ext>).
+  Future<String?> uploadImage(
+    dynamic file, {
+    String? productName,
+    String? productId,
+    int startIndex = 1,
+  });
+
+  /// Upload multiple images and return their URLs in order.
+  ///
+  /// See [uploadImage] for the meaning of [productName] / [productId] /
+  /// [startIndex]; per-file ordinals run from [startIndex] upward.
+  Future<List<String>> uploadImages(
+    List<dynamic> files, {
+    String? productName,
+    String? productId,
+    int startIndex = 1,
+  });
 }
 
 /// Real implementation that talks to the Go backend API.
@@ -189,6 +227,73 @@ class RealProductService implements IProductService {
   }
 
   @override
+  Future<List<String>> getLargeCategories() async {
+    final uri = Uri.parse('$_baseUrl/api/large-categories');
+    final response = await http.get(uri);
+    if (response.statusCode != 200) {
+      throw Exception(
+          'Failed to load large categories: ${response.statusCode}');
+    }
+    final data = json.decode(response.body) as Map<String, dynamic>;
+    if (data['large_categories'] == null) return const [];
+    return (data['large_categories'] as List<dynamic>)
+        .map((e) => e as String)
+        .toList();
+  }
+
+  @override
+  Future<List<Category>> getCategoriesWithParent() async {
+    final uri = Uri.parse('$_baseUrl/api/categories/with-parent');
+    final response = await http.get(uri);
+    if (response.statusCode != 200) {
+      throw Exception(
+          'Failed to load categories with parent: ${response.statusCode}');
+    }
+    final data = json.decode(response.body) as Map<String, dynamic>;
+    if (data['categories'] == null) return const [];
+    return (data['categories'] as List<dynamic>)
+        .map((e) => Category.fromJson(e as Map<String, dynamic>))
+        .toList();
+  }
+
+  @override
+  Future<void> createLargeCategory(String name) async {
+    final uri = Uri.parse('$_baseUrl/api/large-categories');
+    final response = await http.post(uri,
+        headers: {'Content-Type': 'application/json'},
+        body: json.encode({'name': name}));
+    if (response.statusCode != 201 && response.statusCode != 200) {
+      throw Exception('Failed to create large category: ${response.statusCode}');
+    }
+  }
+
+  @override
+  Future<void> deleteLargeCategory(String name) async {
+    final uri = Uri.parse(
+        '$_baseUrl/api/large-categories/${Uri.encodeComponent(name)}');
+    final response = await http.delete(uri);
+    if (response.statusCode != 204 && response.statusCode != 200) {
+      throw Exception('Failed to delete large category: ${response.statusCode}');
+    }
+  }
+
+  @override
+  Future<void> createCategoryWithParent(
+      String name, String largeCategoryName) async {
+    final uri = Uri.parse('$_baseUrl/api/categories');
+    final response = await http.post(uri,
+        headers: {'Content-Type': 'application/json'},
+        body: json.encode({
+          'name': name,
+          'large_category': largeCategoryName,
+        }));
+    if (response.statusCode != 201 && response.statusCode != 200) {
+      throw Exception(
+          'Failed to create category with parent: ${response.statusCode}');
+    }
+  }
+
+  @override
   Future<List<Product>> searchProducts(String query) async {
     final uri = _filteredProductsUri(search: query);
     final response = await http.get(uri);
@@ -243,8 +348,14 @@ class RealProductService implements IProductService {
   }
 
   @override
-  Future<String> uploadImage(dynamic file) async {
+  Future<String?> uploadImage(
+    dynamic file, {
+    String? productName,
+    String? productId,
+    int startIndex = 1,
+  }) async {
     final request = http.MultipartRequest('POST', _uploadUri());
+    _applyNamingContext(request, productName, productId, startIndex);
 
     if (file is File) {
       request.files.add(await http.MultipartFile.fromPath('image', file.path));
@@ -278,8 +389,15 @@ class RealProductService implements IProductService {
   }
 
   /// Upload multiple images and return their URLs in order.
-  Future<List<String>> uploadImages(List<dynamic> files) async {
+  @override
+  Future<List<String>> uploadImages(
+    List<dynamic> files, {
+    String? productName,
+    String? productId,
+    int startIndex = 1,
+  }) async {
     final request = http.MultipartRequest('POST', _uploadUri());
+    _applyNamingContext(request, productName, productId, startIndex);
     for (final file in files) {
       if (file is File) {
         request.files
@@ -311,5 +429,24 @@ class RealProductService implements IProductService {
     }
     // Fallback to single image_url
     return [data['image_url'] as String];
+  }
+
+  /// Attach naming context fields to a multipart request. Backend uses
+  /// these to build `YYYYMMDD-<slug>-<index>.<ext>` filenames.
+  void _applyNamingContext(
+    http.MultipartRequest request,
+    String? productName,
+    String? productId,
+    int startIndex,
+  ) {
+    if (productName != null && productName.trim().isNotEmpty) {
+      request.fields['product_name'] = productName.trim();
+    }
+    if (productId != null && productId.trim().isNotEmpty) {
+      request.fields['product_id'] = productId.trim();
+    }
+    if (startIndex > 0) {
+      request.fields['index'] = startIndex.toString();
+    }
   }
 }

@@ -1,6 +1,8 @@
 package handler
 
 import (
+	"crypto/sha1"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,6 +14,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/gorilla/mux"
@@ -88,6 +91,19 @@ func GetCategoriesHandler(repo *ProductRepo) http.HandlerFunc {
 		cats, err := repo.GetCategories()
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "Failed to fetch categories")
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{"categories": cats})
+	}
+}
+
+// GetCategoriesWithParentHandler returns all categories with their large category name.
+func GetCategoriesWithParentHandler(repo *ProductRepo) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		cats, err := repo.GetCategoriesWithParent()
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "Failed to fetch categories with parent")
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -414,12 +430,29 @@ func UploadImageHandler(cfg *UploadConfig) http.HandlerFunc {
 			return
 		}
 
+		// Read naming context from the form so we can build a descriptive
+		// filename: YYYYMMDD-<slug>-<index>.<ext>.
+		// - "product_name" / "product_id" are optional but recommended.
+		// - "index" is the per-upload 1-based ordinal so multi-image
+		//   uploads stay in order.
+		productName := strings.TrimSpace(r.FormValue("product_name"))
+		productID := strings.TrimSpace(r.FormValue("product_id"))
+		// baseIndex lets the client request a specific starting ordinal
+		// (e.g. when appending to an existing product's images). It
+		// stays 0 if absent, in which case each upload gets ordinal = i+1.
+		baseIndex := 0
+		if v := r.FormValue("index"); v != "" {
+			if n, err := strconv.Atoi(v); err == nil && n > 0 {
+				baseIndex = n
+			}
+		}
+
 		// Support multiple file fields: 'images' (preferred) or repeated 'image'.
 		var uploadedURLs []string
 		var filenames []string
 
 		// Helper to process a file header.
-		saveFile := func(header *multipart.FileHeader) (string, string, error) {
+		saveFile := func(header *multipart.FileHeader, ordinal int) (string, string, error) {
 			f, err := header.Open()
 			if err != nil {
 				return "", "", err
@@ -462,7 +495,7 @@ func UploadImageHandler(cfg *UploadConfig) http.HandlerFunc {
 				return "", "", err
 			}
 
-			filename := fmt.Sprintf("%s%s", uuid.New().String(), ext)
+			filename := buildUploadFilename(productName, productID, ordinal, ext)
 			if err := os.MkdirAll(cfg.UploadDir, 0755); err != nil {
 				return "", "", err
 			}
@@ -501,8 +534,9 @@ func UploadImageHandler(cfg *UploadConfig) http.HandlerFunc {
 		if r.MultipartForm != nil {
 			if headers, ok := r.MultipartForm.File["images"]; ok && len(headers) > 0 {
 				log.Printf("upload: received %d files in 'images' field", len(headers))
-				for _, h := range headers {
-					url, fname, err := saveFile(h)
+				for i, h := range headers {
+					ordinal := baseIndex + i + 1
+					url, fname, err := saveFile(h, ordinal)
 					if err != nil {
 						log.Printf("upload: saveFile error: %v", err)
 						writeError(w, http.StatusBadRequest, "Unsupported file type or failed to save")
@@ -514,8 +548,9 @@ func UploadImageHandler(cfg *UploadConfig) http.HandlerFunc {
 				}
 			} else if headers, ok := r.MultipartForm.File["image"]; ok && len(headers) > 0 {
 				log.Printf("upload: received %d files in 'image' field", len(headers))
-				for _, h := range headers {
-					url, fname, err := saveFile(h)
+				for i, h := range headers {
+					ordinal := baseIndex + i + 1
+					url, fname, err := saveFile(h, ordinal)
 					if err != nil {
 						log.Printf("upload: saveFile error: %v", err)
 						writeError(w, http.StatusBadRequest, "Unsupported file type or failed to save")
@@ -545,4 +580,67 @@ func writeError(w http.ResponseWriter, status int, message string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	json.NewEncoder(w).Encode(map[string]string{"error": message})
+}
+
+// buildUploadFilename constructs a human-readable filename for an uploaded
+// image using the format YYYYMMDD-<slug>-<index>.<ext>.
+//
+// The slug is derived from productName (with a short hash of productID
+// appended when available) so that:
+//   - Files are easy to scan in the uploads directory.
+//   - Different products with similar names don't collide.
+//   - Two uploads of the same image (same name+ID) still get unique names
+//     thanks to the per-request uuid suffix.
+//
+// If productName is empty, falls back to "image".
+func buildUploadFilename(productName, productID string, index int, ext string) string {
+	date := time.Now().UTC().Format("20060102")
+	slug := slugify(productName)
+	if slug == "" {
+		slug = "image"
+	}
+	if productID != "" {
+		// Short hash of productID (8 hex chars) — keeps filenames unique
+		// across products that share a name.
+		h := sha1.Sum([]byte(productID))
+		slug = fmt.Sprintf("%s-%s", slug, hex.EncodeToString(h[:])[:8])
+	}
+	// Ordinal ensures ordering within a multi-file upload (1-based).
+	if index < 1 {
+		index = 1
+	}
+	return fmt.Sprintf("%s-%s-%d-%s%s", date, slug, index, uuid.New().String()[:8], ext)
+}
+
+// slugify converts a product name into a URL- and filesystem-safe slug.
+// Lowercases, strips diacritics is not attempted (kept simple), replaces
+// any non-[a-z0-9]+ runs with a single dash, trims leading/trailing dashes,
+// and caps length at 48 chars so the final filename stays manageable.
+func slugify(name string) string {
+	name = strings.ToLower(strings.TrimSpace(name))
+	if name == "" {
+		return ""
+	}
+	var b strings.Builder
+	b.Grow(len(name))
+	prevDash := false
+	for _, r := range name {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
+			b.WriteRune(r)
+			prevDash = false
+		case r == ' ' || r == '-' || r == '_':
+			if !prevDash && b.Len() > 0 {
+				b.WriteByte('-')
+				prevDash = true
+			}
+		default:
+			// drop diacritics / punctuation by skipping
+		}
+	}
+	out := strings.TrimRight(b.String(), "-")
+	if len(out) > 48 {
+		out = strings.TrimRight(out[:48], "-")
+	}
+	return out
 }
