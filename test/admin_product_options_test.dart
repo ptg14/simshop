@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
@@ -7,6 +9,7 @@ import 'package:simshop/services/product_service.dart';
 import 'package:simshop/viewmodels/admin_viewmodel.dart';
 import 'package:simshop/viewmodels/home_viewmodel.dart';
 import 'package:simshop/views/admin/admin_product/edit_product_dialog.dart';
+import 'package:simshop/views/admin/admin_product/widgets/options_editor_with_images.dart';
 
 /// In-memory product service. The dialogs we test call
 /// `updateProduct` indirectly (via the VM), so the fake is hit only if
@@ -185,5 +188,118 @@ void main() {
     expect(vm.lastSubmitted!.options, hasLength(1));
     expect(vm.lastSubmitted!.options[0].name, 'Crimson');
     expect(vm.lastSubmitted!.options[0].imageUrls, [url]);
+  });
+
+  testWidgets('Add dialog: adding an option shows new image bytes thumb',
+      (tester) async {
+    useWideSurface(tester);
+
+    // The Add dialog's image-picker grid feeds _selectedImagesBytes.
+    // We construct the dialog and reach into the public VM to bypass
+    // the actual file picker; the editor's image strip should still
+    // show the bytes via OptionsEditorWithImages.
+    final pngBytes = Uint8List.fromList(const [
+      0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00,
+      0x0D, 0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00,
+      0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1F, 0x15, 0xC4, 0x89,
+      0x00, 0x00, 0x00, 0x0D, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9C, 0x63,
+      0x00, 0x01, 0x00, 0x00, 0x05, 0x00, 0x01, 0x0D, 0x0A, 0x2D, 0xB4,
+      0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60,
+      0x82,
+    ]);
+    final vm = _CapturingAdminViewModel(_FakeProductService());
+
+    // Drive the editor directly — the Add dialog's _selectedImagesBytes
+    // is private, so we exercise the same OptionsEditorWithImages
+    // with the bytes the dialog would feed it.
+    final options = <Option>[];
+
+    await tester.pumpWidget(MaterialApp(
+      home: MultiProvider(
+        providers: [
+          ChangeNotifierProvider<AdminViewModel>.value(value: vm),
+          ChangeNotifierProvider<HomeViewModel>(create: (_) => HomeViewModel()),
+        ],
+        child: Scaffold(
+          body: StatefulBuilder(
+            builder: (context, setState) => OptionsEditorWithImages(
+              options: options,
+              existingImages: const [],
+              newImageBytes: [pngBytes],
+              onChanged: (opts) => setState(() => options
+                ..clear()
+                ..addAll(opts)),
+            ),
+          ),
+        ),
+      ),
+    ));
+    await tester.pumpAndSettle();
+
+    // Add an option.
+    await tester.tap(find.text('Thêm option'));
+    await tester.pumpAndSettle();
+
+    // The bytes thumb is visible in the option row.
+    final memImages = find
+        .byWidgetPredicate((w) => w is Image && w.image is MemoryImage)
+        .evaluate();
+    expect(memImages, isNotEmpty,
+        reason: 'picked bytes should be visible as Image.memory in the option row');
+  });
+
+  // Edit dialog contract: the option row shows BOTH existing URL
+  // thumbs (selectable) AND new bytes thumbs (non-selectable), so
+  // admins can see what they've picked and what's still server-
+  // backed in the same row.
+  testWidgets(
+      'Edit dialog: option row shows existing URL thumbs and new bytes thumbs',
+      (tester) async {
+    useWideSurface(tester);
+
+    final pngBytes = Uint8List.fromList(const [
+      0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00,
+      0x0D, 0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00,
+      0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1F, 0x15, 0xC4, 0x89,
+      0x00, 0x00, 0x00, 0x0D, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9C, 0x63,
+      0x00, 0x01, 0x00, 0x00, 0x05, 0x00, 0x01, 0x0D, 0x0A, 0x2D, 0xB4,
+      0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60,
+      0x82,
+    ]);
+
+    // Existing URL won't be decoded in the test (network is off),
+    // but the widget should still render it as an Image.network.
+    const existingUrl = 'https://example.test/existing.jpg';
+
+    final options = <Option>[Option(id: 'o1', name: 'Red')];
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: StatefulBuilder(
+          builder: (context, setState) => OptionsEditorWithImages(
+            options: options,
+            existingImages: const [existingUrl],
+            newImageBytes: [pngBytes],
+            onChanged: (opts) => setState(() => options
+              ..clear()
+              ..addAll(opts)),
+          ),
+        ),
+      ),
+    ));
+    await tester.pumpAndSettle();
+
+    // Network image (existing URL) rendered.
+    final netImages = find
+        .byWidgetPredicate((w) => w is Image && w.image is NetworkImage)
+        .evaluate();
+    expect(netImages, isNotEmpty,
+        reason: 'existing URL should be visible as Image.network in the option row');
+
+    // Bytes image (newly picked) rendered.
+    final memImages = find
+        .byWidgetPredicate((w) => w is Image && w.image is MemoryImage)
+        .evaluate();
+    expect(memImages, isNotEmpty,
+        reason: 'newly picked bytes should be visible as Image.memory in the option row');
   });
 }

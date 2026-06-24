@@ -8,8 +8,9 @@ import '../../../utils/responsive.dart';
 import '../../../viewmodels/admin_viewmodel.dart';
 import '../../../viewmodels/home_viewmodel.dart';
 import '../../../widgets/markdown_split_editor.dart';
-import 'widgets/product_category_picker.dart';
 import 'widgets/image_picker_grid.dart';
+import 'widgets/options_editor_with_images.dart';
+import 'widgets/product_category_picker.dart';
 
 /// Dialog for adding a new product.
 class AddProductDialog extends StatefulWidget {
@@ -182,9 +183,12 @@ class _AddProductDialogState extends State<AddProductDialog> {
               ),
               const SizedBox(height: 12),
 
-              // Options (variants)
-              _OptionsEditor(
+              // Options (variants) — shared editor with Edit so the layout
+              // (IntrinsicHeight alignment, image strip) matches.
+              OptionsEditorWithImages(
                 options: _options,
+                existingImages: const [],
+                newImageBytes: _selectedImagesBytes,
                 onChanged: (opts) => setState(() => _options = opts),
               ),
             ],
@@ -199,69 +203,6 @@ class _AddProductDialogState extends State<AddProductDialog> {
         FilledButton(
           onPressed: _submit,
           child: const Text('Thêm'),
-        ),
-      ],
-    );
-}
-
-// ---------------------------------------------------------------------------
-// Simple options (variants) editor — shared look between Add and Edit dialogs
-// ---------------------------------------------------------------------------
-
-class _OptionsEditor extends StatelessWidget {
-  const _OptionsEditor({required this.options, required this.onChanged});
-
-  final List<Option> options;
-  final ValueChanged<List<Option>> onChanged;
-
-  @override
-  Widget build(BuildContext context) => Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const Text('Options', style: TextStyle(fontWeight: FontWeight.bold)),
-        const SizedBox(height: 8),
-        for (var i = 0; i < options.length; i++)
-          IntrinsicHeight(
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Expanded(
-                  child: TextFormField(
-                    initialValue: options[i].name,
-                    decoration: const InputDecoration(labelText: 'Tên option'),
-                    onChanged: (v) {
-                      // Preserve imageUrls across keystrokes — the
-                      // shared editor assigns images to options and
-                      // a name edit must not wipe them.
-                      final updated = List<Option>.from(options);
-                      updated[i] = Option(
-                        id: options[i].id,
-                        name: v,
-                        imageUrls: List<String>.from(options[i].imageUrls),
-                      );
-                      onChanged(updated);
-                    },
-                  ),
-                ),
-                IconButton(
-                  icon: const Icon(Icons.delete, color: Colors.red),
-                  onPressed: () {
-                    final updated = List<Option>.from(options)..removeAt(i);
-                    onChanged(updated);
-                  },
-                ),
-              ],
-            ),
-          ),
-        const SizedBox(height: 8),
-        ElevatedButton.icon(
-          onPressed: () {
-            final updated = List<Option>.from(options)
-              ..add(Option(id: '', name: 'Option', imageUrls: []));
-            onChanged(updated);
-          },
-          icon: const Icon(Icons.add),
-          label: const Text('Thêm option'),
         ),
       ],
     );

@@ -8,8 +8,9 @@ import '../../../utils/responsive.dart';
 import '../../../viewmodels/admin_viewmodel.dart';
 import '../../../viewmodels/home_viewmodel.dart';
 import '../../../widgets/markdown_split_editor.dart';
-import 'widgets/product_category_picker.dart';
 import 'widgets/image_picker_grid.dart';
+import 'widgets/options_editor_with_images.dart';
+import 'widgets/product_category_picker.dart';
 
 /// Helper to show the edit dialog from any widget in the admin feature.
 void showEditProductDialog(
@@ -221,10 +222,12 @@ class _EditProductDialogState extends State<EditProductDialog> {
               ),
               const SizedBox(height: 12),
 
-              // Options with image assignment from existing images
-              _OptionsEditorWithImages(
+              // Options with image assignment from existing + new
+              // (shared editor so Add and Edit share one layout).
+              OptionsEditorWithImages(
                 options: _options,
                 existingImages: _existingImages,
+                newImageBytes: _selectedImagesBytes,
                 onChanged: (opts) => setState(() => _options = opts),
               ),
             ],
@@ -242,210 +245,4 @@ class _EditProductDialogState extends State<EditProductDialog> {
         ),
       ],
     );
-}
-
-// ---------------------------------------------------------------------------
-// Options editor that also lets you assign existing images to each option
-// ---------------------------------------------------------------------------
-
-class _OptionsEditorWithImages extends StatelessWidget {
-  const _OptionsEditorWithImages({
-    required this.options,
-    required this.existingImages,
-    required this.onChanged,
-  });
-
-  final List<Option> options;
-  final List<String> existingImages;
-  final ValueChanged<List<Option>> onChanged;
-
-  @override
-  Widget build(BuildContext context) => ConstrainedBox(
-      constraints: BoxConstraints(maxWidth: context.dialogWidth),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text('Options', style: TextStyle(fontWeight: FontWeight.bold)),
-          const SizedBox(height: 8),
-          for (var i = 0; i < options.length; i++)
-            IntrinsicHeight(
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Expanded(
-                    flex: 3,
-                    child: TextFormField(
-                      initialValue: options[i].name,
-                      decoration:
-                          const InputDecoration(labelText: 'Tên option'),
-                      onChanged: (v) {
-                        final updated = List<Option>.from(options);
-                        updated[i] = Option(
-                          id: options[i].id,
-                          name: v,
-                          imageUrls: List<String>.from(options[i].imageUrls),
-                        );
-                        onChanged(updated);
-                      },
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    flex: 2,
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Text('Ảnh', style: TextStyle(fontSize: 12)),
-                        const SizedBox(height: 6),
-                        _OptionImageRow(
-                          option: options[i],
-                          existingImages: existingImages,
-                          onChanged: (updated) {
-                            final list = List<Option>.from(options);
-                            list[i] = updated;
-                            onChanged(list);
-                          },
-                        ),
-                      ],
-                    ),
-                  ),
-                  IconButton(
-                    icon: const Icon(Icons.delete, color: Colors.red),
-                    onPressed: () {
-                      final updated = List<Option>.from(options)..removeAt(i);
-                      onChanged(updated);
-                    },
-                  ),
-                ],
-              ),
-            ),
-          const SizedBox(height: 8),
-          ElevatedButton.icon(
-            onPressed: () {
-              final updated = List<Option>.from(options)
-                ..add(Option(id: '', name: 'Option', imageUrls: []));
-              onChanged(updated);
-            },
-            icon: const Icon(Icons.add),
-            label: const Text('Thêm option'),
-          ),
-          const SizedBox(height: 12),
-        ],
-      ),
-    );
-}
-
-/// Horizontal scroll row showing existing images as selectable thumbnails
-/// for a single option.
-class _OptionImageRow extends StatelessWidget {
-  const _OptionImageRow({
-    required this.option,
-    required this.existingImages,
-    required this.onChanged,
-  });
-
-  final Option option;
-  final List<String> existingImages;
-  final ValueChanged<Option> onChanged;
-
-  void _toggle(String url) {
-    final imgs = List<String>.from(option.imageUrls);
-    imgs.contains(url) ? imgs.remove(url) : imgs.add(url);
-    onChanged(Option(id: option.id, name: option.name, imageUrls: imgs));
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    if (existingImages.isEmpty) {
-      return TextButton(
-        onPressed: () =>
-            onChanged(Option(id: option.id, name: option.name, imageUrls: [])),
-        child: const Text('Không'),
-      );
-    }
-
-    return SizedBox(
-      height: 56,
-      child: SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        child: Row(
-          children: List.generate(existingImages.length, (idx) {
-            final url = existingImages[idx];
-            final selected = option.imageUrls.contains(url);
-            return Padding(
-              padding: EdgeInsets.only(
-                  right: idx == existingImages.length - 1 ? 0 : 8),
-              child: Semantics(
-                button: true,
-                selected: selected,
-                label: 'Ảnh ${idx + 1}',
-                child: Material(
-                  color: Colors.transparent,
-                  child: InkWell(
-                    onTap: () => _toggle(url),
-                    customBorder: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Stack(
-                      children: [
-                        Container(
-                          width: 56,
-                          height: 56,
-                          decoration: BoxDecoration(
-                            borderRadius: BorderRadius.circular(8),
-                            border: Border.all(
-                              color: selected
-                                  ? scheme.primary
-                                  : Colors.transparent,
-                              width: selected ? 2 : 0,
-                            ),
-                          ),
-                          child: ClipRRect(
-                            borderRadius: BorderRadius.circular(6),
-                            child: Image.network(
-                              url,
-                              width: 56,
-                              height: 56,
-                              fit: BoxFit.cover,
-                              errorBuilder: (_, __, ___) => Container(
-                                  color: scheme.surfaceContainerHighest),
-                            ),
-                          ),
-                        ),
-                        if (selected)
-                          Positioned(
-                            right: 4,
-                            top: 4,
-                            child: Semantics(
-                              button: true,
-                              label: 'Bỏ chọn ảnh',
-                              child: Material(
-                                color: Colors.black54,
-                                shape: const CircleBorder(),
-                                clipBehavior: Clip.antiAlias,
-                                child: InkWell(
-                                  onTap: () => _toggle(url),
-                                  customBorder: const CircleBorder(),
-                                  child: const SizedBox(
-                                    width: 20,
-                                    height: 20,
-                                    child: Icon(Icons.close,
-                                        size: 14, color: Colors.white),
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-            );
-          }),
-        ),
-      ),
-    );
-  }
 }
