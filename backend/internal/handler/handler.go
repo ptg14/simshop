@@ -335,12 +335,13 @@ func GetStoreInfoHandler(repo *StoreRepo) http.HandlerFunc {
 func UpdateStoreInfoHandler(repo *StoreRepo) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
-			Name        string `json:"name"`
-			Description string `json:"description"`
-			LogoURL     string `json:"logo_url"`
-			Phone       string `json:"phone"`
-			Email       string `json:"email"`
-			Address     string `json:"address"`
+			Name          string `json:"name"`
+			Description   string `json:"description"`
+			LogoURL       string `json:"logo_url"`
+			Phone         string `json:"phone"`
+			Email         string `json:"email"`
+			Address       string `json:"address"`
+			GoogleMapsURL string `json:"google_maps_url"`
 		}
 		if err := readJSONBody(r, &body); err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
@@ -350,7 +351,7 @@ func UpdateStoreInfoHandler(repo *StoreRepo) http.HandlerFunc {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		info, err := repo.Update(body.Name, body.Description, body.LogoURL, body.Phone, body.Email, body.Address)
+		info, err := repo.Update(body.Name, body.Description, body.LogoURL, body.Phone, body.Email, body.Address, body.GoogleMapsURL)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "Failed to save site info")
 			return
@@ -364,12 +365,13 @@ func UpdateStoreInfoHandler(repo *StoreRepo) http.HandlerFunc {
 // the only required field; contact fields are optional but must fit within
 // their cap so an attacker can't blow up the response payload.
 func validateStoreInfo(body *struct {
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	LogoURL     string `json:"logo_url"`
-	Phone       string `json:"phone"`
-	Email       string `json:"email"`
-	Address     string `json:"address"`
+	Name          string `json:"name"`
+	Description   string `json:"description"`
+	LogoURL       string `json:"logo_url"`
+	Phone         string `json:"phone"`
+	Email         string `json:"email"`
+	Address       string `json:"address"`
+	GoogleMapsURL string `json:"google_maps_url"`
 }) error {
 	body.Name = strings.TrimSpace(body.Name)
 	body.Description = strings.TrimSpace(body.Description)
@@ -377,6 +379,7 @@ func validateStoreInfo(body *struct {
 	body.Phone = strings.TrimSpace(body.Phone)
 	body.Email = strings.TrimSpace(body.Email)
 	body.Address = strings.TrimSpace(body.Address)
+	body.GoogleMapsURL = strings.TrimSpace(body.GoogleMapsURL)
 
 	if body.Name == "" {
 		return errors.New("name is required")
@@ -399,6 +402,9 @@ func validateStoreInfo(body *struct {
 	}
 	if len(body.Address) > 300 {
 		errs = append(errs, "address must be 300 characters or fewer")
+	}
+	if len(body.GoogleMapsURL) > 1000 {
+		errs = append(errs, "google_maps_url must be 1000 characters or fewer")
 	}
 	if len(errs) > 0 {
 		return errors.New(strings.Join(errs, "; "))

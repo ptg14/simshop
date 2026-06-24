@@ -151,9 +151,16 @@ func runMigrations(db *sql.DB) error {
 		logo_url TEXT NOT NULL DEFAULT '',
 		phone TEXT NOT NULL DEFAULT '',
 		email TEXT NOT NULL DEFAULT '',
-		address TEXT NOT NULL DEFAULT ''
+		address TEXT NOT NULL DEFAULT '',
+		google_maps_url TEXT NOT NULL DEFAULT ''
 	)`); err != nil {
 		return err
+	}
+	// Upgrade path for installs that pre-date the google_maps_url column.
+	// SQLite has no ADD COLUMN IF NOT EXISTS, so we ignore the duplicate-
+	// column error the same way the categories/products migrations do.
+	if _, err := db.Exec(`ALTER TABLE store_info ADD COLUMN google_maps_url TEXT NOT NULL DEFAULT ''`); err != nil {
+		// ignore error; column may already exist
 	}
 	// Ensure the single row exists even if the table was created empty.
 	if _, err := db.Exec(`INSERT OR IGNORE INTO store_info (id) VALUES (1)`); err != nil {

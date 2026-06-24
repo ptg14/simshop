@@ -7,11 +7,12 @@ package models
 // about list endpoints or missing rows. Handlers always return a fully
 // populated object, defaulting to the migration's seed values.
 type StoreInfo struct {
-	ID          int64  `json:"id"`
-	Name        string `json:"name"`
-	Description string `json:"description,omitempty"`
-	LogoURL     string `json:"logo_url,omitempty"`
-	Phone       string `json:"phone,omitempty"`
-	Email       string `json:"email,omitempty"`
-	Address     string `json:"address,omitempty"`
+	ID            int64  `json:"id"`
+	Name          string `json:"name"`
+	Description   string `json:"description,omitempty"`
+	LogoURL       string `json:"logo_url,omitempty"`
+	Phone         string `json:"phone,omitempty"`
+	Email         string `json:"email,omitempty"`
+	Address       string `json:"address,omitempty"`
+	GoogleMapsURL string `json:"google_maps_url,omitempty"`
 }

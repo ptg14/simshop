@@ -130,7 +130,8 @@ func applyMigrations(d *db.DB) error {
             logo_url TEXT NOT NULL DEFAULT '',
             phone TEXT NOT NULL DEFAULT '',
             email TEXT NOT NULL DEFAULT '',
-            address TEXT NOT NULL DEFAULT ''
+            address TEXT NOT NULL DEFAULT '',
+            google_maps_url TEXT NOT NULL DEFAULT ''
         )`,
 		`INSERT OR IGNORE INTO store_info (id) VALUES (1)`,
 		`ALTER TABLE products ADD COLUMN categories TEXT`,
@@ -228,6 +229,78 @@ func TestStoreInfoUpdatePersists(t *testing.T) {
 	}
 	if got["phone"] != "0901234567" {
 		t.Errorf("after PUT phone = %v, want 0901234567", got["phone"])
+	}
+}
+
+// TestStoreInfoGoogleMapsUrlPersists asserts the new google_maps_url
+// field round-trips through PUT/GET. Old clients that don't send the
+// field must get an empty string back (default), so we send the
+// body without the key and verify the GET response also has it.
+func TestStoreInfoGoogleMapsUrlPersists(t *testing.T) {
+	srv, _, cleanup := newTestServer(t)
+	defer cleanup()
+
+	// PUT with the new key set.
+	body := strings.NewReader(`{
+        "name": "Cửa hàng ABC",
+        "google_maps_url": "https://www.google.com/maps/dir/?api=1&destination=12+Nguyen+Hue"
+    }`)
+	req, _ := http.NewRequest(http.MethodPut, srv.URL+"/api/store-info", body)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("PUT: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := readAll(resp)
+		t.Fatalf("PUT status = %d, body=%s", resp.StatusCode, string(respBody))
+	}
+	var put map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&put); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if put["google_maps_url"] != "https://www.google.com/maps/dir/?api=1&destination=12+Nguyen+Hue" {
+		t.Errorf("PUT response google_maps_url = %v, want the value just set", put["google_maps_url"])
+	}
+
+	// GET should reflect the stored value.
+	resp2, err := http.Get(srv.URL + "/api/store-info")
+	if err != nil {
+		t.Fatalf("GET: %v", err)
+	}
+	defer resp2.Body.Close()
+	var got map[string]any
+	if err := json.NewDecoder(resp2.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got["google_maps_url"] != "https://www.google.com/maps/dir/?api=1&destination=12+Nguyen+Hue" {
+		t.Errorf("GET google_maps_url = %v, want the stored URL", got["google_maps_url"])
+	}
+
+	// Clearing the field via PUT round-trips back to "".
+	body2 := strings.NewReader(`{
+        "name": "Cửa hàng ABC",
+        "google_maps_url": ""
+    }`)
+	req2, _ := http.NewRequest(http.MethodPut, srv.URL+"/api/store-info", body2)
+	req2.Header.Set("Content-Type", "application/json")
+	resp3, err := http.DefaultClient.Do(req2)
+	if err != nil {
+		t.Fatalf("clear PUT: %v", err)
+	}
+	resp3.Body.Close()
+	if resp3.StatusCode != http.StatusOK {
+		t.Fatalf("clear PUT status = %d, want 200", resp3.StatusCode)
+	}
+	resp4, _ := http.Get(srv.URL + "/api/store-info")
+	defer resp4.Body.Close()
+	var got2 map[string]any
+	if err := json.NewDecoder(resp4.Body).Decode(&got2); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got2["google_maps_url"] != "" && got2["google_maps_url"] != nil {
+		t.Errorf("GET after clear google_maps_url = %v, want empty", got2["google_maps_url"])
 	}
 }
 
