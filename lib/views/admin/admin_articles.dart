@@ -12,6 +12,7 @@ import '../../utils/responsive.dart';
 import '../../viewmodels/articles_viewmodel.dart';
 import '../../widgets/markdown_split_editor.dart';
 import '../../widgets/network_image.dart';
+import 'banner_image_preview.dart';
 
 /// Admin "Bài viết" tab. Manages banner slides (carousel) and the
 /// articles that open when a slide is tapped.
@@ -352,15 +353,12 @@ class _BannerDialogState extends State<_BannerDialog> {
                     ),
                     clipBehavior: Clip.antiAlias,
                     alignment: Alignment.center,
-                    child: _imageFile != null
-                        ? (kIsWeb && _imageBytes != null
-                            ? Image.memory(_imageBytes!, fit: BoxFit.cover)
-                            : Image.file(File(_imageFile!.path),
-                                fit: BoxFit.cover))
-                        : _imageUrl.isNotEmpty
-                            ? Image.network(_imageUrl, fit: BoxFit.cover)
-                            : Icon(Icons.image_outlined,
-                                color: scheme.onSurfaceVariant),
+                    child: bannerImagePreview(
+                      bytes: _imageBytes,
+                      file: _imageFile,
+                      existingUrl: _imageUrl,
+                      isWeb: kIsWeb,
+                    ),
                   ),
                   const SizedBox(width: 12),
                   Expanded(

@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'services/article_service.dart';
+import 'services/product_service.dart';
 import 'theme/app_theme.dart';
 import 'viewmodels/admin_viewmodel.dart';
 import 'viewmodels/articles_viewmodel.dart';
@@ -37,6 +39,13 @@ class MyApp extends StatelessWidget {
           ChangeNotifierProvider(create: (_) => AdminViewModel()),
           ChangeNotifierProvider(create: (_) => SiteConfigViewModel()..load()),
           ChangeNotifierProvider(create: (_) => ArticlesViewModel()..load()),
+          // Service providers — required by widgets that
+          // context.read<IProductService>() / IArticleService().
+          // 78f3492 added the ArticlesViewModel provider but the
+          // banner dialog still crashed on Flutter Web because the
+          // underlying services were not in the tree.
+          Provider<IProductService>(create: (_) => RealProductService()),
+          Provider<IArticleService>(create: (_) => RealArticleService()),
         ],
         child: MaterialApp(
           title: 'Sample E-commerce App',
