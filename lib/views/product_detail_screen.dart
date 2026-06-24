@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
+
 import '../models/product.dart';
 import '../utils/currency_formatter.dart';
 import '../utils/page_transitions.dart';
@@ -312,17 +314,13 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                         desktop: 12,
                       )),
 
-                      Text(
-                        product.description,
-                        style: TextStyle(
-                          color: scheme.onSurfaceVariant,
-                          height: 1.5,
-                          fontSize: context.responsive<double>(
-                            mobile: 14,
-                            tablet: 15,
-                            desktop: 16,
-                          ),
-                        ),
+                      MarkdownBody(
+                        data: product.description.isEmpty
+                            ? '_(Sản phẩm chưa có mô tả)_'
+                            : product.description,
+                        selectable: true,
+                        styleSheet: MarkdownStyleSheet.fromTheme(
+                            Theme.of(context)),
                       ),
 
                       SizedBox(
