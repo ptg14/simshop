@@ -30,7 +30,10 @@ class Article {
   Map<String, dynamic> toJson() => {
         'id': id,
         'title': title,
-        'body': body,
+        // Server (Go models.Article) tags this field `body_markdown`.
+        // Sending `body` makes the strict JSON decoder in the handler
+        // reject the request with 400 "unknown field".
+        'body_markdown': body,
         'cover_image_url': coverImageUrl,
         'product_ids': productIds,
       };
