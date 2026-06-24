@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import 'theme/app_theme.dart';
 import 'viewmodels/admin_viewmodel.dart';
 import 'viewmodels/home_viewmodel.dart';
+import 'viewmodels/site_config_viewmodel.dart';
 import 'views/home_screen.dart';
 
 final ValueNotifier<String?> _globalError = ValueNotifier(null);
@@ -33,6 +34,7 @@ class MyApp extends StatelessWidget {
         providers: [
           ChangeNotifierProvider(create: (_) => HomeViewModel()),
           ChangeNotifierProvider(create: (_) => AdminViewModel()),
+          ChangeNotifierProvider(create: (_) => SiteConfigViewModel()..load()),
         ],
         child: MaterialApp(
           title: 'Sample E-commerce App',
