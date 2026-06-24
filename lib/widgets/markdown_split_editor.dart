@@ -10,8 +10,15 @@ import '../utils/responsive.dart';
 /// see the rendered preview alongside the source. On mobile widths the
 /// panes stack vertically to keep both readable.
 ///
+/// **Sizing**: both panes share a fixed 320px height (source + preview)
+/// so the dialog they sit in doesn't grow vertically with the
+/// Markdown length. The source `TextField` uses `expands: true` to
+/// fill its pane; the preview pane scrolls internally. The
+/// [minLines] / [maxLines] constructor params are kept for backwards
+/// compatibility but no longer affect rendered height.
+///
 /// The widget owns a [TextEditingController] so callers don't have to
-/// track the controller themselves; they read [controller] when
+/// track the controller themselves; they read `controller.text` when
 /// submitting the form.
 class MarkdownSplitEditor extends StatefulWidget {
   const MarkdownSplitEditor({
@@ -24,8 +31,17 @@ class MarkdownSplitEditor extends StatefulWidget {
 
   final String initialValue;
   final String labelText;
+
+  /// Kept for backwards compatibility; with the fixed 320px height
+  /// these no longer affect rendered height (the field uses
+  /// `expands: true`).
   final int minLines;
   final int maxLines;
+
+  /// Fixed editor height for both panes. Shared between split and
+  /// stacked layouts so source and preview panes stay equal and the
+  /// surrounding dialog doesn't grow with Markdown length.
+  static const double paneHeight = 320;
 
   @override
   State<MarkdownSplitEditor> createState() => MarkdownSplitEditorState();
@@ -70,10 +86,11 @@ class MarkdownSplitEditorState extends State<MarkdownSplitEditor> {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final useSplit = context.useNavigationRail;
-    final body = useSplit ? _buildSplit(context) : _buildStacked(context);
+    final body = useSplit ? _buildSplit() : _buildStacked();
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
       children: [
         Padding(
           padding: const EdgeInsets.only(bottom: 8),
@@ -86,57 +103,45 @@ class MarkdownSplitEditorState extends State<MarkdownSplitEditor> {
           ),
         ),
         SizedBox(
-          height: useSplit ? 360 : null,
+          height: MarkdownSplitEditor.paneHeight,
           child: body,
         ),
       ],
     );
   }
 
-  Widget _buildSplit(BuildContext context) {
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Expanded(child: _buildSourceField(boxed: false)),
-        const VerticalDivider(width: 1),
-        Expanded(
-          child: Container(
-            padding: const EdgeInsets.all(12),
-            color: Theme.of(context).colorScheme.surfaceContainerHighest,
-            child: SingleChildScrollView(child: _buildPreview()),
-          ),
-        ),
-      ],
-    );
-  }
+  Widget _buildSplit() => Row(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Expanded(child: _buildSourceField(boxed: false)),
+          const VerticalDivider(width: 1),
+          Expanded(child: _buildPreviewPane(boxed: false)),
+        ],
+      );
 
-  Widget _buildStacked(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        _buildSourceField(boxed: true),
-        const SizedBox(height: 8),
-        Container(
-          padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(
-            color: Theme.of(context).colorScheme.surfaceContainerHighest,
-            borderRadius: BorderRadius.circular(8),
-          ),
-          child: SingleChildScrollView(child: _buildPreview()),
-        ),
-      ],
-    );
-  }
+  Widget _buildStacked() => Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Expanded(child: _buildSourceField(boxed: true)),
+          const SizedBox(height: 8),
+          Expanded(child: _buildPreviewPane(boxed: true)),
+        ],
+      );
 
   Widget _buildSourceField({required bool boxed}) {
     final scheme = Theme.of(context).colorScheme;
     final field = TextField(
       controller: _controller,
-      minLines: widget.minLines,
-      maxLines: widget.maxLines,
+      // Fill the parent pane so source and preview panes share the
+      // 320px height equally.
+      expands: true,
+      maxLines: null,
+      minLines: null,
+      textAlignVertical: TextAlignVertical.top,
       decoration: const InputDecoration(
         border: OutlineInputBorder(),
-        hintText: '## Tiêu đề phụ\n\nViết **in đậm**, _in nghiêng_...',
+        contentPadding: EdgeInsets.all(12),
+        isDense: true,
       ),
       style: const TextStyle(
         fontFamily: 'monospace',
@@ -152,6 +157,26 @@ class MarkdownSplitEditorState extends State<MarkdownSplitEditor> {
       ),
       padding: const EdgeInsets.all(8),
       child: field,
+    );
+  }
+
+  Widget _buildPreviewPane({required bool boxed}) {
+    final scheme = Theme.of(context).colorScheme;
+    final scroll = SingleChildScrollView(child: _buildPreview());
+    if (!boxed) {
+      return Container(
+        padding: const EdgeInsets.all(12),
+        color: scheme.surfaceContainerHighest,
+        child: scroll,
+      );
+    }
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: scheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: scroll,
     );
   }
 
