@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import '../utils/responsive.dart';
 
-/// Custom search bar widget for product search.
+/// Material 3 [SearchBar] wrapper for product search.
 class ProductSearchBar extends StatefulWidget {
   const ProductSearchBar({
     super.key,
@@ -43,41 +43,43 @@ class _ProductSearchBarState extends State<ProductSearchBar> {
   }
 
   @override
-  Widget build(BuildContext context) => Container(
-        margin: EdgeInsets.symmetric(
-          horizontal: context.horizontalPadding,
-          vertical: 8,
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Padding(
+      padding: EdgeInsets.symmetric(
+        horizontal: context.horizontalPadding,
+        vertical: 8,
+      ),
+      child: SearchBar(
+        controller: _controller,
+        hintText: widget.hintText,
+        leading: Padding(
+          padding: const EdgeInsets.only(left: 8),
+          child: Icon(Icons.search, color: scheme.onSurfaceVariant),
         ),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(8),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: 0.1),
-              blurRadius: 4,
-              offset: const Offset(0, 2),
-            ),
-          ],
+        trailing: _hasText
+            ? [
+                IconButton(
+                  tooltip: 'Xoá',
+                  icon: const Icon(Icons.close),
+                  onPressed: () {
+                    _controller.clear();
+                    widget.onClear?.call();
+                  },
+                ),
+              ]
+            : null,
+        onChanged: widget.onSearch,
+        backgroundColor: WidgetStatePropertyAll(scheme.surfaceContainerHigh),
+        surfaceTintColor: WidgetStatePropertyAll(scheme.surfaceTint),
+        elevation: const WidgetStatePropertyAll(1),
+        padding: const WidgetStatePropertyAll(
+          EdgeInsets.symmetric(horizontal: 12),
         ),
-        child: TextField(
-          controller: _controller,
-          onChanged: widget.onSearch,
-          decoration: InputDecoration(
-            hintText: widget.hintText,
-            border: InputBorder.none,
-            prefixIcon: const Icon(Icons.search, color: Colors.grey),
-            suffixIcon: _hasText
-                ? IconButton(
-                    icon: const Icon(Icons.clear),
-                    onPressed: () {
-                      _controller.clear();
-                      widget.onClear?.call();
-                    },
-                  )
-                : null,
-            contentPadding:
-                const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-          ),
+        textStyle: WidgetStatePropertyAll(
+          TextStyle(color: scheme.onSurface, fontSize: 16),
         ),
-      );
+      ),
+    );
+  }
 }

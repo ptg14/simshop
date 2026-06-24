@@ -15,12 +15,10 @@ class AdminDashboard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Consumer<AdminViewModel>(
-        // Use a Consumer to obtain the AdminViewModel.
         builder: (context, viewModel, _) {
-          // Determine whether to use a NavigationRail (wide screens) or a Drawer.
           final bool useRail = context.useNavigationRail;
+          final scheme = Theme.of(context).colorScheme;
 
-          // Build the navigation widget based on the layout choice.
           final Widget navigation = useRail
               ? NavigationRail(
                   selectedIndex: _getTabIndex(viewModel.selectedTab),
@@ -28,25 +26,27 @@ class AdminDashboard extends StatelessWidget {
                     const tabs = ['overview', 'products', 'categories', 'settings'];
                     viewModel.selectTab(tabs[index]);
                   },
-                  labelType: NavigationRailLabelType.all,
+                  labelType: context.useFullNavigationRail
+                      ? NavigationRailLabelType.none
+                      : NavigationRailLabelType.all,
                   destinations: const [
                     NavigationRailDestination(
-                      icon: Icon(Icons.dashboard),
+                      icon: Icon(Icons.dashboard_outlined),
                       selectedIcon: Icon(Icons.dashboard),
                       label: Text('Tổng quan'),
                     ),
                     NavigationRailDestination(
-                      icon: Icon(Icons.inventory_2),
+                      icon: Icon(Icons.inventory_2_outlined),
                       selectedIcon: Icon(Icons.inventory_2),
                       label: Text('Sản phẩm'),
                     ),
                     NavigationRailDestination(
-                      icon: Icon(Icons.category),
+                      icon: Icon(Icons.category_outlined),
                       selectedIcon: Icon(Icons.category),
                       label: Text('Danh mục'),
                     ),
                     NavigationRailDestination(
-                      icon: Icon(Icons.settings),
+                      icon: Icon(Icons.settings_outlined),
                       selectedIcon: Icon(Icons.settings),
                       label: Text('Cài đặt'),
                     ),
@@ -56,37 +56,53 @@ class AdminDashboard extends StatelessWidget {
                   child: ListView(
                     padding: EdgeInsets.zero,
                     children: [
-                      const DrawerHeader(
-                        decoration: BoxDecoration(color: Color(0xFF1E88E5)),
+                      DrawerHeader(
+                        decoration: BoxDecoration(
+                          color: scheme.primaryContainer,
+                        ),
                         child: Center(
-                          child: Text(
-                            'Admin',
-                            style: TextStyle(color: Colors.white, fontSize: 24),
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(
+                                Icons.admin_panel_settings,
+                                size: 48,
+                                color: scheme.onPrimaryContainer,
+                              ),
+                              const SizedBox(height: 8),
+                              Text(
+                                'Admin',
+                                style: TextStyle(
+                                  color: scheme.onPrimaryContainer,
+                                  fontSize: 22,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ],
                           ),
                         ),
                       ),
-                      // Build a ListTile for each tab.
                       ...[
-                        (tab: 'overview', label: 'Tổng quan', icon: Icons.dashboard),
-                        (tab: 'products', label: 'Sản phẩm', icon: Icons.inventory_2),
-                        (tab: 'categories', label: 'Danh mục', icon: Icons.category),
-                        (tab: 'settings', label: 'Cài đặt', icon: Icons.settings),
+                        (tab: 'overview', label: 'Tổng quan', icon: Icons.dashboard_outlined),
+                        (tab: 'products', label: 'Sản phẩm', icon: Icons.inventory_2_outlined),
+                        (tab: 'categories', label: 'Danh mục', icon: Icons.category_outlined),
+                        (tab: 'settings', label: 'Cài đặt', icon: Icons.settings_outlined),
                       ].map(
-                            (t) => ListTile(
-                              leading: Icon(t.icon),
-                              title: Text(t.label),
-                              selected: viewModel.selectedTab == t.tab,
-                              onTap: () {
-                                viewModel.selectTab(t.tab);
-                                Navigator.pop(context);
-                              },
-                            ),
-                          ),
+                        (t) => ListTile(
+                          leading: Icon(t.icon),
+                          title: Text(t.label),
+                          selected: viewModel.selectedTab == t.tab,
+                          onTap: () {
+                            viewModel.selectTab(t.tab);
+                            Navigator.pop(context);
+                          },
+                        ),
+                      ),
                       const Divider(),
                       ListTile(
                         leading: const Icon(Icons.logout),
                         title: const Text('Đăng xuất'),
-                        onTap: () => Navigator.pushReplacementNamed(context, '/home'),
+                        onTap: () => Navigator.of(context).pop(),
                       ),
                     ],
                   ),
@@ -96,19 +112,9 @@ class AdminDashboard extends StatelessWidget {
             appBar: AppBar(
               title: const Text('Admin Dashboard'),
               centerTitle: true,
-              actions: [
-                if (!useRail)
-                  IconButton(
-                    icon: const Icon(Icons.menu),
-                    tooltip: 'Menu',
-                    onPressed: () => Scaffold.of(context).openDrawer(),
-                  ),
-                const SizedBox(width: 8),
-              ],
+              automaticallyImplyLeading: !useRail,
             ),
-            // Show navigation as a rail or drawer.
             drawer: useRail ? null : (navigation as Drawer),
-            // For rail layout, place the rail in the leading slot.
             body: Row(
               children: [
                 if (useRail)
@@ -120,7 +126,6 @@ class AdminDashboard extends StatelessWidget {
         },
       );
 
-  // Helper to map a tab identifier to the rail index.
   int _getTabIndex(String tab) {
     switch (tab) {
       case 'overview':
@@ -136,7 +141,6 @@ class AdminDashboard extends StatelessWidget {
     }
   }
 
-  // Returns the widget for the selected tab.
   Widget _buildTabContent(String tab) {
     switch (tab) {
       case 'overview':

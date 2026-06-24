@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import '../../../models/product.dart';
+import '../../../utils/currency_formatter.dart';
 import '../../../utils/responsive.dart';
 import '../../../viewmodels/admin_viewmodel.dart';
+import '../../../widgets/network_image.dart';
 import 'edit_product_dialog.dart';
 
 /// A single row in the admin product list.
@@ -16,35 +18,42 @@ class ProductListTile extends StatelessWidget {
   final AdminViewModel viewModel;
 
   @override
-  Widget build(BuildContext context) => Card(
-        margin: EdgeInsets.only(
-          bottom: context.responsive<double>(mobile: 8, tablet: 10, desktop: 12),
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Card(
+      margin: EdgeInsets.only(
+        bottom: context.responsive<double>(mobile: 8, tablet: 10, desktop: 12),
+      ),
+      child: ListTile(
+        leading: _ProductImage(imageUrl: product.imageUrl),
+        title: Text(
+          product.name,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
         ),
-        child: ListTile(
-          leading: _ProductImage(imageUrl: product.imageUrl),
-          title: Text(product.name),
-          subtitle: _ProductSubtitle(product: product),
-          trailing: SizedBox(
-            width: 100,
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.end,
-              children: [
-                IconButton(
-                  icon: const Icon(Icons.edit, color: Colors.blue),
-                  onPressed: () =>
-                      showEditProductDialog(context, viewModel, product),
-                ),
-                IconButton(
-                  icon: const Icon(Icons.delete, color: Colors.red),
-                  onPressed: () => _showDeleteConfirm(context),
-                ),
-              ],
+        subtitle: _ProductSubtitle(product: product),
+        trailing: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            IconButton(
+              tooltip: 'Sửa',
+              icon: Icon(Icons.edit, color: scheme.primary),
+              onPressed: () =>
+                  showEditProductDialog(context, viewModel, product),
             ),
-          ),
+            IconButton(
+              tooltip: 'Xoá',
+              icon: Icon(Icons.delete, color: scheme.error),
+              onPressed: () => _showDeleteConfirm(context),
+            ),
+          ],
         ),
-      );
+      ),
+    );
+  }
 
   void _showDeleteConfirm(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
@@ -71,13 +80,13 @@ class ProductListTile extends StatelessWidget {
                   ScaffoldMessenger.of(context).showSnackBar(
                     SnackBar(
                       content: Text('Lỗi khi xóa sản phẩm: $e'),
-                      backgroundColor: Colors.red,
+                      backgroundColor: scheme.error,
                     ),
                   );
                 }
               }
             },
-            child: const Text('Xóa', style: TextStyle(color: Colors.red)),
+            child: Text('Xóa', style: TextStyle(color: scheme.error)),
           ),
         ],
       ),
@@ -94,32 +103,26 @@ class _ProductImage extends StatelessWidget {
   final String imageUrl;
 
   @override
-  Widget build(BuildContext context) => Container(
-        width: 80,
-        height: 80,
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(8),
-          color: Colors.grey[200],
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      width: 80,
+      height: 80,
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(8),
+        color: scheme.surfaceContainerHighest,
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(8),
+        child: AppNetworkImage(
+          url: imageUrl,
+          width: 80,
+          height: 80,
+          fit: BoxFit.cover,
         ),
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(8),
-          child: Image.network(
-            imageUrl,
-            fit: BoxFit.cover,
-            loadingBuilder: (context, child, progress) {
-              if (progress == null) return child;
-              return Container(
-                color: Colors.grey[200],
-                child: const Center(
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                ),
-              );
-            },
-            errorBuilder: (_, __, ___) =>
-                const Icon(Icons.image_not_supported),
-          ),
-        ),
-      );
+      ),
+    );
+  }
 }
 
 class _ProductSubtitle extends StatelessWidget {
@@ -127,36 +130,48 @@ class _ProductSubtitle extends StatelessWidget {
   final Product product;
 
   @override
-  Widget build(BuildContext context) => Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text(
-            '${product.price}đ | Stock: ${product.stock ?? 0}',
-            style: const TextStyle(fontSize: 12),
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          '${formatCurrency(product.price)} • Tồn kho: ${product.stock ?? 0}',
+          style: TextStyle(
+            fontSize: 12,
+            color: scheme.onSurfaceVariant,
           ),
-          if (product.options.isNotEmpty) ...[
-            const SizedBox(height: 6),
-            Wrap(
-              spacing: 6,
-              runSpacing: 4,
-              children: product.options
-                  .where((o) => o.name.isNotEmpty)
-                  .take(4)
-                  .map(
-                    (o) => Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 8, vertical: 4),
-                      decoration: BoxDecoration(
-                        color: Colors.grey[100],
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: Text(o.name, style: const TextStyle(fontSize: 12)),
+        ),
+        if (product.options.isNotEmpty) ...[
+          const SizedBox(height: 6),
+          Wrap(
+            spacing: 6,
+            runSpacing: 4,
+            children: product.options
+                .where((o) => o.name.isNotEmpty)
+                .take(4)
+                .map(
+                  (o) => Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 8, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: scheme.secondaryContainer,
+                      borderRadius: BorderRadius.circular(999),
                     ),
-                  )
-                  .toList(),
-            ),
-          ],
+                    child: Text(
+                      o.name,
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: scheme.onSecondaryContainer,
+                      ),
+                    ),
+                  ),
+                )
+                .toList(),
+          ),
         ],
-      );
+      ],
+    );
+  }
 }

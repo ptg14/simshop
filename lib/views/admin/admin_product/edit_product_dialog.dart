@@ -7,7 +7,7 @@ import '../../../models/product.dart';
 import '../../../utils/responsive.dart';
 import '../../../viewmodels/admin_viewmodel.dart';
 import '../../../viewmodels/home_viewmodel.dart';
-import 'widgets/category_selector.dart';
+import 'widgets/product_category_picker.dart';
 import 'widgets/image_picker_grid.dart';
 
 /// Helper to show the edit dialog from any widget in the admin feature.
@@ -155,70 +155,74 @@ class _EditProductDialogState extends State<EditProductDialog> {
   @override
   Widget build(BuildContext context) => AlertDialog(
       title: const Text('Cập nhật sản phẩm'),
-      content: SingleChildScrollView(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            // Image picker (new + existing)
-            ImagePickerGrid(
-              newImagesBytes: _selectedImagesBytes,
-              existingImages: _existingImages,
-              onPickImages: _pickImages,
-              onRemoveNewImage: (i) => setState(() {
-                _selectedImages.removeAt(i);
-                _selectedImagesBytes.removeAt(i);
-              }),
-              onRemoveExistingImage: (j) =>
-                  setState(() => _existingImages.removeAt(j)),
-            ),
-            const SizedBox(height: 12),
+      content: ConstrainedBox(
+        constraints: BoxConstraints(maxWidth: context.dialogWidth),
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Image picker (new + existing)
+              ImagePickerGrid(
+                newImagesBytes: _selectedImagesBytes,
+                existingImages: _existingImages,
+                onPickImages: _pickImages,
+                onRemoveNewImage: (i) => setState(() {
+                  _selectedImages.removeAt(i);
+                  _selectedImagesBytes.removeAt(i);
+                }),
+                onRemoveExistingImage: (j) =>
+                    setState(() => _existingImages.removeAt(j)),
+              ),
+              const SizedBox(height: 12),
 
-            // Options with image assignment from existing images
-            _OptionsEditorWithImages(
-              options: _options,
-              existingImages: _existingImages,
-              onChanged: (opts) => setState(() => _options = opts),
-            ),
-            const SizedBox(height: 12),
+              // Name
+              TextField(
+                controller: _nameController,
+                decoration: const InputDecoration(labelText: 'Tên sản phẩm'),
+              ),
+              const SizedBox(height: 12),
 
-            // Name
-            TextField(
-              controller: _nameController,
-              decoration: const InputDecoration(labelText: 'Tên sản phẩm'),
-            ),
-            const SizedBox(height: 12),
+              // Price
+              TextField(
+                controller: _priceController,
+                decoration: const InputDecoration(labelText: 'Giá (đ)'),
+                keyboardType: TextInputType.number,
+              ),
+              const SizedBox(height: 12),
 
-            // Price
-            TextField(
-              controller: _priceController,
-              decoration: const InputDecoration(labelText: 'Giá (đ)'),
-              keyboardType: TextInputType.number,
-            ),
-            const SizedBox(height: 12),
+              // Stock
+              TextField(
+                controller: _stockController,
+                decoration: const InputDecoration(labelText: 'Tồn kho'),
+                keyboardType: TextInputType.number,
+              ),
+              const SizedBox(height: 12),
 
-            // Categories
-            CategorySelector(
-              viewModel: widget.viewModel,
-              selectedCategories: _selectedCategories,
-              onChanged: (cats) => setState(() => _selectedCategories = cats),
-            ),
-            const SizedBox(height: 12),
+              // Description
+              TextField(
+                controller: _descriptionController,
+                decoration: const InputDecoration(labelText: 'Mô tả'),
+                maxLines: 3,
+              ),
+              const SizedBox(height: 12),
 
-            // Stock
-            TextField(
-              controller: _stockController,
-              decoration: const InputDecoration(labelText: 'Tồn kho'),
-              keyboardType: TextInputType.number,
-            ),
-            const SizedBox(height: 12),
+              // Categories
+              ProductCategoryPicker(
+                viewModel: widget.viewModel,
+                selectedCategories: _selectedCategories,
+                onChanged: (cats) => setState(() => _selectedCategories = cats),
+              ),
+              const SizedBox(height: 12),
 
-            // Description
-            TextField(
-              controller: _descriptionController,
-              decoration: const InputDecoration(labelText: 'Mô tả'),
-              maxLines: 3,
-            ),
-          ],
+              // Options with image assignment from existing images
+              _OptionsEditorWithImages(
+                options: _options,
+                existingImages: _existingImages,
+                onChanged: (opts) => setState(() => _options = opts),
+              ),
+            ],
+          ),
         ),
       ),
       actions: [
@@ -226,7 +230,7 @@ class _EditProductDialogState extends State<EditProductDialog> {
           onPressed: () => Navigator.pop(context),
           child: const Text('Hủy'),
         ),
-        ElevatedButton(
+        FilledButton(
           onPressed: _submit,
           child: const Text('Cập nhật'),
         ),
@@ -343,6 +347,7 @@ class _OptionImageRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
     if (existingImages.isEmpty) {
       return TextButton(
         onPressed: () =>
@@ -362,51 +367,70 @@ class _OptionImageRow extends StatelessWidget {
             return Padding(
               padding: EdgeInsets.only(
                   right: idx == existingImages.length - 1 ? 0 : 8),
-              child: GestureDetector(
-                onTap: () => _toggle(url),
-                child: Stack(
-                  children: [
-                    Container(
-                      width: 56,
-                      height: 56,
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(8),
-                        border: Border.all(
-                          color: selected ? Colors.blue : Colors.transparent,
-                          width: selected ? 2 : 0,
-                        ),
-                      ),
-                      child: ClipRRect(
-                        borderRadius: BorderRadius.circular(6),
-                        child: Image.network(
-                          url,
+              child: Semantics(
+                button: true,
+                selected: selected,
+                label: 'Ảnh ${idx + 1}',
+                child: Material(
+                  color: Colors.transparent,
+                  child: InkWell(
+                    onTap: () => _toggle(url),
+                    customBorder: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Stack(
+                      children: [
+                        Container(
                           width: 56,
                           height: 56,
-                          fit: BoxFit.cover,
-                          errorBuilder: (_, __, ___) =>
-                              Container(color: Colors.grey[200]),
-                        ),
-                      ),
-                    ),
-                    if (selected)
-                      Positioned(
-                        right: 4,
-                        top: 4,
-                        child: GestureDetector(
-                          onTap: () => _toggle(url),
-                          child: Container(
-                            width: 20,
-                            height: 20,
-                            decoration: BoxDecoration(
-                              color: Colors.black54,
-                              borderRadius: BorderRadius.circular(10),
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(
+                              color: selected
+                                  ? scheme.primary
+                                  : Colors.transparent,
+                              width: selected ? 2 : 0,
                             ),
-                            child: const Icon(Icons.close,
-                                size: 14, color: Colors.white),
+                          ),
+                          child: ClipRRect(
+                            borderRadius: BorderRadius.circular(6),
+                            child: Image.network(
+                              url,
+                              width: 56,
+                              height: 56,
+                              fit: BoxFit.cover,
+                              errorBuilder: (_, __, ___) => Container(
+                                  color: scheme.surfaceContainerHighest),
+                            ),
                           ),
                         ),
-                      ),
-                  ],
+                        if (selected)
+                          Positioned(
+                            right: 4,
+                            top: 4,
+                            child: Semantics(
+                              button: true,
+                              label: 'Bỏ chọn ảnh',
+                              child: Material(
+                                color: Colors.black54,
+                                shape: const CircleBorder(),
+                                clipBehavior: Clip.antiAlias,
+                                child: InkWell(
+                                  onTap: () => _toggle(url),
+                                  customBorder: const CircleBorder(),
+                                  child: const SizedBox(
+                                    width: 20,
+                                    height: 20,
+                                    child: Icon(Icons.close,
+                                        size: 14, color: Colors.white),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
                 ),
               ),
             );

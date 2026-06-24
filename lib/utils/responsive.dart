@@ -148,10 +148,13 @@ extension ResponsiveContext on BuildContext {
   }
 
   /// Responsive button height for product card.
+  ///
+  /// Sized to fit the theme's `filledButtonTheme` padding (v:10) + 12-14pt
+  /// label without vertical clipping.
   double get productCardButtonHeight {
-    if (isDesktop) return 36;
-    if (isTablet) return 34;
-    return 32;
+    if (isDesktop) return 40;
+    if (isTablet) return 38;
+    return 36;
   }
 
   /// Responsive admin grid columns for stat cards.
@@ -162,10 +165,20 @@ extension ResponsiveContext on BuildContext {
   }
 
   /// Responsive dialog width.
+  ///
+  /// On mobile this caps the dialog at 360 so it doesn't run edge-to-edge.
+  /// Use [formDialogWidth] for forms that need a bit more room.
   double get dialogWidth {
     if (isDesktop) return 600;
     if (isTablet) return 500;
-    return double.infinity;
+    return 360;
+  }
+
+  /// Slightly wider dialog width for forms (used by add/edit product dialogs).
+  double get formDialogWidth {
+    if (isDesktop) return 720;
+    if (isTablet) return 600;
+    return 400;
   }
 
   /// Whether to show a full navigation rail (desktop) vs compact (tablet).

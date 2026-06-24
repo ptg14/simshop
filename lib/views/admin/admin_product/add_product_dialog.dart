@@ -7,7 +7,7 @@ import '../../../models/product.dart';
 import '../../../utils/responsive.dart';
 import '../../../viewmodels/admin_viewmodel.dart';
 import '../../../viewmodels/home_viewmodel.dart';
-import 'widgets/category_selector.dart';
+import 'widgets/product_category_picker.dart';
 import 'widgets/image_picker_grid.dart';
 
 /// Dialog for adding a new product.
@@ -123,6 +123,7 @@ class _AddProductDialogState extends State<AddProductDialog> {
         child: SingleChildScrollView(
           child: Column(
             mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               // Image picker
               ImagePickerGrid(
@@ -150,21 +151,6 @@ class _AddProductDialogState extends State<AddProductDialog> {
               ),
               const SizedBox(height: 12),
 
-              // Categories
-              CategorySelector(
-                viewModel: widget.viewModel,
-                selectedCategories: _selectedCategories,
-                onChanged: (cats) => setState(() => _selectedCategories = cats),
-              ),
-              const SizedBox(height: 12),
-
-              // Options (variants)
-              _OptionsEditor(
-                options: _options,
-                onChanged: (opts) => setState(() => _options = opts),
-              ),
-              const SizedBox(height: 12),
-
               // Stock
               TextField(
                 controller: _stockController,
@@ -182,6 +168,21 @@ class _AddProductDialogState extends State<AddProductDialog> {
                 ),
                 maxLines: 3,
               ),
+              const SizedBox(height: 12),
+
+              // Categories
+              ProductCategoryPicker(
+                viewModel: widget.viewModel,
+                selectedCategories: _selectedCategories,
+                onChanged: (cats) => setState(() => _selectedCategories = cats),
+              ),
+              const SizedBox(height: 12),
+
+              // Options (variants)
+              _OptionsEditor(
+                options: _options,
+                onChanged: (opts) => setState(() => _options = opts),
+              ),
             ],
           ),
         ),
@@ -191,7 +192,7 @@ class _AddProductDialogState extends State<AddProductDialog> {
           onPressed: () => Navigator.pop(context),
           child: const Text('Hủy'),
         ),
-        ElevatedButton(
+        FilledButton(
           onPressed: _submit,
           child: const Text('Thêm'),
         ),

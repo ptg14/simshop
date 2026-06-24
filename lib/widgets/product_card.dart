@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import '../models/product.dart';
 import '../utils/currency_formatter.dart';
 import '../utils/responsive.dart';
+import 'animated_press.dart';
+import 'network_image.dart';
 
 /// Widget displaying a product card.
 class ProductCard extends StatelessWidget {
@@ -16,255 +18,225 @@ class ProductCard extends StatelessWidget {
   final VoidCallback? onAddToCart;
 
   @override
-  Widget build(BuildContext context) => GestureDetector(
-        onTap: onTap,
-        child: Container(
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(12),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withValues(alpha: 0.08),
-                blurRadius: 8,
-                offset: const Offset(0, 2),
-              ),
-            ],
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              /// Product image
-              Stack(
-                children: [
-                  Container(
-                    height: context.productCardImageHeight,
-                    width: double.infinity,
-                    decoration: BoxDecoration(
-                      color: Colors.grey[200],
-                      borderRadius: const BorderRadius.only(
-                        topLeft: Radius.circular(12),
-                        topRight: Radius.circular(12),
-                      ),
-                    ),
-                    child: Image.network(
-                      product.imageUrl,
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final heroTag = 'product-image-${product.id}';
+
+    return AnimatedPress(
+      onTap: onTap,
+      child: Card(
+        clipBehavior: Clip.antiAlias,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Image area with stacked badges.
+            Stack(
+              children: [
+                SizedBox(
+                  height: context.productCardImageHeight,
+                  width: double.infinity,
+                  child: Hero(
+                    tag: heroTag,
+                    child: AppNetworkImage(
+                      url: product.imageUrl,
                       fit: BoxFit.cover,
-                      loadingBuilder: (context, child, loadingProgress) {
-                        if (loadingProgress == null) return child;
-                        return Container(
-                          color: Colors.grey[200],
-                          child: const Center(
-                            child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                  ),
+                ),
+
+                // Discount badge — pill with offer icon.
+                if (product.isOnSale)
+                  Positioned(
+                    top: 8,
+                    right: 8,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 10, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: scheme.error,
+                        borderRadius: BorderRadius.circular(999),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.local_offer,
+                              size: 14, color: scheme.onError),
+                          const SizedBox(width: 4),
+                          Text(
+                            '-${product.discountPercentage}%',
+                            style: TextStyle(
+                              color: scheme.onError,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 12,
+                            ),
                           ),
-                        );
-                      },
-                      errorBuilder: (context, error, stackTrace) => Container(
-                        color: Colors.grey[300],
-                        child: const Center(
-                          child: Icon(Icons.image_not_supported),
-                        ),
+                        ],
                       ),
                     ),
                   ),
 
-                  /// Discount badge
-                  if (product.isOnSale)
-                    Positioned(
-                      top: 8,
-                      right: 8,
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 8, vertical: 4),
-                        decoration: BoxDecoration(
-                          color: Colors.red,
-                          borderRadius: BorderRadius.circular(4),
-                        ),
-                        child: Text(
-                          '-${product.discountPercentage}%',
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontWeight: FontWeight.bold,
-                            fontSize: context.productCardPriceFontSize,
-                          ),
-                        ),
+                // Stock badge — pill, tertiary container.
+                if ((product.stock ?? 0) < 10)
+                  Positioned(
+                    top: 8,
+                    left: 8,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 10, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: scheme.tertiaryContainer,
+                        borderRadius: BorderRadius.circular(999),
                       ),
-                    ),
-
-                  /// Stock status
-                  if ((product.stock ?? 0) < 10)
-                    Positioned(
-                      top: 8,
-                      left: 8,
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 8, vertical: 4),
-                        decoration: BoxDecoration(
-                          color: Colors.orange,
-                          borderRadius: BorderRadius.circular(4),
-                        ),
-                        child: Text(
-                          'Sắp hết',
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontSize: context.productCardPriceFontSize,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ),
-                    ),
-                ],
-              ),
-
-              /// Product info
-              Expanded(
-                child: Padding(
-                  padding: context.productCardPadding,
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      /// Product name
-                      Text(
-                        product.name,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontWeight: FontWeight.w600,
-                          fontSize: context.productCardNameFontSize,
-                          height: 1.3,
-                        ),
-                      ),
-
-                      const SizedBox(height: 4),
-
-                      // Option mini-review: show small chips for option names
-                      if (product.options.isNotEmpty)
-                        Padding(
-                          padding: const EdgeInsets.only(bottom: 6.0),
-                          child: Wrap(
-                            spacing: 6,
-                            runSpacing: 4,
-                            children: product.options
-                                .take(4)
-                                .map((o) => Chip(
-                                      label: Text(
-                                        o.name,
-                                        style: const TextStyle(fontSize: 12),
-                                      ),
-                                      visualDensity: VisualDensity.compact,
-                                      materialTapTargetSize:
-                                          MaterialTapTargetSize.shrinkWrap,
-                                      backgroundColor: Colors.grey[100],
-                                    ))
-                                .toList(),
-                          ),
-                        ),
-
-                      /// Category
-                      Text(
-                        product.category,
-                        style: TextStyle(
-                          fontSize: context.responsive<double>(
-                            mobile: 11,
-                            tablet: 12,
-                            desktop: 13,
-                          ),
-                          color: Colors.grey[600],
-                        ),
-                      ),
-
-                      const Spacer(),
-
-                      const SizedBox(height: 6),
-
-                      /// Price
-                      Row(
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
                         children: [
+                          Icon(Icons.warning_amber_rounded,
+                              size: 14, color: scheme.onTertiaryContainer),
+                          const SizedBox(width: 4),
                           Text(
-                            formatCurrency(product.price),
+                            'Sắp hết',
                             style: TextStyle(
-                              fontWeight: FontWeight.bold,
-                              fontSize: context.productCardPriceFontSize,
-                              color: Colors.red,
+                              color: scheme.onTertiaryContainer,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
                             ),
                           ),
-                          if (product.isOnSale) ...[
-                            const SizedBox(width: 6),
-                            Text(
+                        ],
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+
+            // Info block.
+            Expanded(
+              child: Padding(
+                padding: context.productCardPadding,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      product.name,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontWeight: FontWeight.w600,
+                        fontSize: context.productCardNameFontSize,
+                        height: 1.3,
+                        color: scheme.onSurface,
+                      ),
+                    ),
+
+                    if (product.options.isNotEmpty) ...[
+                      const SizedBox(height: 6),
+                      Wrap(
+                        spacing: 6,
+                        runSpacing: 4,
+                        children: product.options
+                            .take(4)
+                            .map((o) => _OptionPill(label: o.name))
+                            .toList(),
+                      ),
+                    ],
+
+                    Text(
+                      product.category,
+                      style: TextStyle(
+                        fontSize: context.responsive<double>(
+                          mobile: 11,
+                          tablet: 12,
+                          desktop: 13,
+                        ),
+                        color: scheme.onSurfaceVariant,
+                      ),
+                    ),
+
+                    const Spacer(),
+
+                    Row(
+                      children: [
+                        Text(
+                          formatCurrency(product.price),
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: context.productCardPriceFontSize,
+                            color: scheme.error,
+                          ),
+                        ),
+                        if (product.isOnSale) ...[
+                          const SizedBox(width: 6),
+                          Flexible(
+                            child: Text(
                               formatCurrency(product.originalPrice ?? 0),
+                              overflow: TextOverflow.ellipsis,
                               style: TextStyle(
                                 fontSize: context.responsive<double>(
                                   mobile: 11,
                                   tablet: 12,
                                   desktop: 13,
                                 ),
-                                color: Colors.grey[600],
+                                color: scheme.onSurfaceVariant,
                                 decoration: TextDecoration.lineThrough,
                               ),
                             ),
-                          ],
-                        ],
-                      ),
-
-                      const SizedBox(height: 8),
-
-                      /// View details button
-                      if (onAddToCart == null)
-                        SizedBox(
-                          width: double.infinity,
-                          height: context.productCardButtonHeight,
-                          child: ElevatedButton(
-                            onPressed: onTap,
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: const Color(0xFF1E88E5),
-                              padding: EdgeInsets.zero,
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(8),
-                              ),
-                            ),
-                            child: Text(
-                              'Xem chi tiết',
-                              style: TextStyle(
-                                color: Colors.white,
-                                fontSize: context.responsive<double>(
-                                  mobile: 12,
-                                  tablet: 13,
-                                  desktop: 14,
-                                ),
-                                fontWeight: FontWeight.w500,
-                              ),
-                            ),
                           ),
-                        )
-                      else
-                        SizedBox(
-                          width: double.infinity,
-                          height: context.productCardButtonHeight,
-                          child: ElevatedButton(
-                            onPressed: onAddToCart,
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: const Color(0xFF1E88E5),
-                              padding: EdgeInsets.zero,
-                            ),
-                            child: Text(
-                              'Thêm vào giỏ',
-                              style: TextStyle(
-                                color: Colors.white,
-                                fontSize: context.responsive<double>(
-                                  mobile: 12,
-                                  tablet: 13,
-                                  desktop: 14,
-                                ),
-                                fontWeight: FontWeight.w500,
-                              ),
+                        ],
+                      ],
+                    ),
+
+                    const SizedBox(height: 8),
+
+                    SizedBox(
+                      width: double.infinity,
+                      height: context.productCardButtonHeight,
+                      child: FilledButton(
+                        onPressed: onAddToCart ?? onTap,
+                        child: Text(
+                          onAddToCart == null
+                              ? 'Xem chi tiết'
+                              : 'Thêm vào giỏ',
+                          style: TextStyle(
+                            fontSize: context.responsive<double>(
+                              mobile: 12,
+                              tablet: 13,
+                              desktop: 14,
                             ),
                           ),
                         ),
-                    ],
-                  ),
+                      ),
+                    ),
+                  ],
                 ),
               ),
-            ],
-          ),
+            ),
+          ],
         ),
-      );
+      ),
+    );
+  }
+}
+
+class _OptionPill extends StatelessWidget {
+  const _OptionPill({required this.label});
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+      decoration: BoxDecoration(
+        color: scheme.secondaryContainer,
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          color: scheme.onSecondaryContainer,
+          fontSize: 12,
+          fontWeight: FontWeight.w500,
+        ),
+      ),
+    );
+  }
 }

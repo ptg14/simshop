@@ -1,11 +1,10 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'theme/app_theme.dart';
 import 'viewmodels/admin_viewmodel.dart';
 import 'viewmodels/home_viewmodel.dart';
-import 'views/admin/admin_dashboard.dart';
 import 'views/home_screen.dart';
-import 'views/product_detail_screen.dart';
 
 final ValueNotifier<String?> _globalError = ValueNotifier(null);
 
@@ -38,26 +37,10 @@ class MyApp extends StatelessWidget {
         child: MaterialApp(
           title: 'Sample E-commerce App',
           debugShowCheckedModeBanner: false,
-          theme: ThemeData(
-            useMaterial3: true,
-            colorScheme: ColorScheme.fromSeed(
-              seedColor: const Color(0xFF1E88E5),
-              brightness: Brightness.light,
-            ),
-            fontFamily: 'Roboto',
-            appBarTheme: const AppBarTheme(
-              backgroundColor: Colors.white,
-              foregroundColor: Colors.black,
-              elevation: 2,
-              centerTitle: false,
-            ),
-          ),
+          theme: AppTheme.light(),
+          darkTheme: AppTheme.dark(),
+          themeMode: ThemeMode.light,
           home: const HomeScreen(),
-          routes: {
-            '/home': (context) => const HomeScreen(),
-            '/product-detail': (context) => const ProductDetailScreen(),
-            '/admin': (context) => const AdminDashboard(),
-          },
         ),
       );
 }
@@ -71,6 +54,9 @@ class GuardedApp extends StatelessWidget {
         builder: (context, error, _) {
           if (error != null) {
             return MaterialApp(
+              theme: AppTheme.light(),
+              darkTheme: AppTheme.dark(),
+              themeMode: ThemeMode.light,
               home: Scaffold(
                 appBar: AppBar(title: const Text('Runtime Error')),
                 body: SingleChildScrollView(

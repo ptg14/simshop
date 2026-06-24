@@ -2,12 +2,15 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../models/product.dart';
+import '../utils/page_transitions.dart';
 import '../utils/responsive.dart';
 import '../viewmodels/home_viewmodel.dart';
 import '../widgets/category_selector.dart';
 import '../widgets/image_carousel.dart';
 import '../widgets/product_card.dart';
 import '../widgets/search_bar.dart';
+import 'admin/admin_dashboard.dart';
+import 'product_detail_screen.dart';
 
 /// Home screen displaying products and promotions.
 class HomeScreen extends StatefulWidget {
@@ -27,11 +30,19 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void _navigateToProductDetail(Product product) {
-    Navigator.pushNamed(context, '/product-detail', arguments: product);
+    Navigator.of(context).push(
+      fadeSlideRoute(ProductDetailScreen(product: product)),
+    );
+  }
+
+  void _navigateToAdmin() {
+    Navigator.of(context).push(fadeSlideRoute(const AdminDashboard()));
   }
 
   @override
-  Widget build(BuildContext context) => Scaffold(
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Scaffold(
         appBar: AppBar(
           title: Text(context.isMobile ? 'simshop' : 'simshop - Quảng Cáo'),
           centerTitle: context.isMobile,
@@ -39,19 +50,22 @@ class _HomeScreenState extends State<HomeScreen> {
             IconButton(
               icon: const Icon(Icons.admin_panel_settings),
               tooltip: 'Quản trị',
-              onPressed: () => Navigator.pushNamed(context, '/admin'),
+              onPressed: _navigateToAdmin,
             ),
           ],
         ),
         body: Consumer<HomeViewModel>(
           builder: (context, viewModel, _) {
             if (viewModel.isLoading && viewModel.products.isEmpty) {
-              return const Center(child: CircularProgressIndicator());
+              return Center(
+                child: CircularProgressIndicator(color: scheme.primary),
+              );
             }
             if (viewModel.error != null && viewModel.products.isEmpty) {
-              return Center(child: Text(viewModel.error!));
+              return _buildError(context, viewModel);
             }
             return RefreshIndicator(
+              color: scheme.primary,
               onRefresh: viewModel.initialize,
               child: SingleChildScrollView(
                 physics: const AlwaysScrollableScrollPhysics(),
@@ -64,63 +78,32 @@ class _HomeScreenState extends State<HomeScreen> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         // Search bar
-                        Padding(
-                          padding: EdgeInsets.symmetric(
-                            horizontal: context.horizontalPadding,
-                            vertical: 8,
-                          ),
-                          child: ProductSearchBar(
-                            onSearch: viewModel.searchProducts,
-                            onClear: viewModel.resetSearch,
-                          ),
+                        ProductSearchBar(
+                          onSearch: viewModel.searchProducts,
+                          onClear: viewModel.resetSearch,
                         ),
                         // Promotional image carousel
                         if (viewModel.getPromotionalProducts().isNotEmpty)
-                          Padding(
-                            padding: EdgeInsets.symmetric(
-                              horizontal: context.horizontalPadding,
-                            ),
-                            child: ImageCarousel(
-                              imageUrls: const [
-                                'https://picsum.photos/800/300?random=1',
-                                'https://picsum.photos/800/300?random=2',
-                                'https://picsum.photos/800/300?random=3',
-                              ],
-                              height: context.carouselHeight,
-                            ),
+                          ImageCarousel(
+                            imageUrls: const [
+                              'https://picsum.photos/800/300?random=1',
+                              'https://picsum.photos/800/300?random=2',
+                              'https://picsum.photos/800/300?random=3',
+                            ],
+                            height: context.carouselHeight,
                           ),
-                        // Category selector
+                        // Category selector (Large + sub rows).
                         CategorySelector(
-                          categories: viewModel.categories,
-                          selectedCategory: viewModel.selectedCategory,
-                          onCategorySelected: viewModel.selectCategory,
+                          largeCategories: viewModel.largeCategories,
+                          selectedLarge: viewModel.selectedLarge,
+                          onLargeSelected: viewModel.selectLarge,
+                          subCategories: viewModel.visibleSubCategories,
+                          selectedSub: viewModel.selectedCategory,
+                          onSubSelected: viewModel.selectCategory,
                         ),
                         // Product grid or empty state
                         if (viewModel.products.isEmpty)
-                          Center(
-                            child: Padding(
-                              padding: const EdgeInsets.symmetric(vertical: 64),
-                              child: Column(
-                                children: [
-                                  const Icon(Icons.inventory_2_outlined,
-                                      size: 80, color: Colors.grey),
-                                  const SizedBox(height: 16),
-                                  const Text(
-                                    'Không tìm thấy sản phẩm nào',
-                                    style: TextStyle(
-                                      fontSize: 16,
-                                      color: Colors.grey,
-                                    ),
-                                  ),
-                                  const SizedBox(height: 24),
-                                  ElevatedButton(
-                                    onPressed: () => viewModel.resetSearch(),
-                                    child: const Text('Xóa bộ lọc'),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          )
+                          _buildEmpty(context, viewModel)
                         else
                           Padding(
                             padding: EdgeInsets.symmetric(
@@ -172,4 +155,77 @@ class _HomeScreenState extends State<HomeScreen> {
           },
         ),
       );
+  }
+
+  Widget _buildEmpty(BuildContext context, HomeViewModel viewModel) {
+    final scheme = Theme.of(context).colorScheme;
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 64),
+        child: Column(
+          children: [
+            Icon(Icons.inventory_2_outlined,
+                size: 80, color: scheme.onSurfaceVariant),
+            const SizedBox(height: 16),
+            Text(
+              'Không tìm thấy sản phẩm nào',
+              style: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.w600,
+                color: scheme.onSurface,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Hãy thử bỏ bộ lọc hoặc tìm với từ khoá khác',
+              style: TextStyle(color: scheme.onSurfaceVariant),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 24),
+            FilledButton.icon(
+              onPressed: () => viewModel.resetSearch(),
+              icon: const Icon(Icons.refresh),
+              label: const Text('Xóa bộ lọc'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildError(BuildContext context, HomeViewModel viewModel) {
+    final scheme = Theme.of(context).colorScheme;
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 64, horizontal: 24),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.error_outline, size: 80, color: scheme.error),
+            const SizedBox(height: 16),
+            Text(
+              'Không thể tải sản phẩm',
+              style: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.w600,
+                color: scheme.onSurface,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              viewModel.error!,
+              style: TextStyle(color: scheme.onSurfaceVariant),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 24),
+            FilledButton.icon(
+              onPressed: viewModel.initialize,
+              icon: const Icon(Icons.refresh),
+              label: const Text('Thử lại'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }

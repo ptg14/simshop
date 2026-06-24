@@ -61,17 +61,26 @@ class ImagePickerGrid extends StatelessWidget {
             ),
 
           // "Add image" tile
-          GestureDetector(
-            onTap: onPickImages,
-            child: Container(
-              width: 72,
-              height: 72,
-              decoration: BoxDecoration(
+          Semantics(
+            button: true,
+            label: 'Thêm ảnh',
+            child: Material(
+              color: Colors.grey[100],
+              shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(8),
-                color: Colors.grey[100],
-                border: Border.all(color: Colors.grey),
+                side: BorderSide(color: Colors.grey.shade400),
               ),
-              child: const Center(child: Icon(Icons.add)),
+              child: InkWell(
+                onTap: onPickImages,
+                customBorder: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: const SizedBox(
+                  width: 72,
+                  height: 72,
+                  child: Center(child: Icon(Icons.add)),
+                ),
+              ),
             ),
           ),
         ],
@@ -105,16 +114,22 @@ class _ImageTile extends StatelessWidget {
           Positioned(
             right: 0,
             top: 0,
-            child: GestureDetector(
-              onTap: onRemove,
-              child: Container(
-                width: 20,
-                height: 20,
-                decoration: BoxDecoration(
-                  color: Colors.black54,
-                  borderRadius: BorderRadius.circular(10),
+            child: Semantics(
+              button: true,
+              label: 'Xóa ảnh',
+              child: Material(
+                color: Colors.black54,
+                shape: const CircleBorder(),
+                clipBehavior: Clip.antiAlias,
+                child: InkWell(
+                  onTap: onRemove,
+                  customBorder: const CircleBorder(),
+                  child: const SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: Icon(Icons.close, size: 14, color: Colors.white),
+                  ),
                 ),
-                child: const Icon(Icons.close, size: 14, color: Colors.white),
               ),
             ),
           ),
