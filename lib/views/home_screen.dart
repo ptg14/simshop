@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
-import '../models/article.dart';
 import '../models/product.dart';
 import '../utils/page_transitions.dart';
 import '../utils/responsive.dart';
@@ -123,13 +122,9 @@ class _HomeScreenState extends State<HomeScreen> {
                                   );
                                   return;
                                 }
-                                Navigator.of(context).push(openArticleRoute(
-                                  Article(
-                                    id: articleId,
-                                    title: banners[index].title,
-                                    body: '',
-                                  ),
-                                ));
+                                Navigator.of(context).push(
+                                  openArticleIdRoute(articleId),
+                                );
                               },
                             );
                           },

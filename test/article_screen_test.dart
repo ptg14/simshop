@@ -1,35 +1,88 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:provider/provider.dart';
 import 'package:simshop/models/article.dart';
+import 'package:simshop/models/banner.dart';
+import 'package:simshop/services/article_service.dart';
 import 'package:simshop/views/article_screen.dart';
 
+/// In-memory service so tests don't touch the network. The article
+/// returned for id 'a-1' includes a product stub so the chip rendering
+/// path is exercised too.
+class _FakeArticleService implements IArticleService {
+  _FakeArticleService({this.found, this.articles = const []});
+
+  ArticleWithProducts? found;
+  final List<Article> articles;
+
+  @override
+  Future<ArticleWithProducts?> getArticle(String id) async {
+    if (id == 'a-2') return null;
+    return found ??
+        ArticleWithProducts(
+          article: articles.firstWhere((a) => a.id == id),
+          products: const [
+            ProductStub(id: 'p-1', name: 'Áo thun', imageUrl: ''),
+          ],
+        );
+  }
+
+  @override
+  Future<List<BannerSlide>> getBanners() async => const [];
+  @override
+  Future<List<Article>> listArticles() async => articles;
+  @override
+  Future<Article> createArticle(Article article) async => article;
+  @override
+  Future<Article> updateArticle(Article article) async => article;
+  @override
+  Future<void> deleteArticle(String id) async {}
+  @override
+  Future<BannerSlide> createBanner(BannerSlide slide) async => slide;
+  @override
+  Future<BannerSlide> updateBanner(BannerSlide slide) async => slide;
+  @override
+  Future<void> deleteBanner(String id) async {}
+}
+
+Widget _wrap(Widget child, IArticleService service) => MaterialApp(
+      home: Provider<IArticleService>.value(
+        value: service,
+        child: child,
+      ),
+    );
+
 void main() {
-  testWidgets('ArticleScreen renders title and markdown body', (tester) async {
+  testWidgets('ArticleScreen renders title, markdown and product chips',
+      (tester) async {
     const article = Article(
       id: 'a-1',
       title: 'Khuyến mãi tháng 6',
       body: '## Điểm nổi bật\n\nGiảm **30%** cho tất cả sản phẩm.',
     );
+    final svc = _FakeArticleService(articles: [article]);
 
-    await tester.pumpWidget(
-      const MaterialApp(home: ArticleScreen(article: article)),
-    );
+    await tester.pumpWidget(_wrap(
+      const ArticleScreen(articleId: 'a-1'),
+      svc,
+    ));
     await tester.pumpAndSettle();
 
-    // Title shows twice: AppBar + body heading.
-    expect(find.text('Khuyến mãi tháng 6'), findsNWidgets(2));
-    // Markdown header from the body.
+    expect(find.text('Khuyến mãi tháng 6'), findsOneWidget);
     expect(find.text('Điểm nổi bật'), findsOneWidget);
+    expect(find.text('Sản phẩm nhắc đến'), findsOneWidget);
+    expect(find.text('Áo thun'), findsOneWidget);
   });
 
-  testWidgets('ArticleScreen falls back when body is empty', (tester) async {
-    const article = Article(id: 'a-2', title: 'Trống', body: '');
-
-    await tester.pumpWidget(
-      const MaterialApp(home: ArticleScreen(article: article)),
-    );
+  testWidgets('ArticleScreen shows deleted state when getArticle returns null',
+      (tester) async {
+    final svc = _FakeArticleService(found: null);
+    await tester.pumpWidget(_wrap(
+      const ArticleScreen(articleId: 'a-2'),
+      svc,
+    ));
     await tester.pumpAndSettle();
 
-    expect(find.textContaining('chưa có nội dung'), findsOneWidget);
+    expect(find.text('Bài viết đã bị xóa'), findsOneWidget);
   });
 }

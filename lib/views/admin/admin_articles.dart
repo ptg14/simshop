@@ -10,6 +10,7 @@ import '../../models/banner.dart';
 import '../../services/product_service.dart';
 import '../../utils/responsive.dart';
 import '../../viewmodels/articles_viewmodel.dart';
+import '../../widgets/markdown_split_editor.dart';
 import '../../widgets/network_image.dart';
 
 /// Admin "Bài viết" tab. Manages banner slides (carousel) and the
@@ -569,16 +570,16 @@ class _ArticleDialog extends StatefulWidget {
 
 class _ArticleDialogState extends State<_ArticleDialog> {
   late final TextEditingController _titleCtrl;
-  late final TextEditingController _bodyCtrl;
   late final TextEditingController _coverCtrl;
   late final TextEditingController _productIdsCtrl;
+  final GlobalKey<MarkdownSplitEditorState> _bodyKey =
+      GlobalKey<MarkdownSplitEditorState>();
 
   @override
   void initState() {
     super.initState();
     final a = widget.existing;
     _titleCtrl = TextEditingController(text: a?.title ?? '');
-    _bodyCtrl = TextEditingController(text: a?.body ?? '');
     _coverCtrl = TextEditingController(text: a?.coverImageUrl ?? '');
     _productIdsCtrl = TextEditingController(text: (a?.productIds ?? []).join(', '));
   }
@@ -586,7 +587,6 @@ class _ArticleDialogState extends State<_ArticleDialog> {
   @override
   void dispose() {
     _titleCtrl.dispose();
-    _bodyCtrl.dispose();
     _coverCtrl.dispose();
     _productIdsCtrl.dispose();
     super.dispose();
@@ -607,10 +607,11 @@ class _ArticleDialogState extends State<_ArticleDialog> {
         .toList();
     final id = widget.existing?.id ??
         DateTime.now().microsecondsSinceEpoch.toString();
+    final body = _bodyKey.currentState?.text ?? widget.existing?.body ?? '';
     await widget.onSave(Article(
       id: id,
       title: title,
-      body: _bodyCtrl.text,
+      body: body,
       coverImageUrl: _coverCtrl.text.trim(),
       productIds: productIds,
     ));
@@ -634,14 +635,9 @@ class _ArticleDialogState extends State<_ArticleDialog> {
                     const InputDecoration(labelText: 'Tiêu đề *'),
               ),
               const SizedBox(height: 12),
-              TextField(
-                controller: _bodyCtrl,
-                decoration: const InputDecoration(
-                  labelText: 'Nội dung (Markdown)',
-                  alignLabelWithHint: true,
-                ),
-                minLines: 8,
-                maxLines: 16,
+              MarkdownSplitEditor(
+                key: _bodyKey,
+                initialValue: widget.existing?.body ?? '',
               ),
               const SizedBox(height: 12),
               TextField(
