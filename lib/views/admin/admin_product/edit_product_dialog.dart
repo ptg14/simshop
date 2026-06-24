@@ -7,6 +7,7 @@ import '../../../models/product.dart';
 import '../../../utils/responsive.dart';
 import '../../../viewmodels/admin_viewmodel.dart';
 import '../../../viewmodels/home_viewmodel.dart';
+import '../../../widgets/markdown_split_editor.dart';
 import 'widgets/product_category_picker.dart';
 import 'widgets/image_picker_grid.dart';
 
@@ -40,8 +41,13 @@ class EditProductDialog extends StatefulWidget {
 class _EditProductDialogState extends State<EditProductDialog> {
   late final TextEditingController _nameController;
   late final TextEditingController _priceController;
-  late final TextEditingController _descriptionController;
   late final TextEditingController _stockController;
+
+  // MarkdownSplitEditor owns its own TextEditingController; the parent
+  // reads the live text via this key at submit time (mirrors the
+  // pattern in admin_articles.dart).
+  final GlobalKey<MarkdownSplitEditorState> _descriptionKey =
+      GlobalKey<MarkdownSplitEditorState>();
 
   final List<XFile> _selectedImages = [];
   final List<Uint8List> _selectedImagesBytes = [];
@@ -56,7 +62,6 @@ class _EditProductDialogState extends State<EditProductDialog> {
     _nameController = TextEditingController(text: p.name);
     _priceController =
         TextEditingController(text: p.price.toStringAsFixed(0));
-    _descriptionController = TextEditingController(text: p.description);
     _stockController =
         TextEditingController(text: p.stock?.toString() ?? '0');
 
@@ -71,7 +76,6 @@ class _EditProductDialogState extends State<EditProductDialog> {
   void dispose() {
     _nameController.dispose();
     _priceController.dispose();
-    _descriptionController.dispose();
     _stockController.dispose();
     super.dispose();
   }
@@ -92,7 +96,7 @@ class _EditProductDialogState extends State<EditProductDialog> {
   Future<void> _submit() async {
     final name = _nameController.text.trim();
     final priceText = _priceController.text.trim();
-    final description = _descriptionController.text.trim();
+    final description = _descriptionKey.currentState?.text.trim() ?? '';
 
     if (name.isEmpty || priceText.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -200,10 +204,12 @@ class _EditProductDialogState extends State<EditProductDialog> {
               const SizedBox(height: 12),
 
               // Description
-              TextField(
-                controller: _descriptionController,
-                decoration: const InputDecoration(labelText: 'Mô tả'),
-                maxLines: 3,
+              MarkdownSplitEditor(
+                key: _descriptionKey,
+                initialValue: widget.product.description,
+                labelText: 'Mô tả sản phẩm',
+                minLines: 6,
+                maxLines: 12,
               ),
               const SizedBox(height: 12),
 

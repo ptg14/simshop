@@ -7,6 +7,7 @@ import '../../../models/product.dart';
 import '../../../utils/responsive.dart';
 import '../../../viewmodels/admin_viewmodel.dart';
 import '../../../viewmodels/home_viewmodel.dart';
+import '../../../widgets/markdown_split_editor.dart';
 import 'widgets/product_category_picker.dart';
 import 'widgets/image_picker_grid.dart';
 
@@ -22,8 +23,13 @@ class AddProductDialog extends StatefulWidget {
 class _AddProductDialogState extends State<AddProductDialog> {
   final _nameController = TextEditingController();
   final _priceController = TextEditingController();
-  final _descriptionController = TextEditingController();
   final _stockController = TextEditingController(text: '0');
+
+  // MarkdownSplitEditor owns its own TextEditingController; the parent
+  // reads the live text via this key at submit time (mirrors the
+  // pattern in admin_articles.dart).
+  final GlobalKey<MarkdownSplitEditorState> _descriptionKey =
+      GlobalKey<MarkdownSplitEditorState>();
 
   final List<XFile> _selectedImages = [];
   final List<Uint8List> _selectedImagesBytes = [];
@@ -37,7 +43,6 @@ class _AddProductDialogState extends State<AddProductDialog> {
   void dispose() {
     _nameController.dispose();
     _priceController.dispose();
-    _descriptionController.dispose();
     _stockController.dispose();
     super.dispose();
   }
@@ -62,7 +67,7 @@ class _AddProductDialogState extends State<AddProductDialog> {
   Future<void> _submit() async {
     final name = _nameController.text.trim();
     final priceText = _priceController.text.trim();
-    final description = _descriptionController.text.trim();
+    final description = _descriptionKey.currentState?.text.trim() ?? '';
 
     if (name.isEmpty || priceText.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -160,13 +165,12 @@ class _AddProductDialogState extends State<AddProductDialog> {
               const SizedBox(height: 12),
 
               // Description
-              TextField(
-                controller: _descriptionController,
-                decoration: const InputDecoration(
-                  labelText: 'Mô tả',
-                  hintText: 'Mô tả sản phẩm',
-                ),
-                maxLines: 3,
+              MarkdownSplitEditor(
+                key: _descriptionKey,
+                initialValue: '',
+                labelText: 'Mô tả sản phẩm',
+                minLines: 6,
+                maxLines: 12,
               ),
               const SizedBox(height: 12),
 
