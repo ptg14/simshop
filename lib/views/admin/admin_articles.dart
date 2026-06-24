@@ -568,26 +568,67 @@ class _ArticleDialog extends StatefulWidget {
 
 class _ArticleDialogState extends State<_ArticleDialog> {
   late final TextEditingController _titleCtrl;
-  late final TextEditingController _coverCtrl;
   late final TextEditingController _productIdsCtrl;
   final GlobalKey<MarkdownSplitEditorState> _bodyKey =
       GlobalKey<MarkdownSplitEditorState>();
+
+  // Cover image picker state — mirrors the banner dialog's pattern.
+  // _coverImageUrl holds the URL of an already-uploaded cover (existing
+  // article) or the URL returned after we upload the picked file. On
+  // Web the picked bytes are stored in _coverBytes; on mobile the
+  // picked XFile path is used at upload time.
+  String _coverImageUrl = '';
+  XFile? _coverFile;
+  Uint8List? _coverBytes;
+  bool _uploadingCover = false;
 
   @override
   void initState() {
     super.initState();
     final a = widget.existing;
     _titleCtrl = TextEditingController(text: a?.title ?? '');
-    _coverCtrl = TextEditingController(text: a?.coverImageUrl ?? '');
+    _coverImageUrl = a?.coverImageUrl ?? '';
     _productIdsCtrl = TextEditingController(text: (a?.productIds ?? []).join(', '));
   }
 
   @override
   void dispose() {
     _titleCtrl.dispose();
-    _coverCtrl.dispose();
     _productIdsCtrl.dispose();
     super.dispose();
+  }
+
+  Future<void> _pickCover() async {
+    final picker = ImagePicker();
+    final picked = await picker.pickImage(
+      source: ImageSource.gallery,
+      imageQuality: 85,
+    );
+    if (picked == null || !mounted) return;
+    setState(() {
+      _coverFile = picked;
+      _coverBytes = null;
+    });
+    if (kIsWeb) {
+      _coverBytes = await picked.readAsBytes();
+    }
+    if (mounted) setState(() {});
+  }
+
+  Future<String?> _uploadCover() async {
+    if (_coverFile == null) return _coverImageUrl;
+    setState(() => _uploadingCover = true);
+    try {
+      final svc = context.read<IProductService>();
+      if (kIsWeb) {
+        final bytes = _coverBytes ?? await _coverFile!.readAsBytes();
+        return await svc.uploadImage(bytes, productName: 'article-cover');
+      }
+      return await svc.uploadImage(File(_coverFile!.path),
+          productName: 'article-cover');
+    } finally {
+      if (mounted) setState(() => _uploadingCover = false);
+    }
   }
 
   Future<void> _save() async {
@@ -598,6 +639,8 @@ class _ArticleDialogState extends State<_ArticleDialog> {
       );
       return;
     }
+    final coverUrl = await _uploadCover();
+    if (!mounted) return;
     final productIds = _productIdsCtrl.text
         .split(',')
         .map((s) => s.trim())
@@ -610,13 +653,14 @@ class _ArticleDialogState extends State<_ArticleDialog> {
       id: id,
       title: title,
       body: body,
-      coverImageUrl: _coverCtrl.text.trim(),
+      coverImageUrl: coverUrl ?? '',
       productIds: productIds,
     ));
   }
 
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
     return ConstrainedBox(
       constraints: const BoxConstraints(maxWidth: 640, maxHeight: 720),
       child: AlertDialog(
@@ -638,10 +682,37 @@ class _ArticleDialogState extends State<_ArticleDialog> {
                 initialValue: widget.existing?.body ?? '',
               ),
               const SizedBox(height: 12),
-              TextField(
-                controller: _coverCtrl,
-                decoration:
-                    const InputDecoration(labelText: 'Ảnh bìa (URL)'),
+              // Cover image picker — preview thumb + Chọn/Đổi button.
+              Row(
+                children: [
+                  Container(
+                    width: 80,
+                    height: 50,
+                    decoration: BoxDecoration(
+                      color: scheme.surfaceContainerHighest,
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    clipBehavior: Clip.antiAlias,
+                    alignment: Alignment.center,
+                    child: bannerImagePreview(
+                      bytes: _coverBytes,
+                      file: _coverFile,
+                      existingUrl: _coverImageUrl,
+                      isWeb: kIsWeb,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: FilledButton.tonalIcon(
+                      onPressed: _uploadingCover ? null : _pickCover,
+                      icon: const Icon(Icons.image_outlined),
+                      label: Text(
+                          _coverImageUrl.isEmpty && _coverFile == null
+                              ? 'Chọn ảnh bìa'
+                              : 'Đổi ảnh bìa'),
+                    ),
+                  ),
+                ],
               ),
               const SizedBox(height: 12),
               TextField(
