@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import '../utils/responsive.dart';
 
 /// M3 color role that drives the container/on-container colors of a [StatCard].
-enum CardVariant { primary, secondary, tertiary, error }
+enum CardVariant { primary, secondary, tertiary, error, analytics }
 
 /// A reusable card widget for displaying dashboard statistics.
 ///
@@ -31,6 +31,9 @@ class StatCard extends StatelessWidget {
       CardVariant.tertiary =>
         (scheme.tertiaryContainer, scheme.onTertiaryContainer),
       CardVariant.error => (scheme.errorContainer, scheme.onErrorContainer),
+      // Analytics card reuses the surface tint — visually distinct
+      // from the four product cards without inventing a new color.
+      CardVariant.analytics => (scheme.surfaceContainerHighest, scheme.onSurface),
     };
 
     return Card(

@@ -2,16 +2,22 @@ import 'package:flutter/foundation.dart' hide Category;
 import '../models/category.dart';
 import '../models/product.dart';
 import '../models/store.dart';
+import '../services/analytics_service.dart';
 import '../services/product_service.dart';
 
 /// ViewModel for admin panel.
 class AdminViewModel extends ChangeNotifier {
   /// Constructor allowing optional injection of a product service.
-  AdminViewModel({IProductService? productService})
-      : _productService = productService ?? RealProductService();
+  AdminViewModel({
+    IProductService? productService,
+    IAnalyticsService? analyticsService,
+  })  : _productService = productService ?? RealProductService(),
+        _analyticsService = analyticsService ?? RealAnalyticsService();
 
   // Products management via service. Allows injection for testing.
   final IProductService _productService;
+  // Analytics — used for the overview's total visits + top products.
+  final IAnalyticsService _analyticsService;
   final List<Product> _products = [];
   List<String> _categories = [];
 
@@ -31,6 +37,10 @@ class AdminViewModel extends ChangeNotifier {
   String? _error;
   String _selectedTab = 'overview'; // overview, products, categories, articles, settings
 
+  // Analytics summary for the admin overview card.
+  int _totalVisits = 0;
+  List<TopProductView> _topProducts = const [];
+
   // Getters
   List<Product> get products => _products;
   List<String> get categories => _categories;
@@ -40,6 +50,8 @@ class AdminViewModel extends ChangeNotifier {
   bool get isLoading => _isLoading;
   String? get error => _error;
   String get selectedTab => _selectedTab;
+  int get totalVisits => _totalVisits;
+  List<TopProductView> get topProducts => _topProducts;
   // Public getters for store data
   List<Store> get stores => _stores;
   Store? get selectedStore => _selectedStore;
@@ -80,6 +92,24 @@ class AdminViewModel extends ChangeNotifier {
     ]);
     _selectedStore = _stores.first;
     notifyListeners();
+
+    // Analytics is non-critical — failures must not block the dashboard.
+    await loadAnalyticsSummary();
+  }
+
+  /// Fetch the analytics summary for the admin overview card.
+  ///
+  /// Errors are swallowed: tracking failure should never break the
+  /// admin dashboard. The UI then renders zeros + an empty list.
+  Future<void> loadAnalyticsSummary() async {
+    try {
+      final summary = await _analyticsService.getSummary(topN: 5);
+      _totalVisits = summary.totalVisits;
+      _topProducts = summary.topProducts;
+      notifyListeners();
+    } catch (_) {
+      // Keep the previous values (likely zeros) on failure.
+    }
   }
 
   /// Select a tab.
@@ -398,11 +428,14 @@ class AdminViewModel extends ChangeNotifier {
   }
 
   /// Get dashboard statistics.
+  ///
+  /// When no store is selected, fall back to the full product list
+  /// (the app is single-store; the original filter-by-null was a
+  /// 0-stats bug that left the dashboard empty before the user picked
+  /// a store).
   Map<String, dynamic> getDashboardStats() {
-    // Filter products belonging to the selected store
-    // Filter products belonging to the selected store using storeId.
     final storeProducts = _selectedStore == null
-        ? []
+        ? _products
         : _products.where((p) => p.storeId == _selectedStore!.id).toList();
     return {
       'totalProducts': storeProducts.length,

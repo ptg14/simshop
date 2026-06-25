@@ -12,6 +12,11 @@ class _FakeAnalyticsService implements IAnalyticsService {
     if (shouldFail) throw Exception('boom');
     events.add((eventType: eventType, productId: productId));
   }
+
+  @override
+  Future<AnalyticsSummary> getSummary({int topN = 5}) async {
+    return const AnalyticsSummary(totalVisits: 0, topProducts: []);
+  }
 }
 
 void main() {

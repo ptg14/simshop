@@ -31,6 +31,11 @@ class _FakeAnalyticsService implements IAnalyticsService {
   Future<void> recordPageview(String eventType, {String productId = ''}) async {
     events.add((eventType: eventType, productId: productId));
   }
+
+  @override
+  Future<AnalyticsSummary> getSummary({int topN = 5}) async {
+    return const AnalyticsSummary(totalVisits: 0, topProducts: []);
+  }
 }
 
 Widget _wrap(Widget child, {StoreInfo? storeInfo}) {
