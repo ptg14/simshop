@@ -67,9 +67,10 @@ func newTestServer(t *testing.T) (*httptest.Server, *sql.DB, func()) {
 	productRepo := db.NewProductRepo(database)
 	storeRepo := db.NewStoreRepo(database)
 	articleRepo := db.NewArticleRepo(database)
+	analyticsRepo := db.NewAnalyticsRepo(database)
 	uploadCfg := uploadConfigForTest(uploadsDir)
 
-	r := router.New(productRepo, storeRepo, articleRepo, uploadCfg, "*")
+	r := router.New(productRepo, storeRepo, articleRepo, analyticsRepo, uploadCfg, "*")
 	srv := httptest.NewServer(r)
 
 	cleanup := func() {
@@ -152,6 +153,13 @@ func applyMigrations(d *db.DB) error {
 			article_id TEXT,
 			FOREIGN KEY(article_id) REFERENCES articles(id) ON DELETE SET NULL
 		)`,
+		`CREATE TABLE IF NOT EXISTS pageview_events (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			event_type TEXT NOT NULL,
+			product_id TEXT,
+			created_at INTEGER NOT NULL
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_pageview_events_type_created ON pageview_events(event_type, created_at)`,
 	}
 	for _, s := range stmts {
 		if _, err := d.Exec(s); err != nil {
@@ -555,5 +563,138 @@ func TestBannerCreateRequiresImageURL(t *testing.T) {
 	respBody, _ := readAll(resp)
 	if !bytes.Contains(respBody, []byte("image_url is required")) {
 		t.Errorf("body = %s, want it to mention 'image_url is required'", string(respBody))
+	}
+}
+
+// TestPageviewRecorded asserts that POST /api/analytics/pageview stores
+// a row in pageview_events with the correct event_type and product_id.
+// The endpoint is anonymous + rate-limited; success is the only contract.
+func TestPageviewRecorded(t *testing.T) {
+	srv, dbConn, cleanup := newTestServer(t)
+	defer cleanup()
+
+	body := strings.NewReader(`{"event_type": "product_view", "product_id": "p-1"}`)
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/api/analytics/pageview", body)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("POST: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		respBody, _ := readAll(resp)
+		t.Fatalf("status = %d, body=%s, want 204", resp.StatusCode, string(respBody))
+	}
+
+	var count int
+	var eventType, productID string
+	var productIDNullable sql.NullString
+	row := dbConn.QueryRow(`SELECT COUNT(*), MAX(event_type), MAX(product_id) FROM pageview_events`)
+	if err := row.Scan(&count, &eventType, &productIDNullable); err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	if productIDNullable.Valid {
+		productID = productIDNullable.String
+	}
+	if count != 1 {
+		t.Errorf("pageview_events count = %d, want 1", count)
+	}
+	if eventType != "product_view" {
+		t.Errorf("event_type = %q, want product_view", eventType)
+	}
+	if productID != "p-1" {
+		t.Errorf("product_id = %q, want p-1", productID)
+	}
+}
+
+// TestAnalyticsSummaryTopProducts asserts that GET /api/admin/analytics/summary
+// returns total visit count and the top-N most-viewed products in
+// descending view-count order. We POST 5 product views across 3 products
+// (p-A: 3, p-B: 1, p-C: 1) and 1 home view, then ask for top 2 — p-A must
+// rank first, p-B and p-C must not appear.
+func TestAnalyticsSummaryTopProducts(t *testing.T) {
+	srv, dbConn, cleanup := newTestServer(t)
+	defer cleanup()
+
+	// Seed product rows so the LEFT JOIN has something to join against.
+	// p-A / p-B / p-C need ids so the pageview_events.product_id FK-like
+	// reference is valid; the join is LEFT so missing products would
+	// still appear, but we want name + thumbnail populated for the UI.
+	for _, p := range []struct{ id, name, img string }{
+		{"p-A", "Áo thun A", "http://localhost:8080/uploads/a.jpg"},
+		{"p-B", "Áo thun B", "http://localhost:8080/uploads/b.jpg"},
+		{"p-C", "Áo thun C", "http://localhost:8080/uploads/c.jpg"},
+	} {
+		if _, err := dbConn.Exec(
+			`INSERT INTO products (id, name, description, price, category, rating, specs) VALUES (?, ?, '', 0, 'cat', 0, '[]')`,
+			p.id, p.name,
+		); err != nil {
+			t.Fatalf("seed product %s: %v", p.id, err)
+		}
+	}
+
+	// Fire 5 product views: 3 for p-A, 1 for p-B, 1 for p-C; plus 1 home_view.
+	views := []struct{ event, pid string }{
+		{"product_view", "p-A"},
+		{"product_view", "p-A"},
+		{"product_view", "p-A"},
+		{"product_view", "p-B"},
+		{"product_view", "p-C"},
+		{"home_view", ""},
+	}
+	for _, v := range views {
+		var body string
+		if v.pid == "" {
+			body = `{"event_type": "home_view"}`
+		} else {
+			body = `{"event_type": "product_view", "product_id": "` + v.pid + `"}`
+		}
+		req, _ := http.NewRequest(http.MethodPost, srv.URL+"/api/analytics/pageview", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("POST %s/%s: %v", v.event, v.pid, err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusNoContent {
+			t.Fatalf("POST %s/%s status = %d, want 204", v.event, v.pid, resp.StatusCode)
+		}
+	}
+
+	resp, err := http.Get(srv.URL + "/api/admin/analytics/summary?limit=2")
+	if err != nil {
+		t.Fatalf("GET summary: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := readAll(resp)
+		t.Fatalf("summary status = %d, body=%s", resp.StatusCode, string(respBody))
+	}
+
+	var got struct {
+		TotalVisits int `json:"total_visits"`
+		TopProducts []struct {
+			ProductID string `json:"product_id"`
+			Name      string `json:"name"`
+			ImageURL  string `json:"image_url"`
+			ViewCount int    `json:"view_count"`
+		} `json:"top_products"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+
+	// Total visits counts ALL pageview rows (home + product).
+	if got.TotalVisits != 6 {
+		t.Errorf("total_visits = %d, want 6", got.TotalVisits)
+	}
+	if len(got.TopProducts) != 2 {
+		t.Fatalf("top_products len = %d, want 2", len(got.TopProducts))
+	}
+	if got.TopProducts[0].ProductID != "p-A" || got.TopProducts[0].ViewCount != 3 {
+		t.Errorf("top[0] = %+v, want p-A with 3 views", got.TopProducts[0])
+	}
+	if got.TopProducts[1].ProductID != "p-B" || got.TopProducts[1].ViewCount != 1 {
+		t.Errorf("top[1] = %+v, want p-B with 1 view", got.TopProducts[1])
 	}
 }

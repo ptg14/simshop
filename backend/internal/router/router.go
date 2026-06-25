@@ -9,7 +9,7 @@ import (
 )
 
 // New returns a mux.Router with all routes and middleware registered.
-func New(productRepo *handler.ProductRepo, storeRepo *handler.StoreRepo, articleRepo *handler.ArticleRepo, uploadCfg *handler.UploadConfig, allowedOrigin string) *mux.Router {
+func New(productRepo *handler.ProductRepo, storeRepo *handler.StoreRepo, articleRepo *handler.ArticleRepo, analyticsRepo *handler.AnalyticsRepo, uploadCfg *handler.UploadConfig, allowedOrigin string) *mux.Router {
 	r := mux.NewRouter()
 	// Global middleware – use configurable allowed origin.
 	r.Use(middleware.CORSMiddleware(allowedOrigin))
@@ -88,6 +88,14 @@ func New(productRepo *handler.ProductRepo, storeRepo *handler.StoreRepo, article
 	uploadWrite := r.PathPrefix("/api/upload").Subrouter()
 	uploadWrite.Use(rateLimit)
 	uploadWrite.HandleFunc("", handler.UploadImageHandler(uploadCfg)).Methods(http.MethodPost)
+
+	// Analytics. POST is anonymous + rate-limited (clients fire it
+	// from initState on every page load). GET is for the admin
+	// overview — same path prefix convention as other admin routes.
+	analyticsWrite := r.PathPrefix("/api/analytics").Subrouter()
+	analyticsWrite.Use(rateLimit)
+	analyticsWrite.HandleFunc("/pageview", handler.PostPageviewHandler(analyticsRepo)).Methods(http.MethodPost)
+	r.HandleFunc("/api/admin/analytics/summary", handler.GetAnalyticsSummaryHandler(analyticsRepo)).Methods(http.MethodGet)
 
 	// Serve uploaded files as static content.
 	uploadDir := http.Dir(uploadCfg.UploadDir)

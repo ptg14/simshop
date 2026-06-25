@@ -676,6 +676,79 @@ func UploadImageHandler(cfg *UploadConfig) http.HandlerFunc {
 	}
 }
 
+// AnalyticsRepo is an alias for the db package's analytics repo.
+// We re-export the type here so callers (router, tests) can stay
+// in the handler namespace.
+type AnalyticsRepo = db.AnalyticsRepo
+
+// PostPageviewHandler records a single anonymous pageview event.
+//
+// POST /api/analytics/pageview
+// Body: {"event_type": "home_view" | "product_view",
+//        "product_id": "..." (optional)}
+//
+// Anonymous on purpose — there's no auth and no user_id. The admin
+// overview uses this data to show aggregate flow. Returns 204
+// No Content on success (fire-and-forget from the client).
+func PostPageviewHandler(repo *AnalyticsRepo) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			EventType string `json:"event_type"`
+			ProductID string `json:"product_id"`
+		}
+		if err := readJSONBody(r, &body); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if body.EventType == "" {
+			writeError(w, http.StatusBadRequest, "event_type is required")
+			return
+		}
+		// Whitelist the event types we accept. Anything else is a
+		// client bug or an attempt to pollute analytics with junk.
+		switch body.EventType {
+		case "home_view", "product_view":
+			// ok
+		default:
+			writeError(w, http.StatusBadRequest, "unknown event_type")
+			return
+		}
+		if err := repo.RecordPageview(body.EventType, body.ProductID); err != nil {
+			writeError(w, http.StatusInternalServerError, "Failed to record pageview")
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+// GetAnalyticsSummaryHandler returns the top-N most-viewed products
+// + total visit count for the admin overview screen.
+//
+// GET /api/admin/analytics/summary?limit=5
+//
+// limit defaults to 5 if absent and is capped at 50 to bound the
+// response payload.
+func GetAnalyticsSummaryHandler(repo *AnalyticsRepo) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		limit := 5
+		if v := r.URL.Query().Get("limit"); v != "" {
+			if n, err := strconv.Atoi(v); err == nil && n > 0 {
+				limit = n
+			}
+		}
+		if limit > 50 {
+			limit = 50
+		}
+		summary, err := repo.GetSummary(limit)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "Failed to load analytics")
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(summary)
+	}
+}
+
 // writeError sends a JSON error response.
 func writeError(w http.ResponseWriter, status int, message string) {
 	w.Header().Set("Content-Type", "application/json")

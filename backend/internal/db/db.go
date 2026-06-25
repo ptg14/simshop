@@ -196,6 +196,24 @@ func runMigrations(db *sql.DB) error {
 		return err
 	}
 
+	// Analytics: anonymous pageview tracking. The Flutter client
+	// fires one row per home load and per product-detail view.
+	// product_id is NULLABLE so 'home_view' (and any future event
+	// types without a product association) fits the same row shape.
+	// The (event_type, created_at) index speeds up the top-N query
+	// for the admin overview's "Sản phẩm xem nhiều nhất" table.
+	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS pageview_events (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		event_type TEXT NOT NULL,
+		product_id TEXT,
+		created_at INTEGER NOT NULL
+	)`); err != nil {
+		return err
+	}
+	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_pageview_events_type_created ON pageview_events(event_type, created_at)`); err != nil {
+		return err
+	}
+
 	return nil
 }
 
