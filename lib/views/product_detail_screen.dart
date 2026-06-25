@@ -19,16 +19,30 @@ import '../widgets/site_info_footer.dart';
 String buildGoogleMapsDirectionsUrl(String address) =>
     'https://www.google.com/maps/dir/?api=1&destination=${Uri.encodeComponent(address)}';
 
+/// Prepend `https://` to [url] when it has no scheme. Admin typically
+/// pastes a share-link from Google Maps (e.g. 'www.google.com/maps/...')
+/// without the scheme. Without this fix, `Uri.parse` treats the URL
+/// as a relative path and `launchUrl` on web navigates to
+/// `http://localhost:3000/www.google.com/...` instead of the real
+/// Google Maps URL. On mobile the same lack of scheme triggers
+/// deep-link fallback paths into the app's own routes.
+String _ensureUrlScheme(String url) {
+  if (url.startsWith('http://') || url.startsWith('https://')) return url;
+  return 'https://$url';
+}
+
 /// Resolve the URL the product detail "Buy at store" CTA should
 /// launch, following the user's three-tier flow:
 ///
-///   1. [StoreInfo.googleMapsUrl] set → return it verbatim (admin
-///      controls the destination and may pre-set travel mode, etc.).
+///   1. [StoreInfo.googleMapsUrl] set → return it (with https://
+///      prepended if the admin pasted a scheme-less URL).
 ///   2. Only [StoreInfo.address] set → return a built directions URL
 ///      with the address as the destination.
 ///   3. Both empty → return '' (caller hides the button).
 String resolveStoreMapUrl(StoreInfo info) {
-  if (info.googleMapsUrl.isNotEmpty) return info.googleMapsUrl;
+  if (info.googleMapsUrl.isNotEmpty) {
+    return _ensureUrlScheme(info.googleMapsUrl);
+  }
   if (info.address.isNotEmpty) return buildGoogleMapsDirectionsUrl(info.address);
   return '';
 }

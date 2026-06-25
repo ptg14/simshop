@@ -173,12 +173,13 @@ void main() {
   });
 
   // Slice 4: pin the three-tier URL resolver that the CTA uses.
-  // Tier 1: googleMapsUrl set → return it as-is.
+  // Tier 1: googleMapsUrl set → return it (with https:// prepended
+  //         if the admin pasted a scheme-less URL like 'www.google...').
   // Tier 2: googleMapsUrl empty, address set → return the built
   //         directions URL with destination=address.
   // Tier 3: both empty → return '' (caller hides the button).
   group('resolveStoreMapUrl', () {
-    test('tier 1: returns the configured googleMapsUrl verbatim', () {
+    test('tier 1a: returns the configured googleMapsUrl verbatim when it has https://', () {
       const info = StoreInfo(
         address: '123 Nguyễn Huệ',
         googleMapsUrl:
@@ -186,6 +187,28 @@ void main() {
       );
       expect(resolveStoreMapUrl(info),
           'https://www.google.com/maps/dir/?api=1&destination=12+Nguyen+Hue&travelmode=driving');
+    });
+
+    test('tier 1b: prepends https:// when googleMapsUrl has no scheme (web bug fix)', () {
+      // Bug: admin pastes 'www.google.com/maps/...' without the scheme.
+      // Uri.parse treats it as a relative URL, so launchUrl on web
+      // navigates to http://localhost:3000/www.google.com/... instead
+      // of the real Google Maps URL. Fix: prepend https://.
+      const info = StoreInfo(
+        address: '123 Nguyễn Huệ',
+        googleMapsUrl: 'www.google.com/maps/dir/?api=1&destination=12+Nguyen+Hue',
+      );
+      expect(resolveStoreMapUrl(info),
+          'https://www.google.com/maps/dir/?api=1&destination=12+Nguyen+Hue');
+    });
+
+    test('tier 1c: leaves http:// googleMapsUrl untouched', () {
+      // Admin explicitly used http:// (rare). Don't change semantics.
+      const info = StoreInfo(
+        address: '123 Nguyễn Huệ',
+        googleMapsUrl: 'http://maps.example.com/store',
+      );
+      expect(resolveStoreMapUrl(info), 'http://maps.example.com/store');
     });
 
     test('tier 2: builds a directions URL from the address when URL is empty',
