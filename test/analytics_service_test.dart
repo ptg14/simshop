@@ -1,48 +1,59 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:simshop/services/analytics_service.dart';
+import 'support/backend_check.dart';
 
-/// In-memory analytics service for tests so we don't need a real backend.
-class _FakeAnalyticsService implements IAnalyticsService {
-  final List<({String eventType, String productId})> events = [];
-  bool shouldFail = false;
-  bool throwOnNetwork = false;
-
-  @override
-  Future<void> recordPageview(String eventType, {String productId = ''}) async {
-    if (shouldFail) throw Exception('boom');
-    events.add((eventType: eventType, productId: productId));
-  }
-
-  @override
-  Future<AnalyticsSummary> getSummary({int topN = 5}) async {
-    return const AnalyticsSummary(totalVisits: 0, topProducts: []);
-  }
-}
-
+/// Integration test for [RealAnalyticsService] — hits the real Go
+/// backend at localhost:8080 (started via `cd backend && go run`).
+/// Skipped automatically if the backend is not reachable.
+///
+/// Requires seed data so the top_products JOIN has rows to aggregate.
+/// Run `cd backend && go run ./cmd/seed/main.go` once before this
+/// test to populate the products table.
 void main() {
-  group('IAnalyticsService contract', () {
-    test('recordPageview(home_view) records an event without a product id', () async {
-      final fake = _FakeAnalyticsService();
-      await fake.recordPageview('home_view');
-      expect(fake.events, hasLength(1));
-      expect(fake.events.first.eventType, 'home_view');
-      expect(fake.events.first.productId, '');
+  group('RealAnalyticsService (integration)', () {
+    setUpAll(() async {
+      await skipIfBackendDown();
     });
 
-    test('recordPageview(product_view) records the product id alongside', () async {
-      final fake = _FakeAnalyticsService();
-      await fake.recordPageview('product_view', productId: 'p-123');
-      expect(fake.events, hasLength(1));
-      expect(fake.events.first.eventType, 'product_view');
-      expect(fake.events.first.productId, 'p-123');
+    test('recordPageview posts to /api/analytics/pageview and increments '
+        'total_visits in /api/admin/analytics/summary', () async {
+      final service = RealAnalyticsService();
+
+      // Snapshot total visits BEFORE firing.
+      final before = await service.getSummary(topN: 1);
+
+      // Use a product id guaranteed to exist (p1 is seeded by
+      // ./cmd/seed). If seed hasn't run, this product_id won't be
+      // found in the JOIN but the pageview row is still recorded.
+      await service.recordPageview('product_view', productId: 'p1');
+
+      // Snapshot after. Total must grow by 1.
+      final after = await service.getSummary(topN: 5);
+
+      expect(after.totalVisits, before.totalVisits + 1,
+          reason: 'total_visits should increase by exactly 1 after '
+              'a single POST /api/analytics/pageview');
     });
 
-    test('recordPageview swallows nothing — propagates errors', () async {
-      final fake = _FakeAnalyticsService()..shouldFail = true;
-      expect(
-        () => fake.recordPageview('home_view'),
-        throwsA(isA<Exception>()),
-      );
+    test('getSummary returns the top products sorted by view_count DESC',
+        () async {
+      final service = RealAnalyticsService();
+
+      // Fire 3 pageviews for p1 and 1 for p2 — p1 should rank first.
+      await service.recordPageview('product_view', productId: 'p1');
+      await service.recordPageview('product_view', productId: 'p1');
+      await service.recordPageview('product_view', productId: 'p1');
+      await service.recordPageview('product_view', productId: 'p2');
+
+      final summary = await service.getSummary(topN: 5);
+
+      // The product p1 must be at the top with at least 3 views.
+      // (Other tests in the suite may have added more; we only assert
+      //  the ordering invariant, not exact counts.)
+      expect(summary.topProducts, isNotEmpty);
+      expect(summary.topProducts.first.productId, 'p1',
+          reason: 'p1 had 3 views just now, must be #1');
+      expect(summary.topProducts.first.viewCount, greaterThanOrEqualTo(3));
     });
   });
 }
