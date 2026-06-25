@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'services/analytics_service.dart';
 import 'services/article_service.dart';
 import 'services/product_service.dart';
 import 'theme/app_theme.dart';
@@ -46,6 +47,9 @@ class MyApp extends StatelessWidget {
           // underlying services were not in the tree.
           Provider<IProductService>(create: (_) => RealProductService()),
           Provider<IArticleService>(create: (_) => RealArticleService()),
+          // Pageview tracking — fire-and-forget; called from
+          // HomeViewModel.initialize and ProductDetailScreen.initState.
+          Provider<IAnalyticsService>(create: (_) => RealAnalyticsService()),
         ],
         child: MaterialApp(
           title: 'Sample E-commerce App',

@@ -1,16 +1,25 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart' hide Category;
 import '../models/category.dart';
 import '../models/product.dart';
+import '../services/analytics_service.dart';
 import '../services/product_service.dart';
 
 /// ViewModel for the home screen.
 class HomeViewModel extends ChangeNotifier {
   /// Constructor allowing optional injection of a product service.
-  HomeViewModel({IProductService? productService})
-      : _productService = productService ?? RealProductService();
+  HomeViewModel({
+    IProductService? productService,
+    IAnalyticsService? analyticsService,
+  })  : _productService = productService ?? RealProductService(),
+        _analyticsService = analyticsService ?? RealAnalyticsService();
 
   // Backend service. Inject via constructor in tests; defaults to the real HTTP client.
   final IProductService _productService;
+  // Analytics service — used to fire `home_view` once per session.
+  // Defaults to a real HTTP client; injected in tests.
+  final IAnalyticsService _analyticsService;
 
   List<Product> _products = [];
   List<Product> _filteredProducts = [];
@@ -55,6 +64,12 @@ class HomeViewModel extends ChangeNotifier {
 
   /// Initialize the view model and load products.
   Future<void> initialize() async {
+    // Fire a home_view event before loading so the analytics endpoint
+    // sees the visit even if subsequent loads fail. Fire-and-forget:
+    // recordPageview returns Future but we deliberately don't await —
+    // navigation must not block on analytics.
+    unawaited(_analyticsService.recordPageview('home_view'));
+
     await loadProducts();
     await loadCategories();
     await loadLargeCategories();

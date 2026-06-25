@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
 import 'package:simshop/models/product.dart';
 import 'package:simshop/models/store_info.dart';
+import 'package:simshop/services/analytics_service.dart';
 import 'package:simshop/services/store_service.dart';
 import 'package:simshop/viewmodels/site_config_viewmodel.dart';
 import 'package:simshop/views/product_detail_screen.dart';
@@ -20,15 +21,32 @@ class _FakeStoreService implements IStoreService {
   Future<StoreInfo> updateStoreInfo(StoreInfo info) async => info;
 }
 
+/// In-memory analytics service — ProductDetailScreen fires
+/// `product_view` from initState, so tests need a stub provider to
+/// avoid a ProviderNotFoundException.
+class _FakeAnalyticsService implements IAnalyticsService {
+  final List<({String eventType, String productId})> events = [];
+
+  @override
+  Future<void> recordPageview(String eventType, {String productId = ''}) async {
+    events.add((eventType: eventType, productId: productId));
+  }
+}
+
 Widget _wrap(Widget child, {StoreInfo? storeInfo}) {
   final seed = storeInfo ?? const StoreInfo();
   return MaterialApp(
-    home: ChangeNotifierProvider<SiteConfigViewModel>(
-      // Call `load()` so the VM holds the seeded StoreInfo before
-      // the first frame. The fake resolves synchronously, so a single
-      // pumpAndSettle from the test picks up the populated state.
-      create: (_) => SiteConfigViewModel(service: _FakeStoreService(seed))
-        ..load(),
+    home: MultiProvider(
+      providers: [
+        ChangeNotifierProvider<SiteConfigViewModel>(
+          // Call `load()` so the VM holds the seeded StoreInfo before
+          // the first frame. The fake resolves synchronously, so a single
+          // pumpAndSettle from the test picks up the populated state.
+          create: (_) =>
+              SiteConfigViewModel(service: _FakeStoreService(seed))..load(),
+        ),
+        Provider<IAnalyticsService>(create: (_) => _FakeAnalyticsService()),
+      ],
       child: child,
     ),
   );
@@ -243,5 +261,22 @@ void main() {
 
     // The address appears as the button label.
     expect(find.text('12 Nguyễn Huệ'), findsWidgets);
+  });
+
+  testWidgets(
+      'ProductDetailScreen fires a product_view pageview on open',
+      (tester) async {
+    final product = _buildProduct(id: 'p-99');
+    final wrapper = _wrap(ProductDetailScreen(product: product));
+    await tester.pumpWidget(wrapper);
+    await tester.pumpAndSettle();
+
+    // Reach into the fake through the Provider tree to verify the call.
+    final element = tester.element(find.byType(ProductDetailScreen));
+    final fake = Provider.of<IAnalyticsService>(element, listen: false)
+        as _FakeAnalyticsService;
+    expect(fake.events, hasLength(1));
+    expect(fake.events.first.eventType, 'product_view');
+    expect(fake.events.first.productId, 'p-99');
   });
 }

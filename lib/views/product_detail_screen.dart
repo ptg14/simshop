@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
 import 'package:provider/provider.dart';
@@ -5,6 +7,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../models/product.dart';
 import '../models/store_info.dart';
+import '../services/analytics_service.dart';
 import '../utils/currency_formatter.dart';
 import '../utils/responsive.dart';
 import '../viewmodels/site_config_viewmodel.dart';
@@ -65,6 +68,14 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
   void initState() {
     super.initState();
     product = widget.product;
+    // Fire product_view exactly once per product-detail open.
+    // Fire-and-forget: navigation back must not wait on analytics.
+    unawaited(
+      context.read<IAnalyticsService>().recordPageview(
+            'product_view',
+            productId: product.id,
+          ),
+    );
   }
 
   Future<void> _openMap(String url) async {
