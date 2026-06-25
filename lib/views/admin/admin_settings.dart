@@ -11,6 +11,11 @@ import '../../utils/responsive.dart';
 import '../../viewmodels/site_config_viewmodel.dart';
 
 /// Admin settings screen.
+///
+/// Now hosts only the persisted "Thông tin cửa hàng" form. The previous
+/// shell sections (Giao diện, Thông báo, Bảo mật & Sao lưu, Về ứng dụng)
+/// were removed: they held local-only state and showed fake snackbars —
+/// see git history for context.
 class AdminSettingsScreen extends StatefulWidget {
   const AdminSettingsScreen({super.key});
 
@@ -19,11 +24,6 @@ class AdminSettingsScreen extends StatefulWidget {
 }
 
 class _AdminSettingsScreenState extends State<AdminSettingsScreen> {
-  bool _emailNotifications = true;
-  bool _pushNotifications = false;
-  String _theme = 'light';
-  String _language = 'vi';
-
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
@@ -42,193 +42,16 @@ class _AdminSettingsScreenState extends State<AdminSettingsScreen> {
           ),
           const SizedBox(height: 4),
           Text(
-            'Quản lý giao diện, thông báo và tài khoản',
+            'Thông tin cửa hàng hiển thị trên trang chủ và trang chi tiết',
             style: TextStyle(color: scheme.onSurfaceVariant),
           ),
           const SizedBox(height: 16),
 
-          SettingsSection(
-            title: 'Giao diện',
-            children: [
-              ListTile(
-                contentPadding: EdgeInsets.zero,
-                title: const Text('Chủ đề'),
-                trailing: DropdownButton<String>(
-                  value: _theme,
-                  items: const [
-                    DropdownMenuItem(value: 'light', child: Text('Sáng')),
-                    DropdownMenuItem(value: 'dark', child: Text('Tối')),
-                    DropdownMenuItem(
-                        value: 'auto', child: Text('Tự động')),
-                  ],
-                  onChanged: (v) =>
-                      setState(() => _theme = v ?? 'light'),
-                ),
-              ),
-              const Divider(height: 1),
-              ListTile(
-                contentPadding: EdgeInsets.zero,
-                title: const Text('Ngôn ngữ'),
-                trailing: DropdownButton<String>(
-                  value: _language,
-                  items: const [
-                    DropdownMenuItem(
-                        value: 'vi', child: Text('Tiếng Việt')),
-                    DropdownMenuItem(
-                        value: 'en', child: Text('English')),
-                  ],
-                  onChanged: (v) =>
-                      setState(() => _language = v ?? 'vi'),
-                ),
-              ),
-            ],
-          ),
-
-          SettingsSection(
-            title: 'Thông báo',
-            children: [
-              SwitchListTile(
-                contentPadding: EdgeInsets.zero,
-                title: const Text('Email thông báo'),
-                value: _emailNotifications,
-                onChanged: (v) =>
-                    setState(() => _emailNotifications = v),
-              ),
-              const Divider(height: 1),
-              SwitchListTile(
-                contentPadding: EdgeInsets.zero,
-                title: const Text('Thông báo đẩy'),
-                value: _pushNotifications,
-                onChanged: (v) =>
-                    setState(() => _pushNotifications = v),
-              ),
-            ],
-          ),
-
           // Site config form — backed by SiteConfigViewModel.
           const _SiteConfigSection(),
 
-          SettingsSection(
-            title: 'Bảo mật & Sao lưu',
-            children: [
-              ListTile(
-                contentPadding: EdgeInsets.zero,
-                title: const Text('Sao lưu dữ liệu'),
-                trailing: FilledButton.tonal(
-                  onPressed: () {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('Đang sao lưu...')),
-                    );
-                  },
-                  child: const Text('Sao lưu'),
-                ),
-              ),
-              const Divider(height: 1),
-              ListTile(
-                contentPadding: EdgeInsets.zero,
-                title: const Text('Đổi mật khẩu'),
-                trailing: FilledButton.tonal(
-                  onPressed: () => _showChangePasswordDialog(context),
-                  child: const Text('Đổi'),
-                ),
-              ),
-            ],
-          ),
-
-          SettingsSection(
-            title: 'Về ứng dụng',
-            children: [
-              const ListTile(
-                contentPadding: EdgeInsets.zero,
-                title: Text('Phiên bản'),
-                trailing: Text('1.0.0'),
-              ),
-              const Divider(height: 1),
-              ListTile(
-                contentPadding: EdgeInsets.zero,
-                title: const Text('Chính sách bảo mật'),
-                trailing: const Icon(Icons.arrow_forward_ios, size: 16),
-                onTap: () {},
-              ),
-              const Divider(height: 1),
-              ListTile(
-                contentPadding: EdgeInsets.zero,
-                title: const Text('Điều khoản dịch vụ'),
-                trailing: const Icon(Icons.arrow_forward_ios, size: 16),
-                onTap: () {},
-              ),
-            ],
-          ),
-
-          const SizedBox(height: 24),
-
-          // Local-only preferences save (theme/lang/notify toggles).
-          // Site config is saved per-section by its own button above.
-          SizedBox(
-            width: double.infinity,
-            height: 48,
-            child: FilledButton.icon(
-              onPressed: () {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                      content: Text(
-                          'Tùy chọn giao diện/ngôn ngữ/thông báo đã được lưu cục bộ')),
-                );
-              },
-              icon: const Icon(Icons.save),
-              label: const Text('Lưu tùy chọn'),
-            ),
-          ),
-
           const SizedBox(height: 16),
         ],
-      ),
-    );
-  }
-
-  void _showChangePasswordDialog(BuildContext context) {
-    showDialog(
-      context: context,
-      builder: (context) => ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 400),
-        child: AlertDialog(
-          title: const Text('Đổi mật khẩu'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: const [
-              TextField(
-                decoration: InputDecoration(labelText: 'Mật khẩu cũ'),
-                obscureText: true,
-              ),
-              SizedBox(height: 12),
-              TextField(
-                decoration: InputDecoration(labelText: 'Mật khẩu mới'),
-                obscureText: true,
-              ),
-              SizedBox(height: 12),
-              TextField(
-                decoration: InputDecoration(labelText: 'Xác nhận mật khẩu'),
-                obscureText: true,
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Hủy'),
-            ),
-            FilledButton(
-              onPressed: () {
-                Navigator.pop(context);
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                      content: Text('Mật khẩu đã được cập nhật')),
-                );
-              },
-              child: const Text('Cập nhật'),
-            ),
-          ],
-        ),
       ),
     );
   }
@@ -585,51 +408,6 @@ class _LogoPreview extends StatelessWidget {
       clipBehavior: Clip.antiAlias,
       alignment: Alignment.center,
       child: child,
-    );
-  }
-}
-
-/// A grouped card of settings tiles, with a section header above it.
-class SettingsSection extends StatelessWidget {
-  const SettingsSection({
-    super.key,
-    required this.title,
-    required this.children,
-  });
-
-  final String title;
-  final List<Widget> children;
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 24),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            title,
-            style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                  fontWeight: FontWeight.bold,
-                  color: scheme.onSurface,
-                ),
-          ),
-          const SizedBox(height: 8),
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.symmetric(
-                horizontal: 16,
-                vertical: 8,
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: children,
-              ),
-            ),
-          ),
-        ],
-      ),
     );
   }
 }
