@@ -125,7 +125,15 @@ class AdminDashboard extends StatelessWidget {
             appBar: AppBar(
               title: const Text('Admin Dashboard'),
               centerTitle: true,
-              automaticallyImplyLeading: !useRail,
+              // Always render an explicit back button — admins need a
+              // clear way to return to the home screen regardless of
+              // viewport (rail mode on tablet/desktop hides the auto-
+              // implied leading arrow).
+              leading: IconButton(
+                icon: const Icon(Icons.arrow_back),
+                tooltip: 'Quay lại menu',
+                onPressed: () => Navigator.of(context).pop(),
+              ),
             ),
             drawer: useRail ? null : (navigation as Drawer),
             body: Row(
