@@ -36,6 +36,12 @@
   <title>simshop - Mua sắm trực tuyến</title>
   <link rel="manifest" href="manifest.json">
 
+  <!-- Performance: warm DNS + TLS to the API origin before the app
+       fires its first request. Update the host when the deployment
+       target changes (dev = localhost:8080, prod = api.simshop.vn). -->
+  <link rel="preconnect" href="http://localhost:8080" crossorigin>
+  <link rel="dns-prefetch" href="http://localhost:8080">
+
   <style>
     html, body {
       margin: 0;
