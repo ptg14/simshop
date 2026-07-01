@@ -70,10 +70,20 @@ class HomeViewModel extends ChangeNotifier {
     // navigation must not block on analytics.
     unawaited(_analyticsService.recordPageview('home_view'));
 
-    await loadProducts();
-    await loadCategories();
-    await loadLargeCategories();
-    await loadSubCategories();
+    // Fan-out the four independent endpoints in parallel. Previously
+    // these were awaited serially, so the wall-clock cost of the
+    // cold-start was the *sum* of all four latencies (often 800ms+
+    // on slow networks). With [Future.wait] the cost collapses to
+    // the slowest single endpoint. Each load still calls
+    // notifyListeners() so consumers update progressively as data
+    // arrives — the user sees the category chips appear before the
+    // product grid, just as they did before.
+    await Future.wait([
+      loadProducts(),
+      loadCategories(),
+      loadLargeCategories(),
+      loadSubCategories(),
+    ]);
     _applyFilters();
   }
 
