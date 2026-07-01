@@ -37,7 +37,16 @@ class MyApp extends StatelessWidget {
   Widget build(BuildContext context) => MultiProvider(
         providers: [
           ChangeNotifierProvider(create: (_) => HomeViewModel()),
-          ChangeNotifierProvider(create: (_) => AdminViewModel()),
+          // AdminViewModel owns the entire admin product catalogue
+          // (CRUD state, image upload buffers, options editor draft).
+          // It is heavy and used only when the admin dashboard is
+          // opened — lazy so we don't pay its constructor + initial
+          // state on cold start for the 99% of visitors who never
+          // open admin.
+          ChangeNotifierProvider(
+            create: (_) => AdminViewModel(),
+            lazy: true,
+          ),
           ChangeNotifierProvider(create: (_) => SiteConfigViewModel()..load()),
           ChangeNotifierProvider(create: (_) => ArticlesViewModel()..load()),
           // Service providers — required by widgets that
