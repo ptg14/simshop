@@ -29,8 +29,9 @@ func uploadConfigForTest(uploadsDir string) *handler.UploadConfig {
 }
 
 // newTestServer stands up the full router against an isolated SQLite DB
-// and a temp uploads dir. Returns a configured *httptest.Server and a
-// cleanup func the caller must defer.
+// and a temp uploads dir. Returns a configured *httptest.Server, the
+// raw *sql.DB (for tests that need to seed rows bypassing handler
+// validation), and a cleanup func the caller must defer.
 //
 // The migration runs as part of db.New, so the store_info row exists
 // with sensible defaults before any handler is hit.
@@ -47,7 +48,7 @@ func newTestServer(t *testing.T) (*httptest.Server, *sql.DB, func()) {
 	if err != nil {
 		t.Fatalf("open db: %v", err)
 	}
-	database.SetMaxOpenConns(1)
+	database.SetMaxOpenConns(2)
 	// Enable FK enforcement so ON DELETE SET NULL actually fires.
 	if _, err := database.Exec(`PRAGMA foreign_keys = ON`); err != nil {
 		t.Fatalf("enable FK: %v", err)
@@ -67,10 +68,11 @@ func newTestServer(t *testing.T) (*httptest.Server, *sql.DB, func()) {
 	productRepo := db.NewProductRepo(database)
 	storeRepo := db.NewStoreRepo(database)
 	articleRepo := db.NewArticleRepo(database)
+	eventRepo := db.NewEventRepo(database)
 	analyticsRepo := db.NewAnalyticsRepo(database)
 	uploadCfg := uploadConfigForTest(uploadsDir)
 
-	r := router.New(productRepo, storeRepo, articleRepo, analyticsRepo, uploadCfg, "*")
+	r := router.New(productRepo, storeRepo, articleRepo, eventRepo, analyticsRepo, uploadCfg, "*")
 	srv := httptest.NewServer(r)
 
 	cleanup := func() {
@@ -160,6 +162,16 @@ func applyMigrations(d *db.DB) error {
 			created_at INTEGER NOT NULL
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_pageview_events_type_created ON pageview_events(event_type, created_at)`,
+		`CREATE TABLE IF NOT EXISTS events (
+			id              TEXT PRIMARY KEY,
+			name            TEXT NOT NULL DEFAULT '',
+			end_time        INTEGER,
+			discount_type   TEXT NOT NULL,
+			discount_value  REAL  NOT NULL,
+			product_ids     TEXT NOT NULL DEFAULT '[]',
+			created_at      INTEGER NOT NULL
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_events_end_time ON events(end_time)`,
 	}
 	for _, s := range stmts {
 		if _, err := d.Exec(s); err != nil {
