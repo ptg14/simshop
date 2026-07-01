@@ -14,6 +14,7 @@ class ImageCarousel extends StatefulWidget {
     this.onTap,
     this.fit = BoxFit.cover,
     this.heroTag,
+    this.physics,
   });
 
   final List<String> imageUrls;
@@ -40,6 +41,13 @@ class ImageCarousel extends StatefulWidget {
   /// home grid only shows one image; subsequent slides are revealed
   /// via the carousel's own PageView motion.
   final Object? heroTag;
+
+  /// Scroll physics for the underlying [PageView]. Override when the
+  /// carousel sits inside another scrollable (e.g. product detail's
+  /// [SingleChildScrollView]) so the horizontal swipe wins the
+  /// gesture arena immediately instead of competing with the
+  /// vertical drag of the parent.
+  final ScrollPhysics? physics;
 
   @override
   State<ImageCarousel> createState() => _ImageCarouselState();
@@ -120,6 +128,7 @@ class _ImageCarouselState extends State<ImageCarousel>
               height: widget.height ?? context.carouselHeight,
               child: PageView.builder(
                 controller: _controller,
+                physics: widget.physics,
                 onPageChanged: (i) => setState(() => _current = i),
                 itemCount: widget.imageUrls.length,
                 itemBuilder: (context, index) {

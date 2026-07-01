@@ -156,7 +156,7 @@ class ProductCard extends StatelessWidget {
                     Row(
                       children: [
                         Text(
-                          formatCurrency(product.price),
+                          formatCurrency(product.effectivePayPrice),
                           style: TextStyle(
                             fontWeight: FontWeight.bold,
                             fontSize: context.productCardPriceFontSize,
@@ -167,7 +167,7 @@ class ProductCard extends StatelessWidget {
                           const SizedBox(width: 6),
                           Flexible(
                             child: Text(
-                              formatCurrency(product.originalPrice ?? 0),
+                              formatCurrency(product.price),
                               overflow: TextOverflow.ellipsis,
                               style: TextStyle(
                                 fontSize: context.responsive<double>(

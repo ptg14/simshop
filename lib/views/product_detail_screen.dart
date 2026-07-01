@@ -192,14 +192,31 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                           key: ValueKey(product.id),
                           imageUrls: galleryImages,
                           height: context.productDetailImageHeight,
-                          autoScrollDuration:
-                              const Duration(seconds: 4),
+                          // Zero duration disables auto-scroll. The
+                          // product-detail carousel sits inside a
+                          // vertical SingleChildScrollView, and the
+                          // every-few-seconds auto-advance fought
+                          // the customer's manual swipes — the page
+                          // would jump under their finger mid-gesture
+                          // and the carousel felt sluggish. Manual
+                          // swipes are plenty fast on their own.
+                          autoScrollDuration: Duration.zero,
                           fit: BoxFit.contain,
                           heroTag: 'product-image-${product.id}',
+                          // [PageScrollPhysics] lets horizontal
+                          // swipes win the gesture arena immediately
+                          // instead of competing with the parent
+                          // scroll view's vertical drag — that's
+                          // why flicking between product photos used
+                          // to feel sticky.
+                          physics: const PageScrollPhysics()
+                              .applyTo(const ClampingScrollPhysics()),
                         ),
                       ),
 
-                      /// Discount ribbon
+                      /// Discount ribbon.
+                      /// Manual sale → "GIÁ CŨ: …"; active event →
+                      /// "GIÁ SỰ KIỆN: …" with the event name.
                       if (product.isOnSale)
                         Positioned(
                           top: 16,
@@ -214,7 +231,10 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                               borderRadius: BorderRadius.circular(8),
                             ),
                             child: Text(
-                              'GIÁ CŨ: ${formatCurrency(product.originalPrice ?? 0)}',
+                              product.currentEvent != null
+                                  ? 'GIÁ SỰ KIỆN: ${product.currentEvent!.formatDiscount()}'
+                                      '${product.currentEvent!.name.isEmpty ? '' : ' · ${product.currentEvent!.name}'}'
+                                  : 'GIÁ CŨ: ${formatCurrency(product.originalPrice ?? 0)}',
                               style: TextStyle(
                                 color: scheme.onError,
                                 fontWeight: FontWeight.bold,
@@ -335,11 +355,16 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                         desktop: 20,
                       )),
 
-                      /// Price row
+                      /// Price row.
+                      /// When an event is active the customer sees the
+                      /// discounted price and the base price is struck
+                      /// through (with the event name as supporting
+                      /// context). [isOnSale] now also returns true for
+                      /// event-only products.
                       Row(
                         children: [
                           Text(
-                            formatCurrency(product.price),
+                            formatCurrency(product.effectivePayPrice),
                             style: TextStyle(
                               color: scheme.error,
                               fontWeight: FontWeight.bold,
@@ -359,7 +384,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                             )),
                             Flexible(
                               child: Text(
-                                formatCurrency(product.originalPrice ?? 0),
+                                formatCurrency(product.price),
                                 overflow: TextOverflow.ellipsis,
                                 style: TextStyle(
                                   color: scheme.onSurfaceVariant,
