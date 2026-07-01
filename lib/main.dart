@@ -3,10 +3,12 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'services/analytics_service.dart';
 import 'services/article_service.dart';
+import 'services/event_service.dart';
 import 'services/product_service.dart';
 import 'theme/app_theme.dart';
 import 'viewmodels/admin_viewmodel.dart';
 import 'viewmodels/articles_viewmodel.dart';
+import 'viewmodels/events_viewmodel.dart';
 import 'viewmodels/home_viewmodel.dart';
 import 'viewmodels/site_config_viewmodel.dart';
 import 'views/home_screen.dart';
@@ -49,6 +51,12 @@ class MyApp extends StatelessWidget {
           ),
           ChangeNotifierProvider(create: (_) => SiteConfigViewModel()..load()),
           ChangeNotifierProvider(create: (_) => ArticlesViewModel()..load()),
+          // Admin "Sự kiện" tab. Lazy so cold-start customers don't
+          // pay for the initial GET unless the admin dashboard opens.
+          ChangeNotifierProvider(
+            create: (_) => EventsViewModel(),
+            lazy: true,
+          ),
           // Service providers — required by widgets that
           // context.read<IProductService>() / IArticleService().
           // 78f3492 added the ArticlesViewModel provider but the
@@ -56,6 +64,7 @@ class MyApp extends StatelessWidget {
           // underlying services were not in the tree.
           Provider<IProductService>(create: (_) => RealProductService()),
           Provider<IArticleService>(create: (_) => RealArticleService()),
+          Provider<IEventService>(create: (_) => RealEventService()),
           // Pageview tracking — fire-and-forget; called from
           // HomeViewModel.initialize and ProductDetailScreen.initState.
           Provider<IAnalyticsService>(create: (_) => RealAnalyticsService()),
