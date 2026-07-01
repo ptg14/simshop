@@ -12,6 +12,8 @@ class ImageCarousel extends StatefulWidget {
     this.height,
     this.autoScrollDuration = const Duration(seconds: 3),
     this.onTap,
+    this.fit = BoxFit.cover,
+    this.heroTag,
   });
 
   final List<String> imageUrls;
@@ -21,6 +23,23 @@ class ImageCarousel extends StatefulWidget {
   /// Called when the user taps a slide. Receives the slide index.
   /// When null (default), the carousel is non-interactive.
   final void Function(int index)? onTap;
+
+  /// How each image fills its frame. Default [BoxFit.cover] keeps
+  /// the existing banner + product-card behaviour (image fills the
+  /// frame, edges get cropped). Product detail uses
+  /// [BoxFit.contain] so the customer sees the full photo with
+  /// letterboxing instead of having the product zoomed in and
+  /// cropped.
+  final BoxFit fit;
+
+  /// When non-null, wraps the *first* slide in a [Hero] with this
+  /// exact tag — matching the [Hero] tag used by the product card
+  /// on the home grid (e.g. `'product-image-<product.id>'`). The
+  /// fly-in animation from the home card then transitions smoothly
+  /// into the carousel. Only the first slide is wrapped because the
+  /// home grid only shows one image; subsequent slides are revealed
+  /// via the carousel's own PageView motion.
+  final Object? heroTag;
 
   @override
   State<ImageCarousel> createState() => _ImageCarouselState();
@@ -75,15 +94,42 @@ class _ImageCarouselState extends State<ImageCarousel> {
                 onPageChanged: (i) => setState(() => _current = i),
                 itemCount: widget.imageUrls.length,
                 itemBuilder: (context, index) {
-                  final child = AppNetworkImage(
+                  Widget child = AppNetworkImage(
                     url: widget.imageUrls[index],
-                    fit: BoxFit.cover,
+                    fit: widget.fit,
                   );
-                  if (widget.onTap == null) return child;
-                  return InkWell(
-                    onTap: () => widget.onTap!(index),
-                    child: child,
-                  );
+                  if (widget.onTap != null) {
+                    child = InkWell(
+                      onTap: () => widget.onTap!(index),
+                      child: child,
+                    );
+                  }
+                  // Wrap only the first slide in a Hero. The home
+                  // grid (ProductCard) uses a tag shaped like
+                  // `'product-image-<id>'`; the detail screen
+                  // passes the same tag in via [heroTag] so the
+                  // fly-in animation matches. The shuttle builder
+                  // renders the destination widget during flight
+                  // so we don't briefly show the source's
+                  // cover-fit image (with cropped edges) on its
+                  // way to a contain-fit frame — the user would
+                  // see a visible snap at the start of the
+                  // animation.
+                  if (widget.heroTag != null && index == 0) {
+                    child = Hero(
+                      tag: widget.heroTag!,
+                      flightShuttleBuilder: (
+                        flightContext,
+                        animation,
+                        flightDirection,
+                        fromHeroContext,
+                        toHeroContext,
+                      ) =>
+                          toHeroContext.widget,
+                      child: child,
+                    );
+                  }
+                  return child;
                 },
               ),
             ),
