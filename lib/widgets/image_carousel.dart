@@ -45,7 +45,8 @@ class ImageCarousel extends StatefulWidget {
   State<ImageCarousel> createState() => _ImageCarouselState();
 }
 
-class _ImageCarouselState extends State<ImageCarousel> {
+class _ImageCarouselState extends State<ImageCarousel>
+    with WidgetsBindingObserver {
   final PageController _controller = PageController();
   int _current = 0;
   Timer? _timer;
@@ -53,14 +54,42 @@ class _ImageCarouselState extends State<ImageCarousel> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _startAutoScroll();
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _timer?.cancel();
     _controller.dispose();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    super.didChangeAppLifecycleState(state);
+    // Pause when the tab/window is hidden — keeps the page change from
+    // firing while the user isn't watching and avoids background
+    // PageView animations that compete with the active frame. Resuming
+    // picks up the existing `_current` so the carousel doesn't jump.
+    switch (state) {
+      case AppLifecycleState.paused:
+      case AppLifecycleState.hidden:
+      case AppLifecycleState.inactive:
+        _timer?.cancel();
+        _timer = null;
+        break;
+      case AppLifecycleState.resumed:
+        if (_timer == null && widget.imageUrls.length >= 2) {
+          _startAutoScroll();
+        }
+        break;
+      case AppLifecycleState.detached:
+        _timer?.cancel();
+        _timer = null;
+        break;
+    }
   }
 
   void _startAutoScroll() {
@@ -97,6 +126,13 @@ class _ImageCarouselState extends State<ImageCarousel> {
                   Widget child = AppNetworkImage(
                     url: widget.imageUrls[index],
                     fit: widget.fit,
+                    // Explicit dimensions let the browser decode at
+                    // the actual display size instead of first
+                    // downloading the full-resolution image and
+                    // resizing it in CSS — meaningful for first-paint
+                    // when banners are large product shots.
+                    height: widget.height ?? context.carouselHeight,
+                    width: double.infinity,
                   );
                   if (widget.onTap != null) {
                     child = InkWell(
