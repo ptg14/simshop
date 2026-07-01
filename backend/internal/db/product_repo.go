@@ -3,7 +3,9 @@ package db
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"log"
 	"math"
 	"strings"
 
@@ -270,46 +272,79 @@ func (r *ProductRepo) Create(p *models.Product) error {
 }
 
 // Update modifies an existing product.
+//
+// Every step logs with the product id prefix so an operator can
+// correlate a 500 returned to the API client back to a specific
+// SQL statement. Failures are wrapped with [fmt.Errorf] at the
+// boundary so callers can inspect the underlying error with
+// [errors.Is] / [errors.As] (mirrors the existing style in
+// [ProductRepo.GetAllFiltered]).
 func (r *ProductRepo) Update(id string, p *models.Product) error {
 	specsJSON, _ := json.Marshal(p.Specs)
 	categoriesJSON, _ := json.Marshal(p.Categories)
 	tx, err := r.db.Begin()
 	if err != nil {
-		return err
+		log.Printf("update product %s: begin tx: %v", id, err)
+		return fmt.Errorf("begin tx for product %s: %w", id, err)
 	}
 	defer func() {
 		if err != nil {
-			tx.Rollback()
+			log.Printf("update product %s: rolling back: %v", id, err)
+			// Rollback itself can fail (disk full, broken
+			// connection). Capture and log so the operator
+			// sees the secondary failure alongside the cause.
+			if rberr := tx.Rollback(); rberr != nil && !errors.Is(rberr, sql.ErrTxDone) {
+				log.Printf("update product %s: rollback failed: %v", id, rberr)
+			}
 		} else {
-			tx.Commit()
+			if cerr := tx.Commit(); cerr != nil {
+				log.Printf("update product %s: commit failed: %v", id, cerr)
+				err = fmt.Errorf("commit product %s: %w", id, cerr)
+			}
 		}
 	}()
 
 	if _, err = tx.Exec(`UPDATE products SET name=?, description=?, price=?, original_price=?, image_url=?, category=?, store_id=?, rating=?, reviews=?, stock=?, specs=?, categories=? WHERE id=?`,
 		p.Name, p.Description, p.Price, p.OriginalPrice, p.ImageURL, p.Category, p.StoreID, p.Rating, p.Reviews, p.Stock, string(specsJSON), string(categoriesJSON), id); err != nil {
-		return err
+		log.Printf("update product %s: UPDATE products: %v", id, err)
+		return fmt.Errorf("update product %s: %w", id, err)
 	}
 
 	// Replace images: delete existing and insert provided list
 	if _, err = tx.Exec(`DELETE FROM product_images WHERE product_id=?`, id); err != nil {
-		return err
+		log.Printf("update product %s: DELETE product_images: %v", id, err)
+		return fmt.Errorf("delete images for product %s: %w", id, err)
 	}
 	for i, url := range p.Images {
 		if _, err = tx.Exec(`INSERT INTO product_images (product_id, image_url, ord) VALUES (?,?,?)`, id, url, i); err != nil {
-			return err
+			log.Printf("update product %s: INSERT product_images[%d]=%s: %v", id, i, url, err)
+			return fmt.Errorf("insert image %d for product %s: %w", i, id, err)
 		}
 	}
 	// Replace options: delete existing and insert provided list
 	if _, err = tx.Exec(`DELETE FROM product_options WHERE product_id=?`, id); err != nil {
-		return err
+		log.Printf("update product %s: DELETE product_options: %v", id, err)
+		return fmt.Errorf("delete options for product %s: %w", id, err)
 	}
+	// Track ids we've already used in this batch so a client that
+	// accidentally submits the same id twice (e.g. copy/paste bug,
+	// or two new options both carrying id="") doesn't violate the
+	// PRIMARY KEY constraint and fail the whole transaction with a
+	// 500. Treat the second occurrence as a new option by minting a
+	// fresh UUID for it.
+	seenIDs := make(map[string]struct{}, len(p.Options))
 	for i, o := range p.Options {
 		if o.ID == "" {
 			o.ID = uuid.New().String()
+		} else if _, dup := seenIDs[o.ID]; dup {
+			log.Printf("update product %s: duplicate option id %s at index %d — reassigning", id, o.ID, i)
+			o.ID = uuid.New().String()
 		}
+		seenIDs[o.ID] = struct{}{}
 		imgJSON, _ := json.Marshal(o.ImageURLs)
 		if _, err = tx.Exec(`INSERT INTO product_options (id, product_id, name, image_urls, ord) VALUES (?,?,?,?,?)`, o.ID, id, o.Name, string(imgJSON), i); err != nil {
-			return err
+			log.Printf("update product %s: INSERT product_options[%d] id=%s name=%s: %v", id, i, o.ID, o.Name, err)
+			return fmt.Errorf("insert option %d for product %s: %w", i, id, err)
 		}
 	}
 	return nil
