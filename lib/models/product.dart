@@ -1,3 +1,5 @@
+import 'event.dart';
+
 /// Represents a product in the store.
 class Product {
   Product({
@@ -16,6 +18,8 @@ class Product {
     required this.specs,
     this.images = const [],
     this.options = const [],
+    this.effectivePrice,
+    this.currentEvent,
   });
 
   /// Create a Product from a JSON map.
@@ -48,7 +52,13 @@ class Product {
         stock: json['stock'] as int?,
         specs:
             (json['specs'] as List<dynamic>).map((e) => e as String).toList(),
-        // images already populated above
+        // Backend attaches effective_price + current_event when the
+        // product is in an active event. Both default to null on older
+        // servers / cache misses — see [effectivePayPrice].
+        effectivePrice: (json['effective_price'] as num?)?.toDouble(),
+        currentEvent: json['current_event'] != null
+            ? Event.fromJson(json['current_event'] as Map<String, dynamic>)
+            : null,
       );
   final String id;
   final String name;
@@ -70,6 +80,14 @@ class Product {
   final int? stock;
   final List<String> specs;
 
+  /// Server-computed price after an active event discount. `null`
+  /// means no active event applies — render the base price.
+  final double? effectivePrice;
+
+  /// The event that produced [effectivePrice]. Lets the UI show a
+  /// ribbon ("GIÁ SỰ KIỆN") without re-querying.
+  final Event? currentEvent;
+
   /// Convert this Product to a JSON map.
   Map<String, dynamic> toJson() => {
         'id': id,
@@ -89,14 +107,30 @@ class Product {
         'options': options.map((o) => o.toJson()).toList(),
       };
 
-  /// Check if product is on sale.
-  bool get isOnSale => originalPrice != null && originalPrice! > price;
+  /// Check if product is on sale (manual [originalPrice] OR active event).
+  bool get isOnSale =>
+      (originalPrice != null && originalPrice! > price) ||
+      currentEvent != null;
 
   /// Calculate discount percentage.
   int get discountPercentage {
-    if (!isOnSale) return 0;
+    if (currentEvent != null && price > 0) {
+      final eff = effectivePayPrice;
+      final saved = price - eff;
+      if (saved <= 0) return 0;
+      return ((saved / price) * 100).round();
+    }
+    if (!isOnSale || originalPrice == null) return 0;
     return (((originalPrice! - price) / originalPrice!) * 100).toInt();
   }
+
+  /// Effective price the customer actually pays. When no event is
+  /// active or the server didn't decorate this product, this falls
+  /// back to the base [price] so UI code never has to null-check.
+  double get effectivePayPrice =>
+      (effectivePrice != null && effectivePrice! < price)
+          ? effectivePrice!
+          : price;
 
   /// Create a copy with modified fields.
   Product copyWith({
@@ -115,6 +149,8 @@ class Product {
     List<String>? images,
     List<Option>? options,
     List<String>? categories,
+    double? effectivePrice,
+    Event? currentEvent,
   }) =>
       Product(
         id: id ?? this.id,
@@ -132,6 +168,8 @@ class Product {
         images: images ?? this.images,
         options: options ?? this.options,
         categories: categories ?? this.categories,
+        effectivePrice: effectivePrice ?? this.effectivePrice,
+        currentEvent: currentEvent ?? this.currentEvent,
       );
 }
 
