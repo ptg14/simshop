@@ -43,69 +43,70 @@ class OptionsEditorWithImages extends StatelessWidget {
                 style: TextStyle(fontWeight: FontWeight.bold)),
             const SizedBox(height: 8),
             for (var i = 0; i < options.length; i++)
-              IntrinsicHeight(
-                child: Row(
+              Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Expanded(
-                      flex: 3,
-                      child: TextFormField(
-                        initialValue: options[i].name,
-                        decoration:
-                            const InputDecoration(labelText: 'Tên option'),
-                        onChanged: (v) {
-                          final updated = List<Option>.from(options);
-                          updated[i] = Option(
-                            id: options[i].id,
-                            name: v,
-                            // Preserve imageUrls across keystrokes —
-                            // editing a name must never wipe an
-                            // image assignment. This was a real bug
-                            // in the original _OptionsEditor.
-                            imageUrls:
-                                List<String>.from(options[i].imageUrls),
-                          );
-                          onChanged(updated);
-                        },
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      flex: 2,
-                      // Material's TextFormField reserves ~8px of top
-                      // padding inside its decorator so the floating
-                      // label has breathing room above the border. We
-                      // mirror that offset here so the "Ảnh" header
-                      // aligns with the floating "Tên option" label
-                      // instead of sitting flush to the top of the row.
-                      child: Padding(
-                        padding: const EdgeInsets.only(top: 8),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            const Text('Ảnh',
-                                style: TextStyle(fontSize: 12)),
-                            const SizedBox(height: 6),
-                            _OptionImageRow(
-                              option: options[i],
-                              existingImages: existingImages,
-                              newImageBytes: newImageBytes,
-                              onChanged: (updated) {
-                                final list = List<Option>.from(options);
-                                list[i] = updated;
-                                onChanged(list);
-                              },
-                            ),
-                          ],
+                    // Top row: name field + delete button. The image
+                    // picker is intentionally NOT in this Row because:
+                    //   - Row's `crossAxisAlignment: center` would
+                    //     vertically clip a multi-line Wrap (anything
+                    //     below the first line of thumbs would be
+                    //     cut off and untappable).
+                    //   - The trailing IconButton's hit-target sits
+                    //     at the right edge of the Row and would
+                    //     visually cover the wrapped thumbnails on
+                    //     subsequent lines.
+                    // Putting the picker in its own full-width row
+                    // below fixes both — the Wrap gets the entire
+                    // dialog width to flow into, and the IconButton
+                    // can't overlap any thumb.
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.center,
+                      children: [
+                        Expanded(
+                          flex: 3,
+                          child: TextFormField(
+                            initialValue: options[i].name,
+                            decoration: const InputDecoration(
+                                labelText: 'Tên option'),
+                            onChanged: (v) {
+                              final updated = List<Option>.from(options);
+                              updated[i] = Option(
+                                id: options[i].id,
+                                name: v,
+                                // Preserve imageUrls across keystrokes —
+                                // editing a name must never wipe an
+                                // image assignment. This was a real
+                                // bug in the original _OptionsEditor.
+                                imageUrls:
+                                    List<String>.from(options[i].imageUrls),
+                              );
+                              onChanged(updated);
+                            },
+                          ),
                         ),
-                      ),
+                        IconButton(
+                          icon:
+                              const Icon(Icons.delete, color: Colors.red),
+                          onPressed: () {
+                            final updated = List<Option>.from(options)
+                              ..removeAt(i);
+                            onChanged(updated);
+                          },
+                        ),
+                      ],
                     ),
-                    IconButton(
-                      icon: const Icon(Icons.delete, color: Colors.red),
-                      onPressed: () {
-                        final updated =
-                            List<Option>.from(options)..removeAt(i);
-                        onChanged(updated);
+                    const SizedBox(height: 4),
+                    _OptionImageRow(
+                      option: options[i],
+                      existingImages: existingImages,
+                      newImageBytes: newImageBytes,
+                      onChanged: (updated) {
+                        final list = List<Option>.from(options);
+                        list[i] = updated;
+                        onChanged(list);
                       },
                     ),
                   ],
@@ -168,41 +169,28 @@ class _OptionImageRow extends StatelessWidget {
       );
     }
 
-    return SizedBox(
-      height: 56,
-      child: SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        child: Row(
-          children: [
-            // Selectable URL thumbs first.
-            for (var idx = 0; idx < existingImages.length; idx++)
-              Padding(
-                padding: EdgeInsets.only(
-                    right: idx == existingImages.length - 1 &&
-                            newImageBytes.isEmpty
-                        ? 0
-                        : 8),
-                child: _UrlThumb(
-                  url: existingImages[idx],
-                  selected: option.imageUrls.contains(existingImages[idx]),
-                  scheme: scheme,
-                  onTap: () => _toggle(existingImages[idx]),
-                ),
-              ),
-            // Non-selectable bytes thumbs (placeholders for the
-            // freshly-picked images that haven't been uploaded yet).
-            for (var idx = 0; idx < newImageBytes.length; idx++)
-              Padding(
-                padding: EdgeInsets.only(
-                    right: idx == newImageBytes.length - 1 ? 0 : 8),
-                child: _BytesThumb(
-                  bytes: newImageBytes[idx],
-                  scheme: scheme,
-                ),
-              ),
-          ],
-        ),
-      ),
+    // Use Wrap so thumbnails flow onto a new line when the row's
+    // horizontal space isn't enough. A horizontal SingleChildScrollView
+    // looked right for 1-2 thumbs but silently clipped anything past
+    // the visible area (e.g. when flex:2 narrows the column and
+    // there are 3+ images) — those hidden thumbs couldn't be tapped.
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: [
+        // Selectable URL thumbs first.
+        for (var idx = 0; idx < existingImages.length; idx++)
+          _UrlThumb(
+            url: existingImages[idx],
+            selected: option.imageUrls.contains(existingImages[idx]),
+            scheme: scheme,
+            onTap: () => _toggle(existingImages[idx]),
+          ),
+        // Non-selectable bytes thumbs (placeholders for the
+        // freshly-picked images that haven't been uploaded yet).
+        for (var idx = 0; idx < newImageBytes.length; idx++)
+          _BytesThumb(bytes: newImageBytes[idx], scheme: scheme),
+      ],
     );
   }
 }
