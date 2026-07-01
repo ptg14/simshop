@@ -698,3 +698,174 @@ func TestAnalyticsSummaryTopProducts(t *testing.T) {
 		t.Errorf("top[1] = %+v, want p-B with 1 view", got.TopProducts[1])
 	}
 }
+
+// ---------- Product update option ID edge cases ----------
+//
+// These tests cover the contract [ProductRepo.Update] now guarantees for
+// Option.ID values: empty and duplicate IDs are silently reassigned to
+// fresh UUIDs rather than aborting the transaction with a 500. Without
+// this tolerance, an admin copy/pasting a new option (or a buggy client
+// submitting id="") would break every save for the whole product.
+
+// TestProductUpdateEmptyOptionID asserts the "client sent id=\"\""
+// case: a single new option without an ID should be persisted with a
+// freshly-minted UUID.
+func TestProductUpdateEmptyOptionID(t *testing.T) {
+	srv, database, cleanup := newTestServer(t)
+	defer cleanup()
+
+	createBody := strings.NewReader(`{
+		"id": "p-upd",
+		"name": "Áo thun",
+		"description": "",
+		"price": 100000,
+		"image_url": "http://localhost:8080/uploads/p.jpg",
+		"category": "Áo",
+		"rating": 0,
+		"specs": []
+	}`)
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/api/products", createBody)
+	req.Header.Set("Content-Type", "application/json")
+	if resp, err := http.DefaultClient.Do(req); err != nil {
+		t.Fatalf("create: %v", err)
+	} else if resp.StatusCode != http.StatusCreated {
+		body, _ := readAll(resp)
+		t.Fatalf("create status = %d, body=%s", resp.StatusCode, string(body))
+	}
+
+	// PUT with a single option whose id is "".
+	putBody := strings.NewReader(`{
+		"id": "p-upd",
+		"name": "Áo thun",
+		"description": "",
+		"price": 100000,
+		"image_url": "http://localhost:8080/uploads/p.jpg",
+		"category": "Áo",
+		"rating": 0,
+		"specs": [],
+		"images": ["http://localhost:8080/uploads/p.jpg"],
+		"options": [{"id": "", "name": "Size M", "image_urls": []}]
+	}`)
+	req2, _ := http.NewRequest(http.MethodPut, srv.URL+"/api/products/p-upd", putBody)
+	req2.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req2)
+	if err != nil {
+		t.Fatalf("PUT: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := readAll(resp)
+		t.Fatalf("PUT status = %d, body=%s", resp.StatusCode, string(body))
+	}
+
+	var storedID string
+	if err := database.QueryRow(
+		`SELECT id FROM product_options WHERE product_id=? AND name=?`,
+		"p-upd", "Size M",
+	).Scan(&storedID); err != nil {
+		t.Fatalf("read back option id: %v", err)
+	}
+	if storedID == "" {
+		t.Errorf("option id persisted as empty string; want a UUID")
+	}
+}
+
+// TestProductUpdateDuplicateOptionIDs is the regression test for the
+// PRIMARY KEY collision that previously 500'd the whole transaction
+// when two options in the same payload carried the same id. The
+// server must tolerate this by minting a fresh UUID for the second
+// occurrence and persisting both.
+func TestProductUpdateDuplicateOptionIDs(t *testing.T) {
+	srv, database, cleanup := newTestServer(t)
+	defer cleanup()
+
+	// Seed product.
+	createBody := strings.NewReader(`{
+		"id": "p-dup",
+		"name": "Áo thun",
+		"description": "",
+		"price": 100000,
+		"image_url": "http://localhost:8080/uploads/p.jpg",
+		"category": "Áo",
+		"rating": 0,
+		"specs": []
+	}`)
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/api/products", createBody)
+	req.Header.Set("Content-Type", "application/json")
+	if resp, err := http.DefaultClient.Do(req); err != nil {
+		t.Fatalf("create: %v", err)
+	} else if resp.StatusCode != http.StatusCreated {
+		body, _ := readAll(resp)
+		t.Fatalf("create status = %d, body=%s", resp.StatusCode, string(body))
+	}
+
+	// PUT with two options both carrying the SAME non-empty id. This is
+	// the exact case the dedupe logic exists for: the client supplied
+	// a colliding id (e.g. copy/paste, or a bug that re-uses id=""),
+	// and without the fix the second INSERT fails the whole transaction
+	// with a 500. With the fix the second occurrence is reassigned and
+	// the PUT succeeds with both rows persisted.
+	const collidingID = "dup-test-id-12345"
+	putBody := strings.NewReader(`{
+		"id": "p-dup",
+		"name": "Áo thun",
+		"description": "",
+		"price": 100000,
+		"image_url": "http://localhost:8080/uploads/p.jpg",
+		"category": "Áo",
+		"rating": 0,
+		"specs": [],
+		"images": ["http://localhost:8080/uploads/p.jpg"],
+		"options": [
+			{"id": "` + collidingID + `", "name": "Size M", "image_urls": []},
+			{"id": "` + collidingID + `", "name": "Size L", "image_urls": []}
+		]
+	}`)
+	req2, _ := http.NewRequest(http.MethodPut, srv.URL+"/api/products/p-dup", putBody)
+	req2.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req2)
+	if err != nil {
+		t.Fatalf("PUT: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := readAll(resp)
+		t.Fatalf("PUT status = %d, body=%s (expected 200 — duplicate id must not 500)", resp.StatusCode, string(body))
+	}
+
+	rows, err := database.Query(
+		`SELECT id, name FROM product_options WHERE product_id=? ORDER BY ord ASC`,
+		"p-dup",
+	)
+	if err != nil {
+		t.Fatalf("query options: %v", err)
+	}
+	defer rows.Close()
+	type row struct {
+		id   string
+		name string
+	}
+	var got []row
+	for rows.Next() {
+		var r row
+		if err := rows.Scan(&r.id, &r.name); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		got = append(got, r)
+	}
+	if len(got) != 2 {
+		t.Fatalf("persisted options = %d, want 2", len(got))
+	}
+	if got[0].id == got[1].id {
+		t.Errorf("both options got the same id %q — duplicate not reassigned", got[0].id)
+	}
+	// The first option preserves the client-supplied id; the second
+	// is what the server minted. Lock the names to their rows so we
+	// know the reassignment didn't also scramble order.
+	if got[0].name != "Size M" {
+		t.Errorf("first option name = %q, want Size M", got[0].name)
+	}
+	if got[1].name != "Size L" {
+		t.Errorf("second option name = %q, want Size L", got[1].name)
+	}
+}
