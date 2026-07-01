@@ -11,7 +11,7 @@ import '../services/analytics_service.dart';
 import '../utils/currency_formatter.dart';
 import '../utils/responsive.dart';
 import '../viewmodels/site_config_viewmodel.dart';
-import '../widgets/network_image.dart';
+import '../widgets/image_carousel.dart';
 import '../widgets/site_info_footer.dart';
 
 /// Build a Google Maps *directions* URL with [address] as the
@@ -64,6 +64,13 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
   late Product product;
   bool _isFavorite = false;
 
+  /// Currently selected option id. Null means "no option chosen /
+  /// default view" — in that case the gallery shows every image
+  /// from the product. Once the customer picks an option, the
+  /// gallery narrows to that option's [Option.imageUrls] (falling
+  /// back to the product images if the option has none).
+  String? _selectedOptionId;
+
   @override
   void initState() {
     super.initState();
@@ -92,10 +99,32 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
     );
   }
 
+  /// Compute the image list to show in the gallery.
+  ///
+  /// When no option is selected, or the selected option has no
+  /// images of its own, we fall back to every image attached to
+  /// the product (so the customer never sees an empty carousel).
+  List<String> _galleryImages() {
+    if (_selectedOptionId != null) {
+      for (final o in product.options) {
+        if (o.id == _selectedOptionId) {
+          if (o.imageUrls.isNotEmpty) return o.imageUrls;
+          break;
+        }
+      }
+    }
+    if (product.images.isNotEmpty) return product.images;
+    return [product.imageUrl];
+  }
+
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final heroTag = 'product-image-${product.id}';
+    // Compute the gallery image list once per build — [_galleryImages]
+    // walks [product.options] and is called for both the carousel key
+    // and its imageUrls arg below. Caching avoids running the lookup
+    // twice and keeps the key/arg trivially in sync.
+    final galleryImages = _galleryImages();
 
     return Scaffold(
       appBar: AppBar(
@@ -125,19 +154,48 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                /// Product image with Hero animation.
-                SizedBox(
+                /// Product gallery. The carousel renders every image
+                /// in [galleryImages] (computed above). When the
+                /// customer picks an option below, [_galleryImages]
+                /// narrows the list to that option's [Option.imageUrls]
+                /// (falling back to the product images when the option
+                /// has none of its own), so the carousel swaps to
+                /// the chosen variant's photos.
+                ///
+                /// The [heroTag] matches the tag the home grid's
+                /// [ProductCard] uses (`'product-image-<product.id>'`),
+                /// so the fly-in animation from the card survives the
+                /// change from a single image to a full carousel.
+                /// The tag is keyed to the product, *not* the first
+                /// gallery image — that way switching options doesn't
+                /// trigger a new Hero flight mid-detail.
+                ///
+                /// `BoxFit.contain` lets the customer see the full
+                /// product photo. [BoxFit.cover] — the previous
+                /// default — zoomed the image to fill the frame and
+                /// cropped the edges, hiding whatever the seller
+                /// wanted to show (logo, full silhouette, dimension
+                /// labels).
+                Container(
                   height: context.productDetailImageHeight,
                   width: double.infinity,
+                  // Letterbox background for [BoxFit.contain]: the
+                  // image may not fill the frame (e.g. a square
+                  // product on a wide screen). Use the lightest
+                  // surface so the letterboxing matches the page
+                  // background and doesn't look like a CSS bug.
+                  color: scheme.surfaceContainerLowest,
                   child: Stack(
                     children: [
                       Positioned.fill(
-                        child: Hero(
-                          tag: heroTag,
-                          child: AppNetworkImage(
-                            url: product.imageUrl,
-                            fit: BoxFit.cover,
-                          ),
+                        child: ImageCarousel(
+                          key: ValueKey(product.id),
+                          imageUrls: galleryImages,
+                          height: context.productDetailImageHeight,
+                          autoScrollDuration:
+                              const Duration(seconds: 4),
+                          fit: BoxFit.contain,
+                          heroTag: 'product-image-${product.id}',
                         ),
                       ),
 
@@ -205,6 +263,55 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                         tablet: 16,
                         desktop: 20,
                       )),
+
+                      /// Option selector — only rendered when the
+                      /// product actually has variants. Tapping a
+                      /// chip swaps the gallery above to that
+                      /// option's imageUrls. The first chip is
+                      /// always "Mặc định" so the customer can
+                      /// return to the full product gallery.
+                      ///
+                      /// Uses Material's [ChoiceChip] (not a custom
+                      /// widget) so it picks up the app's
+                      /// [ChipThemeData] and gets a screen-reader
+                      /// "selected" hint for free, matching the
+                      /// category picker used in the admin product
+                      /// form.
+                      if (product.options.isNotEmpty) ...[
+                        Text(
+                          'Tuỳ chọn',
+                          style: TextStyle(
+                            fontWeight: FontWeight.w600,
+                            fontSize: context.responsive<double>(
+                              mobile: 14,
+                              tablet: 15,
+                              desktop: 16,
+                            ),
+                            color: scheme.onSurfaceVariant,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: [
+                            ChoiceChip(
+                              label: const Text('Mặc định'),
+                              selected: _selectedOptionId == null,
+                              onSelected: (_) => setState(
+                                  () => _selectedOptionId = null),
+                            ),
+                            for (final o in product.options)
+                              ChoiceChip(
+                                label: Text(o.name),
+                                selected: _selectedOptionId == o.id,
+                                onSelected: (_) => setState(
+                                    () => _selectedOptionId = o.id),
+                              ),
+                          ],
+                        ),
+                        const SizedBox(height: 12),
+                      ],
 
                       /// Product name
                       Text(
