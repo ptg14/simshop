@@ -9,7 +9,7 @@ import (
 )
 
 // New returns a mux.Router with all routes and middleware registered.
-func New(productRepo *handler.ProductRepo, storeRepo *handler.StoreRepo, articleRepo *handler.ArticleRepo, analyticsRepo *handler.AnalyticsRepo, uploadCfg *handler.UploadConfig, allowedOrigin string) *mux.Router {
+func New(productRepo *handler.ProductRepo, storeRepo *handler.StoreRepo, articleRepo *handler.ArticleRepo, eventRepo *handler.EventRepo, analyticsRepo *handler.AnalyticsRepo, uploadCfg *handler.UploadConfig, allowedOrigin string) *mux.Router {
 	r := mux.NewRouter()
 	// Global middleware – use configurable allowed origin.
 	r.Use(middleware.CORSMiddleware(allowedOrigin))
@@ -33,8 +33,9 @@ func New(productRepo *handler.ProductRepo, storeRepo *handler.StoreRepo, article
 	r.HandleFunc("/health", handler.HealthHandler).Methods(http.MethodGet)
 
 	// Product routes – the handler package expects a repository.
-	r.HandleFunc("/api/products", handler.GetProductsHandler(productRepo)).Methods(http.MethodGet)
-	r.HandleFunc("/api/products/{id}", handler.GetProductHandler(productRepo)).Methods(http.MethodGet)
+	// eventRepo decorates each read with effective_price + current_event.
+	r.HandleFunc("/api/products", handler.GetProductsHandler(productRepo, eventRepo)).Methods(http.MethodGet)
+	r.HandleFunc("/api/products/{id}", handler.GetProductHandler(productRepo, eventRepo)).Methods(http.MethodGet)
 
 	// Mutating product routes with rate limiting.
 	productsWrite := r.PathPrefix("/api/products").Subrouter()
@@ -73,6 +74,19 @@ func New(productRepo *handler.ProductRepo, storeRepo *handler.StoreRepo, article
 	bannersWrite.HandleFunc("", handler.CreateBannerHandler(articleRepo)).Methods(http.MethodPost)
 	bannersWrite.HandleFunc("/{id}", handler.UpdateBannerHandler(articleRepo)).Methods(http.MethodPut)
 	bannersWrite.HandleFunc("/{id}", handler.DeleteBannerHandler(articleRepo)).Methods(http.MethodDelete)
+
+	// Events (time-boxed promotions). GET is public — the home
+	// and product-detail flows read them indirectly via the
+	// `current_event` field that GetProductsHandler/GetProductHandler
+	// attach to each product. The dedicated list endpoint is for the
+	// admin dashboard.
+	r.HandleFunc("/api/events", handler.ListEventsHandler(eventRepo)).Methods(http.MethodGet)
+	r.HandleFunc("/api/events/{id}", handler.GetEventHandler(eventRepo)).Methods(http.MethodGet)
+	eventsWrite := r.PathPrefix("/api/events").Subrouter()
+	eventsWrite.Use(rateLimit)
+	eventsWrite.HandleFunc("", handler.CreateEventHandler(eventRepo)).Methods(http.MethodPost)
+	eventsWrite.HandleFunc("/{id}", handler.UpdateEventHandler(eventRepo)).Methods(http.MethodPut)
+	eventsWrite.HandleFunc("/{id}", handler.DeleteEventHandler(eventRepo)).Methods(http.MethodDelete)
 
 	// Articles. The GET on /:id joins the products the article
 	// mentions (used by the home carousel tap → article screen flow).

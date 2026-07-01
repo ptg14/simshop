@@ -29,6 +29,7 @@ func Start(ctx context.Context) error {
 	productRepo := db.NewProductRepo(database.DB)
 	storeRepo := db.NewStoreRepo(database.DB)
 	articleRepo := db.NewArticleRepo(database.DB)
+	eventRepo := db.NewEventRepo(database.DB)
 	analyticsRepo := db.NewAnalyticsRepo(database.DB)
 
 	uploadCfg := &handler.UploadConfig{
@@ -43,7 +44,7 @@ func Start(ctx context.Context) error {
 		return fmt.Errorf("create upload dir: %w", err)
 	}
 
-	r := router.New(productRepo, storeRepo, articleRepo, analyticsRepo, uploadCfg, cfg.AllowedOrigin)
+	r := router.New(productRepo, storeRepo, articleRepo, eventRepo, analyticsRepo, uploadCfg, cfg.AllowedOrigin)
 
 	addr := fmt.Sprintf(":%s", cfg.Port)
 	srv := &http.Server{

@@ -73,7 +73,12 @@ func HealthHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 // GetProductsHandler returns products with optional filtering and pagination.
-func GetProductsHandler(repo *ProductRepo) http.HandlerFunc {
+//
+// Each product is decorated at read time with `effective_price` and
+// `current_event`: the underlying product row is never mutated by
+// promotions, so when an event expires the discount disappears
+// automatically on the next request without any background job.
+func GetProductsHandler(repo *ProductRepo, eventRepo *EventRepo) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		filter := parseProductFilter(r)
 
@@ -82,8 +87,38 @@ func GetProductsHandler(repo *ProductRepo) http.HandlerFunc {
 			writeError(w, http.StatusInternalServerError, "Failed to fetch products")
 			return
 		}
+		decorated := decorateProductsWithEvents(result.Products, eventRepo)
+		result.Products = nil
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(result)
+		json.NewEncoder(w).Encode(struct {
+			Products   []productWithEvent `json:"products"`
+			Total      int                `json:"total"`
+			Page       int                `json:"page"`
+			PageSize   int                `json:"page_size"`
+			TotalPages int                `json:"total_pages"`
+		}{
+			Products:   decorated,
+			Total:      result.Total,
+			Page:       result.Page,
+			PageSize:   result.PageSize,
+			TotalPages: result.TotalPages,
+		})
+	}
+}
+
+// GetAllProductsHandler is the unfiltered variant used by the admin
+// product list (no pagination). Decorated the same way as
+// GetProductsHandler so the admin sees the same effective prices
+// the customer will see.
+func GetAllProductsHandler(repo *ProductRepo, eventRepo *EventRepo) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		products, err := repo.GetAll()
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "Failed to fetch products")
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{"products": decorateProductsWithEvents(products, eventRepo)})
 	}
 }
 
@@ -209,8 +244,11 @@ func DeleteLargeCategoryHandler(repo *ProductRepo) http.HandlerFunc {
 	}
 }
 
-// GetProductHandler returns a single product by ID.
-func GetProductHandler(repo *ProductRepo) http.HandlerFunc {
+// GetProductHandler returns a single product by ID. The product is
+// decorated with `effective_price` and `current_event` exactly like
+// the list endpoint so the detail screen and the list agree on
+// what the customer should pay.
+func GetProductHandler(repo *ProductRepo, eventRepo *EventRepo) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := mux.Vars(r)["id"]
 		product, err := repo.GetByID(id)
@@ -218,8 +256,9 @@ func GetProductHandler(repo *ProductRepo) http.HandlerFunc {
 			writeError(w, http.StatusNotFound, "Product not found")
 			return
 		}
+		wrapped := decorateProductsWithEvents([]models.Product{*product}, eventRepo)
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(product)
+		json.NewEncoder(w).Encode(wrapped[0])
 	}
 }
 
