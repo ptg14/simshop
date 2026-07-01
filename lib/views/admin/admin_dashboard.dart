@@ -5,6 +5,7 @@ import '../../utils/responsive.dart';
 import '../../viewmodels/admin_viewmodel.dart';
 import 'admin_articles.dart';
 import 'admin_categories.dart';
+import 'admin_events.dart';
 import 'admin_overview.dart';
 import 'admin_product/admin_product_screen.dart';
 import 'admin_settings.dart';
@@ -29,6 +30,7 @@ class AdminDashboard extends StatelessWidget {
                       'products',
                       'categories',
                       'articles',
+                      'events',
                       'settings',
                     ];
                     viewModel.selectTab(tabs[index]);
@@ -56,6 +58,11 @@ class AdminDashboard extends StatelessWidget {
                       icon: Icon(Icons.article_outlined),
                       selectedIcon: Icon(Icons.article),
                       label: Text('Bài viết'),
+                    ),
+                    NavigationRailDestination(
+                      icon: Icon(Icons.local_offer_outlined),
+                      selectedIcon: Icon(Icons.local_offer),
+                      label: Text('Sự kiện'),
                     ),
                     NavigationRailDestination(
                       icon: Icon(Icons.settings_outlined),
@@ -99,6 +106,7 @@ class AdminDashboard extends StatelessWidget {
                         (tab: 'products', label: 'Sản phẩm', icon: Icons.inventory_2_outlined),
                         (tab: 'categories', label: 'Danh mục', icon: Icons.category_outlined),
                         (tab: 'articles', label: 'Bài viết', icon: Icons.article_outlined),
+                        (tab: 'events', label: 'Sự kiện', icon: Icons.local_offer_outlined),
                         (tab: 'settings', label: 'Cài đặt', icon: Icons.settings_outlined),
                       ].map(
                         (t) => ListTile(
@@ -157,8 +165,10 @@ class AdminDashboard extends StatelessWidget {
         return 2;
       case 'articles':
         return 3;
-      case 'settings':
+      case 'events':
         return 4;
+      case 'settings':
+        return 5;
       default:
         return 0;
     }
@@ -174,6 +184,8 @@ class AdminDashboard extends StatelessWidget {
         return const AdminCategoriesScreen();
       case 'articles':
         return const AdminArticlesScreen();
+      case 'events':
+        return const AdminEventsScreen();
       case 'settings':
         return const AdminSettingsScreen();
       default:
