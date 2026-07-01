@@ -273,14 +273,29 @@ class AdminViewModel extends ChangeNotifier {
   }
 
   /// Add a new product.
+  ///
+  /// Image handling mirrors [updateProduct]: any pre-existing
+  /// `product.images` is preserved, and newly uploaded files are
+  /// *appended* (not used to replace). Previously this method
+  /// overwrote `images` with the upload result, silently dropping
+  /// every existing picture whenever the admin uploaded even a
+  /// single new file — the same class of bug that lived in
+  /// `updateProduct` until the matching fix there. Aligning the
+  /// two methods keeps callers from having to remember a hidden
+  /// behavioural difference between create and update.
   Future<void> addProduct(Product product, {dynamic imageFile}) async {
     _isLoading = true;
     _error = null;
     notifyListeners();
 
     try {
-      String? imageUrl = product.imageUrl;
-      List<String> images = product.images;
+      // [Product.imageUrl] is a non-nullable [String], but the
+      // create-flow form may submit it as empty when the admin
+      // hasn't chosen a hero yet. Treat the empty string as "no
+      // existing hero" so we can fall back to the first uploaded
+      // file below.
+      String imageUrl = product.imageUrl;
+      final List<String> images = List<String>.from(product.images);
 
       // Upload images first if provided. Accept either single file or a list.
       if (imageFile != null) {
@@ -292,16 +307,18 @@ class AdminViewModel extends ChangeNotifier {
             List<dynamic>.from(imageFile),
             productName: product.name,
           );
-          if (urls != null) images = urls;
-          if (urls != null && urls.isNotEmpty) imageUrl = urls.first;
+          if (urls != null && urls.isNotEmpty) {
+            images.addAll(urls);
+            if (imageUrl.isEmpty) imageUrl = urls.first;
+          }
         } else {
           final url = await _productService.uploadImage(
             imageFile,
             productName: product.name,
           );
           if (url != null) {
-            images = [url];
-            imageUrl = url;
+            images.add(url);
+            if (imageUrl.isEmpty) imageUrl = url;
           }
         }
       }
@@ -333,8 +350,19 @@ class AdminViewModel extends ChangeNotifier {
     notifyListeners();
 
     try {
-      String? imageUrl = product.imageUrl;
-      List<String> images = product.images;
+      // [Product.imageUrl] is non-nullable but the form may submit it
+      // as empty. An empty string here means "no existing hero, pick
+      // the first uploaded file" rather than "blank the hero". An
+      // existing non-empty value wins so admins can re-order the
+      // gallery without the hero getting overwritten on every save.
+      String imageUrl = product.imageUrl;
+      // Start from the product's existing images and append any
+      // newly-uploaded ones. Previously this was overwritten with
+      // `images = urls`, which silently dropped every existing
+      // picture whenever the admin uploaded even a single new file.
+      // The same bug existed in the single-file branch (`images =
+      // [url]`) — fixed by appending instead of replacing.
+      final List<String> images = List<String>.from(product.images);
 
       // Upload new images if provided. For updates we have a known ID
       // and the new name — both are sent so the backend can slug them.
@@ -345,9 +373,9 @@ class AdminViewModel extends ChangeNotifier {
             productName: product.name,
             productId: id,
           );
-          if (urls != null) {
-            images = urls;
-            if (urls.isNotEmpty) imageUrl = urls.first;
+          if (urls != null && urls.isNotEmpty) {
+            images.addAll(urls);
+            if (imageUrl.isEmpty) imageUrl = urls.first;
           }
         } else {
           final url = await _productService.uploadImage(
@@ -356,8 +384,8 @@ class AdminViewModel extends ChangeNotifier {
             productId: id,
           );
           if (url != null) {
-            images = [url];
-            imageUrl = url;
+            images.add(url);
+            if (imageUrl.isEmpty) imageUrl = url;
           }
         }
       }
