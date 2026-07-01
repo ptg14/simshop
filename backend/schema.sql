@@ -43,3 +43,18 @@ CREATE TABLE IF NOT EXISTS categories (
     large_category_id INTEGER,
     FOREIGN KEY (large_category_id) REFERENCES large_categories(id) ON DELETE SET NULL
 );
+
+-- Events: time-boxed promotions. product_ids is a JSON array of product
+-- IDs the discount applies to (no separate join table — same pattern as
+-- articles.product_ids). end_time is nullable; a NULL means the event
+-- never expires (the admin UI always sets one).
+CREATE TABLE IF NOT EXISTS events (
+    id            TEXT PRIMARY KEY,
+    name          TEXT NOT NULL DEFAULT '',
+    end_time      INTEGER,
+    discount_type TEXT NOT NULL,             -- 'percent' | 'fixed'
+    discount_value REAL NOT NULL,
+    product_ids   TEXT NOT NULL DEFAULT '[]',
+    created_at    INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_events_end_time ON events(end_time);

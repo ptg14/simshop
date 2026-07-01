@@ -214,6 +214,29 @@ func runMigrations(db *sql.DB) error {
 		return err
 	}
 
+	// Events: time-boxed promotions applied to a JSON-array list of
+	// product IDs (mirrors articles.product_ids — same pattern, no
+	// separate join table). end_time is NULLABLE: a NULL means the
+	// event never expires, but the admin UI always sets a value so
+	// promotions don't accidentally run forever. product_ids is
+	// stored as JSON so ListActiveEventsForProduct can LIKE-match
+	// cheaply without a join; an index on end_time keeps the active
+	// filter fast even with thousands of past events.
+	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS events (
+		id TEXT PRIMARY KEY,
+		name TEXT NOT NULL DEFAULT '',
+		end_time INTEGER,
+		discount_type TEXT NOT NULL,
+		discount_value REAL NOT NULL,
+		product_ids TEXT NOT NULL DEFAULT '[]',
+		created_at INTEGER NOT NULL
+	)`); err != nil {
+		return err
+	}
+	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_events_end_time ON events(end_time)`); err != nil {
+		return err
+	}
+
 	return nil
 }
 
