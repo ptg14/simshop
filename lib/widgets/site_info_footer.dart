@@ -1,17 +1,81 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../models/store_info.dart';
+import '../utils/page_transitions.dart';
 import '../utils/responsive.dart';
 import '../viewmodels/site_config_viewmodel.dart';
+import '../views/admin/admin_auth_gate.dart';
 import 'network_image.dart';
 
 /// Reusable footer card displaying the site identity + contact info.
 ///
 /// Renders nothing if [StoreInfo] is empty (i.e. backend unreachable and
-/// no defaults). Otherwise shows: logo (optional), name, address, phone,
-/// email. Used at the bottom of the home page and product detail page.
-class SiteInfoFooter extends StatelessWidget {
+/// no defaults). Otherwise shows: banner (optional), name, description,
+/// address, phone, email. Used at the bottom of the home page and
+/// product detail page.
+///
+/// Hidden admin entry-point: tapping the store banner 7 times in a row
+/// (within 3 seconds of the first tap) opens [AdminAuthGate]. The
+/// gesture is intentionally undocumented — casual users have no way
+/// to discover the admin UI. Anyone who already knows the handshake
+/// (a developer who set up the secret key, the store owner) will
+/// remember it. Same pattern as Android's "tap Build Number 7 times
+/// to unlock Developer Options".
+class SiteInfoFooter extends StatefulWidget {
   const SiteInfoFooter({super.key});
+
+  @override
+  State<SiteInfoFooter> createState() => _SiteInfoFooterState();
+}
+
+class _SiteInfoFooterState extends State<SiteInfoFooter> {
+  /// Tap counter — how many taps so far inside the active window.
+  /// Reset when the window closes or the count hits [_requiredTaps].
+  int _taps = 0;
+  /// When the current window started (null = no active window).
+  DateTime? _windowStart;
+
+  /// Number of taps required to open the auth gate. Matches the
+  /// Android "Developer Options" idiom so the gesture feels familiar
+  /// to anyone who's worked on Android.
+  static const int _requiredTaps = 7;
+
+  /// Maximum gap between the first tap and the last one. Past this
+  /// the counter resets so an accidental stray tap doesn't accumulate
+  /// over days. Generous (3s) because the target is a banner (large
+  /// hit zone) and ordinary tap cadence on a phone is roughly 1 tap
+  /// per 200-300ms — 7 taps fits comfortably inside 3 seconds.
+  static const Duration _windowDuration = Duration(seconds: 3);
+
+  void _onBannerTap() {
+    final now = DateTime.now();
+    // Window expired (or never started) → start a new one.
+    if (_windowStart == null ||
+        now.difference(_windowStart!) > _windowDuration) {
+      _taps = 1;
+      _windowStart = now;
+    } else {
+      _taps += 1;
+    }
+
+    final remaining = _requiredTaps - _taps;
+    if (remaining <= 0) {
+      _taps = 0;
+      _windowStart = null;
+      // Push the auth gate. We don't await — the user is already
+      // authenticated via the gate flow which has its own state.
+      Navigator.of(context).push(
+        fadeSlideRoute(const AdminAuthGate()),
+      );
+      return;
+    }
+
+    // Intentionally no feedback between taps. A counter SnackBar
+    // would make the hidden gesture discoverable (random taps would
+    // reveal "you're 4/7 in"), defeating the point of the
+    // undocumented entry-point. The admin already knows the
+    // handshake; everyone else shouldn't see anything happening.
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -31,44 +95,41 @@ class SiteInfoFooter extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // Header: logo + name.
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.center,
-                  children: [
-                    if (info.logoUrl.isNotEmpty)
-                      ClipRRect(
-                        borderRadius: BorderRadius.circular(8),
+                // Banner — horizontal header image. When set, this
+                // sits at the very top of the card and is the hit
+                // target for the hidden admin entry. The
+                // [GestureDetector] wraps the [ClipRRect] so the
+                // entire visible banner is tappable; behavior is
+                // `opaque` to swallow taps so they don't bubble up
+                // to the parent card and look like a "broken" tap
+                // target.
+                if (info.bannerUrl.isNotEmpty) ...[
+                  GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onTap: _onBannerTap,
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(8),
+                      child: AspectRatio(
+                        aspectRatio: 3,
                         child: AppNetworkImage(
-                          url: info.logoUrl,
-                          width: 48,
-                          height: 48,
+                          url: info.bannerUrl,
                           fit: BoxFit.cover,
-                        ),
-                      )
-                    else
-                      Container(
-                        width: 48,
-                        height: 48,
-                        decoration: BoxDecoration(
-                          color: scheme.primaryContainer,
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        alignment: Alignment.center,
-                        child: Icon(Icons.storefront,
-                            color: scheme.onPrimaryContainer),
-                      ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Text(
-                        info.name,
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w600,
-                          color: scheme.onSurface,
                         ),
                       ),
                     ),
-                  ],
+                  ),
+                  const SizedBox(height: 12),
+                ],
+                // Store name — plain text, no gesture detector. The
+                // hidden admin entry-point lives on the banner above
+                // (7 taps within 3 seconds).
+                Text(
+                  info.name,
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600,
+                    color: scheme.onSurface,
+                  ),
                 ),
                 if (info.description.isNotEmpty) ...[
                   const SizedBox(height: 8),

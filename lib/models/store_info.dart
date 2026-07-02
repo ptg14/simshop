@@ -10,7 +10,7 @@ class StoreInfo {
   const StoreInfo({
     this.name = 'simshop',
     this.description = '',
-    this.logoUrl = '',
+    this.bannerUrl = '',
     this.phone = '',
     this.email = '',
     this.address = '',
@@ -22,7 +22,7 @@ class StoreInfo {
   const StoreInfo.empty()
       : name = '',
         description = '',
-        logoUrl = '',
+        bannerUrl = '',
         phone = '',
         email = '',
         address = '',
@@ -31,7 +31,7 @@ class StoreInfo {
   factory StoreInfo.fromJson(Map<String, dynamic> json) => StoreInfo(
         name: (json['name'] as String?) ?? '',
         description: (json['description'] as String?) ?? '',
-        logoUrl: (json['logo_url'] as String?) ?? '',
+        bannerUrl: (json['banner_url'] as String?) ?? '',
         phone: (json['phone'] as String?) ?? '',
         email: (json['email'] as String?) ?? '',
         address: (json['address'] as String?) ?? '',
@@ -40,7 +40,10 @@ class StoreInfo {
 
   final String name;
   final String description;
-  final String logoUrl;
+
+  /// Horizontal banner image shown at the top of the home screen and
+  /// in the site-info footer. Replaced the previous square logo.
+  final String bannerUrl;
   final String phone;
   final String email;
   final String address;
@@ -55,7 +58,7 @@ class StoreInfo {
   bool get isEmpty =>
       name.isEmpty &&
       description.isEmpty &&
-      logoUrl.isEmpty &&
+      bannerUrl.isEmpty &&
       phone.isEmpty &&
       email.isEmpty &&
       address.isEmpty &&
@@ -64,7 +67,7 @@ class StoreInfo {
   StoreInfo copyWith({
     String? name,
     String? description,
-    String? logoUrl,
+    String? bannerUrl,
     String? phone,
     String? email,
     String? address,
@@ -73,7 +76,7 @@ class StoreInfo {
       StoreInfo(
         name: name ?? this.name,
         description: description ?? this.description,
-        logoUrl: logoUrl ?? this.logoUrl,
+        bannerUrl: bannerUrl ?? this.bannerUrl,
         phone: phone ?? this.phone,
         email: email ?? this.email,
         address: address ?? this.address,
@@ -83,7 +86,7 @@ class StoreInfo {
   Map<String, dynamic> toJson() => {
         'name': name,
         'description': description,
-        'logo_url': logoUrl,
+        'banner_url': bannerUrl,
         'phone': phone,
         'email': email,
         'address': address,
@@ -97,13 +100,13 @@ class StoreInfo {
           runtimeType == other.runtimeType &&
           name == other.name &&
           description == other.description &&
-          logoUrl == other.logoUrl &&
+          bannerUrl == other.bannerUrl &&
           phone == other.phone &&
           email == other.email &&
           address == other.address &&
           googleMapsUrl == other.googleMapsUrl;
 
   @override
-  int get hashCode => Object.hash(name, description, logoUrl, phone, email,
+  int get hashCode => Object.hash(name, description, bannerUrl, phone, email,
       address, googleMapsUrl);
 }

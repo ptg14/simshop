@@ -6,13 +6,10 @@ import '../utils/page_transitions.dart';
 import '../utils/responsive.dart';
 import '../viewmodels/articles_viewmodel.dart';
 import '../viewmodels/home_viewmodel.dart';
-import '../viewmodels/site_config_viewmodel.dart';
 import '../widgets/category_selector.dart';
 import '../widgets/image_carousel.dart';
 import '../widgets/product_card.dart';
-import '../widgets/search_bar.dart';
 import '../widgets/site_info_footer.dart';
-import 'admin/admin_dashboard.dart';
 import 'article_screen.dart';
 import 'product_detail_screen.dart';
 
@@ -39,36 +36,21 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  void _navigateToAdmin() {
-    Navigator.of(context).push(fadeSlideRoute(const AdminDashboard()));
-  }
-
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
+    // The AppBar has been removed by request. The browser tab title
+    // is managed by [BrowserTitleManager] at the [MyApp] level — that
+    // way the title survives navigation push/pop instead of being
+    // reset to [MaterialApp.title] every time a new screen comes
+    // to the top.
+    //
+    // Admin entry-point is intentionally not surfaced here — it lives
+    // on a hidden 7× tap on the store banner in the site info footer
+    // (see [SiteInfoFooter]). Casual users have no UI hint that admin
+    // exists; they must already know the secret handshake to open the
+    // auth gate.
     return Scaffold(
-        appBar: AppBar(
-          // On mobile the title is the editable site name (falls back to
-          // 'simshop' while the backend call is in flight). On larger
-          // viewports the suffix is preserved so the widget test still
-          // matches the literal 'simshop - Quảng Cáo'.
-          title: context.isMobile
-              ? Consumer<SiteConfigViewModel>(
-                  builder: (_, vm, __) {
-                    final name = vm.siteInfo.name;
-                    return Text(name.isEmpty ? 'simshop' : name);
-                  },
-                )
-              : const Text('simshop - Quảng Cáo'),
-          centerTitle: context.isMobile,
-          actions: [
-            IconButton(
-              icon: const Icon(Icons.admin_panel_settings),
-              tooltip: 'Quản trị',
-              onPressed: _navigateToAdmin,
-            ),
-          ],
-        ),
         body: Consumer<HomeViewModel>(
           builder: (context, viewModel, _) {
             if (viewModel.isLoading && viewModel.products.isEmpty) {
@@ -92,11 +74,18 @@ class _HomeScreenState extends State<HomeScreen> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        // Search bar
-                        ProductSearchBar(
-                          onSearch: viewModel.searchProducts,
-                          onClear: viewModel.resetSearch,
-                        ),
+                        // Top breathing room. The previous AppBar used
+                        // to give content visual separation from the
+                        // status bar; without it the carousel butts up
+                        // against the top edge. A small responsive
+                        // spacer restores that gap (slightly larger on
+                        // tablet/desktop where the carousel is taller
+                        // and the screen has more vertical real estate).
+                        SizedBox(height: context.responsive<double>(
+                          mobile: 12,
+                          tablet: 20,
+                          desktop: 24,
+                        )),
                         // Promotional banner carousel. Pulled from the
                         // backend via ArticlesViewModel; each slide carries
                         // an articleId which the tap handler opens via
@@ -117,7 +106,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                 if (articleId == null || articleId.isEmpty) {
                                   ScaffoldMessenger.of(context).showSnackBar(
                                     const SnackBar(
-                                      content: Text('Bài viết chưa được gắn vào banner này'),
+                                      content: Text('Không có bài viết'),
                                     ),
                                   );
                                   return;
@@ -150,11 +139,30 @@ class _HomeScreenState extends State<HomeScreen> {
                               builder: (context, constraints) {
                                 final crossAxisCount = context.gridColumns;
                                 final spacing = context.gridSpacing;
-                                final aspect = context.responsive<double>(
-                                  mobile: 0.58,
-                                  tablet: 0.62,
-                                  desktop: 0.65,
-                                );
+// Card layout: a fixed-`mainAxisExtent` [GridView] sized so
+                                // each cell is exactly the height of
+                                // the worst-case product card (image +
+                                // name + options + categories + price
+                                // + button) on the current breakpoint.
+                                // That way every card sits flush at the
+                                // top and bottom of its cell — no
+                                // blank strip under the "Xem chi tiết"
+                                // button, and no cards offset relative
+                                // to each other.
+                                //
+                                // `mainAxisExtent` (height in dp) is
+                                // used instead of `childAspectRatio`
+                                // (width/height) because the cell width
+                                // depends on the viewport, which makes
+                                // aspect ratios fragile across
+                                // orientation changes (phone landscape,
+                                // iPad portrait/landscape). [ProductCard]
+                                // uses placeholder [SizedBox]es when
+                                // options/categories are missing so the
+                                // price + button baseline still match
+                                // cards with all fields.
+                                final cellHeight =
+                                    context.productCardHeight;
 
                                 return GridView.builder(
                                   shrinkWrap: true,
@@ -166,7 +174,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                   gridDelegate:
                                       SliverGridDelegateWithFixedCrossAxisCount(
                                     crossAxisCount: crossAxisCount,
-                                    childAspectRatio: aspect,
+                                    mainAxisExtent: cellHeight,
                                     crossAxisSpacing: spacing,
                                     mainAxisSpacing: spacing,
                                   ),
@@ -175,8 +183,9 @@ class _HomeScreenState extends State<HomeScreen> {
                                     final product = viewModel.products[index];
                                     return ProductCard(
                                       product: product,
-                                      onTap: () =>
-                                          _navigateToProductDetail(product),
+                                      onTap: () => _navigateToProductDetail(
+                                        product,
+                                      ),
                                     );
                                   },
                                 );
@@ -215,15 +224,9 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
             const SizedBox(height: 8),
             Text(
-              'Hãy thử bỏ bộ lọc hoặc tìm với từ khoá khác',
+              'Hãy thử chọn danh mục khác',
               style: TextStyle(color: scheme.onSurfaceVariant),
               textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 24),
-            FilledButton.icon(
-              onPressed: () => viewModel.resetSearch(),
-              icon: const Icon(Icons.refresh),
-              label: const Text('Xóa bộ lọc'),
             ),
           ],
         ),
