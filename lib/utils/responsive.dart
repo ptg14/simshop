@@ -120,17 +120,27 @@ extension ResponsiveContext on BuildContext {
   }
 
   /// Responsive image height for product cards.
+  ///
+  /// Sized so the image takes roughly half of the card's vertical
+  /// real estate on the narrowest supported phone (iPhone SE at
+  /// 320×568), leaving room for the info block below (name +
+  /// options row + categories row + price + button).
+  ///
+  /// History: this was 100/150/180 when the spec row was still in
+  /// the card; once the spec row was removed and the image was
+  /// switched to [BoxFit.contain] (so customers can see the full
+  /// product, not a crop), the image grew to 140/210/250.
   double get productCardImageHeight {
-    if (isDesktop) return 180;
-    if (isTablet) return 150;
-    return 120;
+    if (isDesktop) return 250;
+    if (isTablet) return 210;
+    return 140;
   }
 
   /// Responsive font size for product card name.
   double get productCardNameFontSize {
     if (isDesktop) return 15;
     if (isTablet) return 14;
-    return 13;
+    return 12;
   }
 
   /// Responsive font size for product card price.
@@ -144,7 +154,7 @@ extension ResponsiveContext on BuildContext {
   EdgeInsets get productCardPadding {
     if (isDesktop) return const EdgeInsets.all(14);
     if (isTablet) return const EdgeInsets.all(12);
-    return const EdgeInsets.all(10);
+    return const EdgeInsets.all(8);
   }
 
   /// Responsive button height for product card.
@@ -195,6 +205,39 @@ extension ResponsiveContext on BuildContext {
         mobile: 250,
         tablet: 350,
         desktop: 450,
+      );
+
+  /// Responsive cell height for the product grid in dp. Used as the
+  /// `mainAxisExtent` of the [SliverGridDelegate] so the cell
+  /// height is *exactly* (image + info content) for the worst-case
+  /// product on each breakpoint — no blank strip below the button.
+  ///
+  /// We picked `mainAxisExtent` over `childAspectRatio` because
+  /// the card's intrinsic height is dominated by the image (140 /
+  /// 210 / 250 dp) plus ~170 / ~190 / ~205 dp of info content. The
+  /// cell width depends on the viewport (and orientation), so an
+  /// aspect ratio would have to track every (width × breakpoint)
+  /// combination separately — mainAxisExtent just expresses the
+  /// target height directly.
+  ///
+  /// Derivation (mobile / tablet / desktop):
+  ///   image height:        140 / 210 / 250 dp
+  ///   info (worst case):
+  ///     name (2 lines):    ~31 / ~36 / ~39 dp
+  ///     + 6 gap + ~22 options + 6 + ~20 categories
+  ///     + 8 + ~24 price + 8 + 36/38/40 button
+  ///     + 16 / 24 / 28 vertical padding
+  ///   total ≈ 311 / 398 / 455 dp
+  ///
+  /// Products missing options/categories use the same-size
+  /// placeholder [SizedBox] in [ProductCard] so the price+button
+  /// baseline matches cards with all fields — and because every
+  /// card sits inside the same cell, no card is visibly shorter
+  /// than another.
+  double get productCardHeight => responsive<double>(
+        mobile: 311,
+        tablet: 398,
+        desktop: 455,
       );
 
   /// Whether to show a bottom navigation bar (mobile) vs side rail.
