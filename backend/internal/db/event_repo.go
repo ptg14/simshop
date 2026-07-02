@@ -15,12 +15,30 @@ import (
 // narrow (one type) so the handlers can stay thin — only
 // computeEffectivePrice in event_handler.go carries business logic.
 type EventRepo struct {
-	db *sql.DB
+	db      *sql.DB
+	dialect Dialect
 }
 
 // NewEventRepo constructs a repo bound to the given DB.
-func NewEventRepo(db *sql.DB) *EventRepo {
-	return &EventRepo{db: db}
+// The dialect is used to rewrite ? placeholders and to select
+// the JSONB-containment vs LIKE match for product_ids.
+func NewEventRepo(db *sql.DB, dialect Dialect) *EventRepo {
+	return &EventRepo{db: db, dialect: dialect}
+}
+
+// exec is the dialect-aware Exec wrapper used by every method below.
+func (r *EventRepo) exec(query string, args ...any) (sql.Result, error) {
+	return r.db.Exec(r.dialect.Rebind(query), args...)
+}
+
+// query is the dialect-aware Query wrapper.
+func (r *EventRepo) query(query string, args ...any) (*sql.Rows, error) {
+	return r.db.Query(r.dialect.Rebind(query), args...)
+}
+
+// queryRow is the dialect-aware QueryRow wrapper.
+func (r *EventRepo) queryRow(query string, args ...any) *sql.Row {
+	return r.db.QueryRow(r.dialect.Rebind(query), args...)
 }
 
 // Create inserts a new event. created_at is stamped server-side if
@@ -41,7 +59,7 @@ func (r *EventRepo) Create(e models.Event) (models.Event, error) {
 	if e.EndTime != nil {
 		endTime = *e.EndTime
 	}
-	if _, err := r.db.Exec(
+	if _, err := r.exec(
 		`INSERT INTO events (id, name, end_time, discount_type, discount_value, product_ids, created_at)
 		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
 		e.ID, e.Name, endTime, string(e.DiscountType), e.DiscountValue, string(productJSON), e.CreatedAt,
@@ -66,7 +84,7 @@ func (r *EventRepo) Update(id string, e models.Event) (models.Event, error) {
 	if e.EndTime != nil {
 		endTime = *e.EndTime
 	}
-	res, err := r.db.Exec(
+	res, err := r.exec(
 		`UPDATE events
 		 SET name = ?, end_time = ?, discount_type = ?, discount_value = ?, product_ids = ?
 		 WHERE id = ?`,
@@ -90,7 +108,7 @@ func (r *EventRepo) Update(id string, e models.Event) (models.Event, error) {
 // Delete removes the row with the given id. Returns sql.ErrNoRows
 // if the id does not exist (so the handler can return 404).
 func (r *EventRepo) Delete(id string) error {
-	res, err := r.db.Exec(`DELETE FROM events WHERE id = ?`, id)
+	res, err := r.exec(`DELETE FROM events WHERE id = ?`, id)
 	if err != nil {
 		log.Printf("delete event %s: %v", id, err)
 		return err
@@ -114,7 +132,7 @@ func (r *EventRepo) Get(id string) (models.Event, error) {
 	var endTime sql.NullInt64
 	var productJSON string
 	var discountType string
-	err := r.db.QueryRow(
+	err := r.queryRow(
 		`SELECT id, name, end_time, discount_type, discount_value, product_ids, created_at
 		 FROM events WHERE id = ?`, id,
 	).Scan(&e.ID, &e.Name, &endTime, &discountType, &e.DiscountValue, &productJSON, &e.CreatedAt)
@@ -143,7 +161,7 @@ func (r *EventRepo) Get(id string) (models.Event, error) {
 // "Đã hết hạn" badge. Live filtering happens in
 // ListActiveEventsForProduct.
 func (r *EventRepo) List() ([]models.Event, error) {
-	rows, err := r.db.Query(
+	rows, err := r.query(
 		`SELECT id, name, end_time, discount_type, discount_value, product_ids, created_at
 		 FROM events ORDER BY created_at DESC, id ASC`,
 	)
@@ -184,21 +202,33 @@ func (r *EventRepo) List() ([]models.Event, error) {
 //   - applies to [productID] (product_id appears in product_ids JSON)
 //   - has not expired by [now] (end_time NULL OR end_time > now)
 //
-// product_ids is stored as JSON like ["p1","p2","p3"], so the
-// cheapest portable lookup is a LIKE match on the quoted form of
-// the id — correct because product IDs are short alphanumeric
-// strings the admin UI mints, never containing JSON metacharacters.
-// We also enforce that the LIKE match sits between JSON brackets
-// ("...") so that searching for "p1" doesn't accidentally match
-// "p10" or "p11".
+// Dialect split:
+//   - Postgres: the column is JSONB, so we use the @> containment
+//     operator with a jsonb_build_array(?::text) sentinel. Fast
+//     (GIN-indexed) and unambiguous.
+//   - SQLite: the column is TEXT, so LIKE on the JSON-quoted form
+//     is the cheapest portable lookup. Correct because product IDs
+//     are short alphanumeric strings the admin UI mints, never
+//     containing JSON metacharacters.
+//
+// Either path leaves defense-in-depth: every match also has to
+// verify that the decoded ProductIDs slice actually contains
+// productID (catches the rare case where a LIKE substring match
+// happens to land inside a JSON-stringified different id).
 func (r *EventRepo) ListActiveEventsForProduct(productID string, now int64) ([]models.Event, error) {
-	needle := fmt.Sprintf("%q", productID) // JSON-encoded string literal
-	rows, err := r.db.Query(
+	// The placeholder for the product id appears in both the
+	// Postgres JSONB fragment and the SQLite LIKE pattern. The
+	// dialect helper returns the fragment with our `?` placeholder
+	// (which Rebind will rewrite to $N on Postgres), and
+	// ProductIDsJSONArrayLiteral returns the value to bind.
+	productLiteral := r.dialect.ProductIDsJSONArrayLiteral(productID)
+	containsFrag := r.dialect.ProductIDsContains("?")
+	rows, err := r.query(
 		`SELECT id, name, end_time, discount_type, discount_value, product_ids, created_at
 		 FROM events
 		 WHERE (end_time IS NULL OR end_time > ?)
-		   AND product_ids LIKE ?`,
-		now, "%"+needle+"%",
+		   AND `+containsFrag,
+		now, productLiteral,
 	)
 	if err != nil {
 		return nil, err
@@ -225,11 +255,8 @@ func (r *EventRepo) ListActiveEventsForProduct(productID string, now int64) ([]m
 		if err := json.Unmarshal([]byte(productJSON), &e.ProductIDs); err != nil {
 			return nil, err
 		}
-		// Defense-in-depth: even after the LIKE match, verify the
-		// exact id is in the decoded slice. Catches the rare case
-		// where a substring of a different id happens to contain
-		// our quoted needle (vanishingly unlikely with short
-		// generated IDs, but the cost is one slice scan).
+		// Defense-in-depth: even after the LIKE/@> match, verify
+		// the exact id is in the decoded slice.
 		if !containsString(e.ProductIDs, productID) {
 			continue
 		}

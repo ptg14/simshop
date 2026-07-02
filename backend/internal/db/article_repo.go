@@ -12,12 +12,30 @@ import (
 // ArticleRepo persists articles and banner slides. It is intentionally
 // separate from ProductRepo to keep the surface narrow.
 type ArticleRepo struct {
-	db *sql.DB
+	db      *sql.DB
+	dialect Dialect
 }
 
 // NewArticleRepo constructs a repo bound to the given DB.
-func NewArticleRepo(db *sql.DB) *ArticleRepo {
-	return &ArticleRepo{db: db}
+// The dialect is used to rewrite ? placeholders to $N when running
+// on Postgres; SQLite calls pass through unchanged.
+func NewArticleRepo(db *sql.DB, dialect Dialect) *ArticleRepo {
+	return &ArticleRepo{db: db, dialect: dialect}
+}
+
+// exec is the dialect-aware Exec wrapper used by every method below.
+func (r *ArticleRepo) exec(query string, args ...any) (sql.Result, error) {
+	return r.db.Exec(r.dialect.Rebind(query), args...)
+}
+
+// query is the dialect-aware Query wrapper.
+func (r *ArticleRepo) query(query string, args ...any) (*sql.Rows, error) {
+	return r.db.Query(r.dialect.Rebind(query), args...)
+}
+
+// queryRow is the dialect-aware QueryRow wrapper.
+func (r *ArticleRepo) queryRow(query string, args ...any) *sql.Row {
+	return r.db.QueryRow(r.dialect.Rebind(query), args...)
 }
 
 // ---------- Banner slides ----------
@@ -25,7 +43,7 @@ func NewArticleRepo(db *sql.DB) *ArticleRepo {
 // ListBanners returns every banner slide ordered by ord, then by id
 // for stability when two slides share the same ord.
 func (r *ArticleRepo) ListBanners() ([]models.BannerSlide, error) {
-	rows, err := r.db.Query(
+	rows, err := r.query(
 		`SELECT id, image_url, title, subtitle, ord, article_id
 		 FROM banner_slides
 		 ORDER BY ord ASC, id ASC`,
@@ -59,7 +77,7 @@ func (r *ArticleRepo) CreateBanner(b models.BannerSlide) (models.BannerSlide, er
 	if b.ArticleID != nil {
 		articleID = *b.ArticleID
 	}
-	_, err := r.db.Exec(
+	_, err := r.exec(
 		`INSERT INTO banner_slides (id, image_url, title, subtitle, ord, article_id)
 		 VALUES (?, ?, ?, ?, ?, ?)`,
 		b.ID, b.ImageURL, b.Title, b.Subtitle, b.Ord, articleID,
@@ -77,7 +95,7 @@ func (r *ArticleRepo) UpdateBanner(id string, b models.BannerSlide) (models.Bann
 	if b.ArticleID != nil {
 		articleID = *b.ArticleID
 	}
-	res, err := r.db.Exec(
+	res, err := r.exec(
 		`UPDATE banner_slides
 		 SET image_url = ?, title = ?, subtitle = ?, ord = ?, article_id = ?
 		 WHERE id = ?`,
@@ -100,7 +118,7 @@ func (r *ArticleRepo) UpdateBanner(id string, b models.BannerSlide) (models.Bann
 // DeleteBanner removes the row with the given id. Returns
 // sql.ErrNoRows if the id does not exist.
 func (r *ArticleRepo) DeleteBanner(id string) error {
-	res, err := r.db.Exec(`DELETE FROM banner_slides WHERE id = ?`, id)
+	res, err := r.exec(`DELETE FROM banner_slides WHERE id = ?`, id)
 	if err != nil {
 		return err
 	}
@@ -129,7 +147,7 @@ func (r *ArticleRepo) CreateArticle(a models.Article) (models.Article, error) {
 	if err != nil {
 		return a, err
 	}
-	_, err = r.db.Exec(
+	_, err = r.exec(
 		`INSERT INTO articles (id, title, body_markdown, cover_image_url, product_ids, created_at)
 		 VALUES (?, ?, ?, ?, ?, ?)`,
 		a.ID, a.Title, a.BodyMarkdown, a.CoverImageURL, string(productJSON), a.CreatedAt,
@@ -150,7 +168,7 @@ func (r *ArticleRepo) UpdateArticle(id string, a models.Article) (models.Article
 	if err != nil {
 		return a, err
 	}
-	res, err := r.db.Exec(
+	res, err := r.exec(
 		`UPDATE articles
 		 SET title = ?, body_markdown = ?, cover_image_url = ?, product_ids = ?
 		 WHERE id = ?`,
@@ -173,7 +191,7 @@ func (r *ArticleRepo) UpdateArticle(id string, a models.Article) (models.Article
 // DeleteArticle removes the row. Any banner_slides referencing this
 // article have their article_id set to NULL via the FK action.
 func (r *ArticleRepo) DeleteArticle(id string) error {
-	res, err := r.db.Exec(`DELETE FROM articles WHERE id = ?`, id)
+	res, err := r.exec(`DELETE FROM articles WHERE id = ?`, id)
 	if err != nil {
 		return err
 	}
@@ -192,7 +210,7 @@ func (r *ArticleRepo) DeleteArticle(id string) error {
 func (r *ArticleRepo) GetArticle(id string) (models.Article, error) {
 	var a models.Article
 	var productJSON string
-	err := r.db.QueryRow(
+	err := r.queryRow(
 		`SELECT id, title, body_markdown, cover_image_url, product_ids, created_at
 		 FROM articles WHERE id = ?`, id,
 	).Scan(&a.ID, &a.Title, &a.BodyMarkdown, &a.CoverImageURL, &productJSON, &a.CreatedAt)
@@ -213,7 +231,7 @@ func (r *ArticleRepo) GetArticle(id string) (models.Article, error) {
 
 // ListArticles returns every article, newest first.
 func (r *ArticleRepo) ListArticles() ([]models.Article, error) {
-	rows, err := r.db.Query(
+	rows, err := r.query(
 		`SELECT id, title, body_markdown, cover_image_url, product_ids, created_at
 		 FROM articles ORDER BY created_at DESC, id ASC`,
 	)
