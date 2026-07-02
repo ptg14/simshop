@@ -134,7 +134,6 @@ class AdminCategoriesScreen extends StatelessWidget {
           autofocus: true,
           decoration: const InputDecoration(
             labelText: 'Tên danh mục lớn',
-            hintText: 'VD: Thời trang, Điện tử, ...',
           ),
         ),
         actions: [

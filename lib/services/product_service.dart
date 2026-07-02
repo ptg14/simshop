@@ -6,6 +6,8 @@ import 'package:image_picker/image_picker.dart';
 
 import '../models/category.dart';
 import '../models/product.dart';
+import '_http_with_admin_token.dart';
+import 'admin_auth_service.dart';
 
 /// Response wrapper for paginated product list from backend.
 class ProductListResponse {
@@ -40,10 +42,9 @@ abstract class IProductService {
   Future<List<Product>> getAllProducts();
   Future<List<Product>> getProductsByCategory(String category);
   Future<Product> getProductById(String id);
-  Future<List<String>> getCategories();
-  Future<void> createCategory(String name);
-  Future<void> deleteCategory(String name);
   Future<List<Product>> searchProducts(String query);
+  /// Delete a sub-category by name. Used by the admin "Categories" tab.
+  Future<void> deleteCategory(String name);
 
   // ---- Large / parent categories ----
   /// Fetch the list of "Large" (parent) category names.
@@ -98,10 +99,15 @@ abstract class IProductService {
 /// Real implementation that talks to the Go backend API.
 class RealProductService implements IProductService {
 
-  RealProductService({String? baseUrl})
-      : _baseUrl = baseUrl ?? 'http://localhost:8080';
+  RealProductService({String? baseUrl, IAdminAuthService? authService})
+      : _baseUrl = baseUrl ?? 'http://localhost:8080',
+        _auth = authService;
   // Base URL of the backend. Adjust if the backend runs on a different host/port.
   final String _baseUrl;
+  // Optional auth service — when present, admin write endpoints attach
+  // `Authorization: Bearer <token>`. Optional so unit tests can
+  // construct the service without a SharedPreferences dependency.
+  final IAdminAuthService? _auth;
 
   Uri _productsUri() => Uri.parse('$_baseUrl/api/products');
   Uri _productUri(String id) => Uri.parse('$_baseUrl/api/products/$id');
@@ -185,42 +191,13 @@ class RealProductService implements IProductService {
     );
   }
 
-  @override
-  Future<List<String>> getCategories() async {
-    // Prefer backend categories endpoint if available.
-    final uri = Uri.parse('$_baseUrl/api/categories');
-    final response = await http.get(uri);
-    if (response.statusCode == 200) {
-      final data = json.decode(response.body) as Map<String, dynamic>;
-      if (data['categories'] != null) {
-        return (data['categories'] as List<dynamic>)
-            .map((e) => e as String)
-            .toList();
-      }
-    }
-    // Fallback: derive categories from products
-    final products = await getAllProducts();
-    return products.map((p) => p.category).toSet().toList();
-  }
-
-  /// Create a new category via backend.
-  @override
-  Future<void> createCategory(String name) async {
-    final uri = Uri.parse('$_baseUrl/api/categories');
-    final response = await http.post(uri,
-        headers: {'Content-Type': 'application/json'},
-        body: json.encode({'name': name}));
-    if (response.statusCode != 201 && response.statusCode != 200) {
-      throw Exception('Failed to create category: ${response.statusCode}');
-    }
-  }
-
-  /// Delete a category via backend.
+  /// Delete a sub-category via backend. Used by the admin Categories tab.
   @override
   Future<void> deleteCategory(String name) async {
     final uri =
         Uri.parse('$_baseUrl/api/categories/${Uri.encodeComponent(name)}');
-    final response = await http.delete(uri);
+    final response = await http.delete(uri,
+        headers: await withAdminAuth(_auth, const {}));
     if (response.statusCode != 204 && response.statusCode != 200) {
       throw Exception('Failed to delete category: ${response.statusCode}');
     }
@@ -259,8 +236,12 @@ class RealProductService implements IProductService {
   @override
   Future<void> createLargeCategory(String name) async {
     final uri = Uri.parse('$_baseUrl/api/large-categories');
+    final headers = await withAdminAuth(
+      _auth,
+      const {'Content-Type': 'application/json'},
+    );
     final response = await http.post(uri,
-        headers: {'Content-Type': 'application/json'},
+        headers: headers,
         body: json.encode({'name': name}));
     if (response.statusCode != 201 && response.statusCode != 200) {
       throw Exception('Failed to create large category: ${response.statusCode}');
@@ -271,7 +252,8 @@ class RealProductService implements IProductService {
   Future<void> deleteLargeCategory(String name) async {
     final uri = Uri.parse(
         '$_baseUrl/api/large-categories/${Uri.encodeComponent(name)}');
-    final response = await http.delete(uri);
+    final response = await http.delete(uri,
+        headers: await withAdminAuth(_auth, const {}));
     if (response.statusCode != 204 && response.statusCode != 200) {
       throw Exception('Failed to delete large category: ${response.statusCode}');
     }
@@ -281,8 +263,12 @@ class RealProductService implements IProductService {
   Future<void> createCategoryWithParent(
       String name, String largeCategoryName) async {
     final uri = Uri.parse('$_baseUrl/api/categories');
+    final headers = await withAdminAuth(
+      _auth,
+      const {'Content-Type': 'application/json'},
+    );
     final response = await http.post(uri,
-        headers: {'Content-Type': 'application/json'},
+        headers: headers,
         body: json.encode({
           'name': name,
           'large_category': largeCategoryName,
@@ -309,7 +295,9 @@ class RealProductService implements IProductService {
 
   @override
   Future<void> deleteProduct(String id) async {
-    final response = await http.delete(_productUri(id));
+    final response = await http.delete(_productUri(id),
+        headers: await withAdminAuth(_auth, const {}));
+    await detectAdminSessionExpiry(_auth, response);
     if (response.statusCode != 204 && response.statusCode != 200) {
       throw Exception('Failed to delete product $id: ${response.statusCode}');
     }
@@ -317,11 +305,16 @@ class RealProductService implements IProductService {
 
   @override
   Future<Product> createProduct(Product product) async {
+    final headers = await withAdminAuth(
+      _auth,
+      const {'Content-Type': 'application/json'},
+    );
     final response = await http.post(
       _productsUri(),
-      headers: {'Content-Type': 'application/json'},
+      headers: headers,
       body: json.encode(product.toJson()),
     );
+    await detectAdminSessionExpiry(_auth, response);
     if (response.statusCode != 201 && response.statusCode != 200) {
       final body = response.body.isNotEmpty ? response.body : 'Unknown error';
       throw Exception('Failed to create product: $body');
@@ -333,11 +326,20 @@ class RealProductService implements IProductService {
 
   @override
   Future<Product> updateProduct(String id, Product product) async {
+    final headers = await withAdminAuth(
+      _auth,
+      const {'Content-Type': 'application/json'},
+    );
     final response = await http.put(
       _productUri(id),
-      headers: {'Content-Type': 'application/json'},
+      headers: headers,
       body: json.encode(product.toJson()),
     );
+    // Detect a stale cached token (server restart, TTL elapsed, etc.)
+    // and surface a typed exception so the UI can route the user
+    // back to AdminAuthGate. Done before the generic status check so
+    // the message is unambiguous.
+    await detectAdminSessionExpiry(_auth, response);
     if (response.statusCode != 200 && response.statusCode != 204) {
       final body = response.body.isNotEmpty ? response.body : 'Unknown error';
       throw Exception('Failed to update product $id: $body');
@@ -356,6 +358,7 @@ class RealProductService implements IProductService {
   }) async {
     final request = http.MultipartRequest('POST', _uploadUri());
     _applyNamingContext(request, productName, productId, startIndex);
+    await attachAdminAuth(_auth, request);
 
     if (file is File) {
       request.files.add(await http.MultipartFile.fromPath('image', file.path));
@@ -398,6 +401,7 @@ class RealProductService implements IProductService {
   }) async {
     final request = http.MultipartRequest('POST', _uploadUri());
     _applyNamingContext(request, productName, productId, startIndex);
+    await attachAdminAuth(_auth, request);
     for (final file in files) {
       if (file is File) {
         request.files
