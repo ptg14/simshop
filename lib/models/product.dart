@@ -41,11 +41,16 @@ class Product {
                 .toList()
             : [],
         category: json['category'] as String,
-        categories: json['categories'] != null
-            ? (json['categories'] as List<dynamic>)
-                .map((e) => e as String)
-                .toList()
-            : (json['category'] != null ? [json['category'] as String] : []),
+        // `categories`: explicit empty list (e.g. admin cleared every
+// category) takes precedence over the legacy `category` fallback.
+// If the backend omits `categories` entirely (older API responses)
+// we synthesize the singular `category` so legacy products still
+// show up in the picker / on the card.
+categories: json.containsKey('categories') && json['categories'] != null
+    ? (json['categories'] as List<dynamic>)
+        .map((e) => e as String)
+        .toList()
+    : (json['category'] != null ? [json['category'] as String] : []),
         storeId: json['store_id'] as String?,
         rating: (json['rating'] as num).toDouble(),
         reviews: json['reviews'] as int?,
@@ -111,6 +116,12 @@ class Product {
   bool get isOnSale =>
       (originalPrice != null && originalPrice! > price) ||
       currentEvent != null;
+
+  /// True when stock is explicitly zero. `null` (unknown stock)
+  /// counts as *in stock* so we never falsely mark a product as
+  /// unavailable just because the backend omits the field. Keep this
+  /// behaviour in sync with [ProductCard]'s badge logic.
+  bool get isOutOfStock => (stock ?? 1) == 0;
 
   /// Calculate discount percentage.
   int get discountPercentage {
