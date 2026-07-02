@@ -231,45 +231,62 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                       /// category the admin just removed, and show a
                       /// stray pink pill on the detail page.
                       ///
+                      /// When the list is empty we skip the whole
+                      /// block (pill row *and* its trailing spacer)
+                      /// so no empty frame is left between the
+                      /// carousel and the next section.
+                      ///
+                      /// Each entry is also `.trim()`-checked —
+                      /// guards against a stale API payload that
+                      /// synthesized `[""]` from a blank legacy
+                      /// `category` field (see [Product.fromJson]
+                      /// for the upstream filter). The model
+                      /// already strips empties, but if a future
+                      /// backend ships raw data this stays safe.
+                      ///
                       /// [Wrap] lets multiple pills flow onto a
                       /// second row instead of overflowing the card
-                      /// edge. When the list is empty the [Wrap]
-                      /// renders no children — no leftover pill.
-                      Wrap(
-                        spacing: 6,
-                        runSpacing: 6,
-                        children: product.categories
-                            .map((cat) => Container(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 12,
-                                    vertical: 6,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    color: scheme.secondaryContainer,
-                                    borderRadius: BorderRadius.circular(999),
-                                  ),
-                                  child: Text(
-                                    cat,
-                                    style: TextStyle(
-                                      color: scheme.onSecondaryContainer,
-                                      fontWeight: FontWeight.w500,
-                                      fontSize: context.responsive<double>(
-                                        mobile: 12,
-                                        tablet: 13,
-                                        desktop: 14,
+                      /// edge.
+                      if (product.categories
+                          .any((c) => c.trim().isNotEmpty)) ...[
+                        Wrap(
+                          spacing: 6,
+                          runSpacing: 6,
+                          children: product.categories
+                              .where((c) => c.trim().isNotEmpty)
+                              .map((cat) => Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 12,
+                                      vertical: 6,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: scheme.secondaryContainer,
+                                      borderRadius:
+                                          BorderRadius.circular(999),
+                                    ),
+                                    child: Text(
+                                      cat,
+                                      style: TextStyle(
+                                        color: scheme.onSecondaryContainer,
+                                        fontWeight: FontWeight.w500,
+                                        fontSize: context.responsive<double>(
+                                          mobile: 12,
+                                          tablet: 13,
+                                          desktop: 14,
+                                        ),
                                       ),
                                     ),
-                                  ),
-                                ))
-                            .toList(),
-                      ),
+                                  ))
+                              .toList(),
+                        ),
 
-                      SizedBox(
-                          height: context.responsive<double>(
-                        mobile: 12,
-                        tablet: 16,
-                        desktop: 20,
-                      )),
+                        SizedBox(
+                            height: context.responsive<double>(
+                          mobile: 12,
+                          tablet: 16,
+                          desktop: 20,
+                        )),
+                      ],
 
                       /// Option selector — only rendered when the
                       /// product actually has variants. Tapping a
@@ -597,8 +614,12 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                       ///   2. configured address -> launch directions
                       ///      URL with the address as destination
                       ///   3. both empty -> no button
-                      /// Label is always the address so the user sees
-                      /// where they're going regardless of tier.
+                      ///
+                      /// The "Mua trực tiếp tại:" caption sits OUTSIDE
+                      /// the button so the button itself shows only
+                      /// the destination (the address, with a place
+                      /// icon). When only googleMapsUrl is configured
+                      /// the button falls back to "cửa hàng".
                       Consumer<SiteConfigViewModel>(
                         builder: (context, vm, _) {
                           final info = vm.siteInfo;
@@ -606,19 +627,40 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                           if (url.isEmpty) {
                             return const SizedBox.shrink();
                           }
-                          return SizedBox(
-                            key: const Key('buy-at-store-cta'),
-                            width: double.infinity,
-                            height: context.responsive<double>(
-                              mobile: 56,
-                              tablet: 52,
-                              desktop: 48,
-                            ),
-                            child: FilledButton.icon(
-                              onPressed: () => _openMap(url),
-                              icon: const Icon(Icons.place_outlined),
-                              label: Text(info.address),
-                            ),
+                          final addressLine = info.address.isNotEmpty
+                              ? info.address
+                              : 'cửa hàng';
+                          return Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'Mua trực tiếp tại:',
+                                style: TextStyle(
+                                  fontWeight: FontWeight.w600,
+                                  fontSize: context.responsive<double>(
+                                    mobile: 14,
+                                    tablet: 15,
+                                    desktop: 16,
+                                  ),
+                                  color: scheme.onSurface,
+                                ),
+                              ),
+                              const SizedBox(height: 8),
+                              SizedBox(
+                                key: const Key('buy-at-store-cta'),
+                                width: double.infinity,
+                                height: context.responsive<double>(
+                                  mobile: 56,
+                                  tablet: 52,
+                                  desktop: 48,
+                                ),
+                                child: FilledButton.icon(
+                                  onPressed: () => _openMap(url),
+                                  icon: const Icon(Icons.place_outlined),
+                                  label: Text(addressLine),
+                                ),
+                              ),
+                            ],
                           );
                         },
                       ),
