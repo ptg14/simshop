@@ -46,11 +46,20 @@ class Product {
 // If the backend omits `categories` entirely (older API responses)
 // we synthesize the singular `category` so legacy products still
 // show up in the picker / on the card.
-categories: json.containsKey('categories') && json['categories'] != null
-    ? (json['categories'] as List<dynamic>)
-        .map((e) => e as String)
-        .toList()
-    : (json['category'] != null ? [json['category'] as String] : []),
+//
+// Empty / whitespace-only entries are filtered out so an admin that
+// saved a blank legacy `category` field doesn't render as a stray
+// empty pill on the product card or detail page.
+categories: () {
+          final Iterable<String> raw =
+              json.containsKey('categories') && json['categories'] != null
+                  ? (json['categories'] as List<dynamic>)
+                      .map((e) => e as String)
+                  : (json['category'] != null
+                      ? <String>[json['category'] as String]
+                      : const <String>[]);
+          return raw.where((c) => c.trim().isNotEmpty).toList();
+        }(),
         storeId: json['store_id'] as String?,
         rating: (json['rating'] as num).toDouble(),
         reviews: json['reviews'] as int?,
