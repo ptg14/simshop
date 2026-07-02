@@ -1,6 +1,8 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import '../models/store_info.dart';
+import '_http_with_admin_token.dart';
+import 'admin_auth_service.dart';
 
 /// Service for the singleton site config (identity + branding).
 ///
@@ -17,10 +19,15 @@ abstract class IStoreService {
 }
 
 class RealStoreService implements IStoreService {
-  RealStoreService({String? baseUrl})
-      : _baseUrl = baseUrl ?? 'http://localhost:8080';
+  RealStoreService({String? baseUrl, IAdminAuthService? authService})
+      : _baseUrl = baseUrl ?? 'http://localhost:8080',
+        _auth = authService;
 
   final String _baseUrl;
+  // Optional — when present, admin write endpoints (PUT store-info)
+  // attach the bearer token. Optional so unit tests don't need a
+  // SharedPreferences dependency.
+  final IAdminAuthService? _auth;
 
   Uri _storeInfoUri() => Uri.parse('$_baseUrl/api/store-info');
 
@@ -42,9 +49,13 @@ class RealStoreService implements IStoreService {
 
   @override
   Future<StoreInfo> updateStoreInfo(StoreInfo info) async {
+    final headers = await withAdminAuth(
+      _auth,
+      const {'Content-Type': 'application/json'},
+    );
     final response = await http.put(
       _storeInfoUri(),
-      headers: {'Content-Type': 'application/json'},
+      headers: headers,
       body: json.encode(info.toJson()),
     );
     if (response.statusCode != 200) {

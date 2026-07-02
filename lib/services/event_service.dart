@@ -2,6 +2,8 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 
 import '../models/event.dart';
+import '_http_with_admin_token.dart';
+import 'admin_auth_service.dart';
 
 /// Contract for the events feature (time-boxed promotions).
 ///
@@ -27,12 +29,18 @@ abstract class IEventService {
 
 /// Real implementation that talks to the Go backend.
 class RealEventService implements IEventService {
-  RealEventService({String? baseUrl, http.Client? client})
-      : _baseUrl = baseUrl ?? 'http://localhost:8080',
-        _client = client ?? http.Client();
+  RealEventService({
+    String? baseUrl,
+    http.Client? client,
+    IAdminAuthService? authService,
+  })  : _baseUrl = baseUrl ?? 'http://localhost:8080',
+        _client = client ?? http.Client(),
+        _auth = authService;
 
   final String _baseUrl;
   final http.Client _client;
+  // Optional — admin write endpoints attach the bearer token when set.
+  final IAdminAuthService? _auth;
 
   Uri _listUri() => Uri.parse('$_baseUrl/api/events');
   Uri _itemUri(String id) => Uri.parse('$_baseUrl/api/events/$id');
@@ -56,9 +64,13 @@ class RealEventService implements IEventService {
 
   @override
   Future<Event> createEvent(Event event) async {
+    final headers = await withAdminAuth(
+      _auth,
+      const {'Content-Type': 'application/json'},
+    );
     final response = await _client.post(
       _listUri(),
-      headers: const {'Content-Type': 'application/json'},
+      headers: headers,
       body: json.encode(event.toJson()),
     );
     final body = _decode(response);
@@ -67,9 +79,13 @@ class RealEventService implements IEventService {
 
   @override
   Future<Event> updateEvent(Event event) async {
+    final headers = await withAdminAuth(
+      _auth,
+      const {'Content-Type': 'application/json'},
+    );
     final response = await _client.put(
       _itemUri(event.id),
-      headers: const {'Content-Type': 'application/json'},
+      headers: headers,
       body: json.encode(event.toJson()),
     );
     final body = _decode(response);
@@ -78,7 +94,8 @@ class RealEventService implements IEventService {
 
   @override
   Future<void> deleteEvent(String id) async {
-    final response = await _client.delete(_itemUri(id));
+    final response = await _client.delete(_itemUri(id),
+        headers: await withAdminAuth(_auth, const {}));
     if (response.statusCode != 204 && response.statusCode != 200) {
       throw Exception('Delete event failed (${response.statusCode})');
     }

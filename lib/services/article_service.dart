@@ -3,6 +3,8 @@ import 'package:http/http.dart' as http;
 
 import '../models/article.dart';
 import '../models/banner.dart';
+import '_http_with_admin_token.dart';
+import 'admin_auth_service.dart';
 
 /// Article-with-products payload returned by [IArticleService.getArticle].
 ///
@@ -76,12 +78,19 @@ abstract class IArticleService {
 
 /// Real implementation that talks to the Go backend API.
 class RealArticleService implements IArticleService {
-  RealArticleService({String? baseUrl, http.Client? client})
-      : _baseUrl = baseUrl ?? 'http://localhost:8080',
-        _client = client ?? http.Client();
+  RealArticleService({
+    String? baseUrl,
+    http.Client? client,
+    IAdminAuthService? authService,
+  })  : _baseUrl = baseUrl ?? 'http://localhost:8080',
+        _client = client ?? http.Client(),
+        _auth = authService;
 
   final String _baseUrl;
   final http.Client _client;
+  // Optional — when present, admin write endpoints attach the
+  // bearer token. Optional so unit tests don't need SharedPreferences.
+  final IAdminAuthService? _auth;
 
   Uri _bannersUri() => Uri.parse('$_baseUrl/api/banners');
   Uri _bannerUri(String id) => Uri.parse('$_baseUrl/api/banners/$id');
@@ -121,9 +130,13 @@ class RealArticleService implements IArticleService {
 
   @override
   Future<Article> createArticle(Article article) async {
+    final headers = await withAdminAuth(
+      _auth,
+      const {'Content-Type': 'application/json'},
+    );
     final response = await _client.post(
       _articlesUri(),
-      headers: const {'Content-Type': 'application/json'},
+      headers: headers,
       body: json.encode(article.toJson()),
     );
     if (response.statusCode != 201 && response.statusCode != 200) {
@@ -134,9 +147,13 @@ class RealArticleService implements IArticleService {
 
   @override
   Future<Article> updateArticle(Article article) async {
+    final headers = await withAdminAuth(
+      _auth,
+      const {'Content-Type': 'application/json'},
+    );
     final response = await _client.put(
       _articleUri(article.id),
-      headers: const {'Content-Type': 'application/json'},
+      headers: headers,
       body: json.encode(article.toJson()),
     );
     if (response.statusCode != 200) {
@@ -147,7 +164,8 @@ class RealArticleService implements IArticleService {
 
   @override
   Future<void> deleteArticle(String id) async {
-    final response = await _client.delete(_articleUri(id));
+    final response = await _client.delete(_articleUri(id),
+        headers: await withAdminAuth(_auth, const {}));
     if (response.statusCode != 204 && response.statusCode != 200) {
       throw Exception('Delete article failed (${response.statusCode})');
     }
@@ -155,9 +173,13 @@ class RealArticleService implements IArticleService {
 
   @override
   Future<BannerSlide> createBanner(BannerSlide slide) async {
+    final headers = await withAdminAuth(
+      _auth,
+      const {'Content-Type': 'application/json'},
+    );
     final response = await _client.post(
       _bannersUri(),
-      headers: const {'Content-Type': 'application/json'},
+      headers: headers,
       body: json.encode(slide.toJson()),
     );
     if (response.statusCode != 201 && response.statusCode != 200) {
@@ -168,9 +190,13 @@ class RealArticleService implements IArticleService {
 
   @override
   Future<BannerSlide> updateBanner(BannerSlide slide) async {
+    final headers = await withAdminAuth(
+      _auth,
+      const {'Content-Type': 'application/json'},
+    );
     final response = await _client.put(
       _bannerUri(slide.id),
-      headers: const {'Content-Type': 'application/json'},
+      headers: headers,
       body: json.encode(slide.toJson()),
     );
     if (response.statusCode != 200) {
@@ -181,7 +207,8 @@ class RealArticleService implements IArticleService {
 
   @override
   Future<void> deleteBanner(String id) async {
-    final response = await _client.delete(_bannerUri(id));
+    final response = await _client.delete(_bannerUri(id),
+        headers: await withAdminAuth(_auth, const {}));
     if (response.statusCode != 204 && response.statusCode != 200) {
       throw Exception('Delete banner failed (${response.statusCode})');
     }
