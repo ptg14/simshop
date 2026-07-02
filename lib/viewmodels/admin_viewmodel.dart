@@ -1,77 +1,59 @@
 import 'package:flutter/foundation.dart' hide Category;
 import '../models/category.dart';
 import '../models/product.dart';
-import '../models/store.dart';
-import '../services/analytics_service.dart';
+import '../services/_http_with_admin_token.dart';
 import '../services/product_service.dart';
 
 /// ViewModel for admin panel.
 class AdminViewModel extends ChangeNotifier {
   /// Constructor allowing optional injection of a product service.
+///
+/// In production [main.dart] passes the shared [IProductService]
+/// (which already has [IAdminAuthService] injected) so admin write
+/// requests carry `Authorization: Bearer ...`. If both args are
+/// null — only in tests — the constructor falls back to plain
+/// unauthenticated services, which the backend will reject with
+/// 401.
   AdminViewModel({
     IProductService? productService,
-    IAnalyticsService? analyticsService,
-  })  : _productService = productService ?? RealProductService(),
-        _analyticsService = analyticsService ?? RealAnalyticsService();
+  }) : _productService = productService ?? RealProductService();
 
   // Products management via service. Allows injection for testing.
   final IProductService _productService;
-  // Analytics — used for the overview's total visits + top products.
-  final IAnalyticsService _analyticsService;
   final List<Product> _products = [];
-  List<String> _categories = [];
 
-  // 2-level category hierarchy. The flat [_categories] list is kept for the
-  // legacy picker / counts; structured lists are used by the new picker and
-  // categories management screen.
+  // 2-level category hierarchy.
   final List<String> _largeCategories = [];
   final List<Category> _subCategories = [];
   String? _selectedLargeCategory;
 
-  // Store management (admin can select a store)
-  final List<Store> _stores = [];
-  Store? _selectedStore;
-
   // UI states
   bool _isLoading = false;
   String? _error;
-  String _selectedTab = 'overview'; // overview, products, categories, articles, settings
-
-  // Analytics summary for the admin overview card.
-  int _totalVisits = 0;
-  List<TopProductView> _topProducts = const [];
+  // True after a write returned 401 "admin session required".
+  // Set when the cached Bearer token no longer matches the
+  // server-side session map (server restart, 24h TTL elapsed,
+  // etc.). The admin shell watches this and pops back to
+  // [AdminAuthGate] so the user can re-authenticate before
+  // retrying.
+  bool _adminSessionExpired = false;
+  String _selectedTab = 'products'; // products, categories, articles, events, settings
 
   // Getters
   List<Product> get products => _products;
-  List<String> get categories => _categories;
   List<String> get largeCategories => List.unmodifiable(_largeCategories);
   List<Category> get subCategories => List.unmodifiable(_subCategories);
   String? get selectedLargeCategory => _selectedLargeCategory;
   bool get isLoading => _isLoading;
   String? get error => _error;
+  /// True after a write failed because the cached Bearer token is no
+  /// longer valid server-side. The admin shell watches this and
+  /// pops back to [AdminAuthGate] to let the user re-authenticate.
+  bool get adminSessionExpired => _adminSessionExpired;
   String get selectedTab => _selectedTab;
-  int get totalVisits => _totalVisits;
-  List<TopProductView> get topProducts => _topProducts;
-  // Public getters for store data
-  List<Store> get stores => _stores;
-  Store? get selectedStore => _selectedStore;
 
-  /// Initialize admin view model with products and stores.
+  /// Initialize admin view model with products.
   Future<void> initialize() async {
-    // Prevent re‑initialisation which would duplicate store entries.
-    if (_stores.isNotEmpty) {
-      _selectedStore ??= _stores.first;
-      return;
-    }
-
-    // Load categories from the backend (fallback to static list on error).
-    try {
-      final categories = await _productService.getCategories();
-      _categories = [...categories];
-    } catch (_) {
-      _categories = ['Design', 'Accessories'];
-    }
-
     // Load products from the backend.
     try {
       final loaded = await _productService.getAllProducts();
@@ -85,31 +67,7 @@ class AdminViewModel extends ChangeNotifier {
     await loadLargeCategories();
     await loadSubCategories();
 
-    // Initialize dummy stores (replace with real service call in production)
-    _stores.addAll([
-      const Store(id: 'store1', name: 'Cửa hàng 1'),
-      const Store(id: 'store2', name: 'Cửa hàng 2'),
-    ]);
-    _selectedStore = _stores.first;
     notifyListeners();
-
-    // Analytics is non-critical — failures must not block the dashboard.
-    await loadAnalyticsSummary();
-  }
-
-  /// Fetch the analytics summary for the admin overview card.
-  ///
-  /// Errors are swallowed: tracking failure should never break the
-  /// admin dashboard. The UI then renders zeros + an empty list.
-  Future<void> loadAnalyticsSummary() async {
-    try {
-      final summary = await _analyticsService.getSummary(topN: 5);
-      _totalVisits = summary.totalVisits;
-      _topProducts = summary.topProducts;
-      notifyListeners();
-    } catch (_) {
-      // Keep the previous values (likely zeros) on failure.
-    }
   }
 
   /// Select a tab.
@@ -221,7 +179,6 @@ class AdminViewModel extends ChangeNotifier {
       return false;
     }
     _subCategories.removeWhere((c) => c.name == name);
-    _categories.remove(name);
     notifyListeners();
     return true;
   }
@@ -323,14 +280,10 @@ class AdminViewModel extends ChangeNotifier {
         }
       }
 
-      // Associate product with the currently selected store.
-      final productWithStore = product.copyWith(
-        storeId: _selectedStore?.id,
-        imageUrl: imageUrl,
-        images: images,
-      );
       // Persist to backend and get the created product with real ID.
-      final created = await _productService.createProduct(productWithStore);
+      final created = await _productService.createProduct(
+        product.copyWith(imageUrl: imageUrl, images: images),
+      );
       // Update local list with the real product from backend.
       _products.add(created);
       _isLoading = false;
@@ -347,6 +300,7 @@ class AdminViewModel extends ChangeNotifier {
       {dynamic imageFile}) async {
     _isLoading = true;
     _error = null;
+    _adminSessionExpired = false;
     notifyListeners();
 
     try {
@@ -402,7 +356,15 @@ class AdminViewModel extends ChangeNotifier {
       _isLoading = false;
       notifyListeners();
     } catch (e) {
-      _error = 'Lỗi cập nhật sản phẩm: $e';
+      if (e is AdminSessionExpiredException) {
+        // Cached token is dead (server restart, TTL elapsed). The
+        // shell listens for [adminSessionExpired] and routes back
+        // to the auth gate so the user can re-auth.
+        _adminSessionExpired = true;
+        _error = e.message;
+      } else {
+        _error = 'Lỗi cập nhật sản phẩm: $e';
+      }
       _isLoading = false;
       notifyListeners();
     }
@@ -423,68 +385,5 @@ class AdminViewModel extends ChangeNotifier {
       _isLoading = false;
       notifyListeners();
     }
-  }
-
-  /// Add a new category.
-  Future<void> addCategory(String category) async {
-    try {
-      await (_productService as RealProductService).createCategory(category);
-      // Refresh categories from backend to ensure persistence and ordering.
-      final cats = await _productService.getCategories();
-      _categories = ['All', ...cats];
-      notifyListeners();
-      return;
-    } catch (_) {
-      // If backend fails, still fall back to local update.
-    }
-    if (!_categories.contains(category)) {
-      _categories.add(category);
-      notifyListeners();
-    }
-  }
-
-  /// Delete a category.
-  Future<void> deleteCategory(String category) async {
-    if (category == 'All') return;
-    try {
-      await (_productService as RealProductService).deleteCategory(category);
-    } catch (_) {
-      // ignore backend delete errors for now
-    }
-    _categories.remove(category);
-    notifyListeners();
-  }
-
-  /// Get dashboard statistics.
-  ///
-  /// When no store is selected, fall back to the full product list
-  /// (the app is single-store; the original filter-by-null was a
-  /// 0-stats bug that left the dashboard empty before the user picked
-  /// a store).
-  Map<String, dynamic> getDashboardStats() {
-    final storeProducts = _selectedStore == null
-        ? _products
-        : _products.where((p) => p.storeId == _selectedStore!.id).toList();
-    return {
-      'totalProducts': storeProducts.length,
-      'totalCategories': _categories.length,
-      'productsOnSale': storeProducts.where((p) => p.isOnSale).length,
-      'lowStockProducts':
-          storeProducts.where((p) => (p.stock ?? 0) < 10).length,
-    };
-  }
-
-  /// Select a store for the admin session.
-  void selectStore(String storeId) {
-    // Find the store with the given ID. If not found, keep the current selection.
-    for (final s in _stores) {
-      if (s.id == storeId) {
-        _selectedStore = s;
-        notifyListeners();
-        return;
-      }
-    }
-    // No matching store; do not change selection.
-    notifyListeners();
   }
 }

@@ -1,9 +1,6 @@
-import 'dart:async';
-
 import 'package:flutter/foundation.dart' hide Category;
 import '../models/category.dart';
 import '../models/product.dart';
-import '../services/analytics_service.dart';
 import '../services/product_service.dart';
 
 /// ViewModel for the home screen.
@@ -11,19 +8,13 @@ class HomeViewModel extends ChangeNotifier {
   /// Constructor allowing optional injection of a product service.
   HomeViewModel({
     IProductService? productService,
-    IAnalyticsService? analyticsService,
-  })  : _productService = productService ?? RealProductService(),
-        _analyticsService = analyticsService ?? RealAnalyticsService();
+  }) : _productService = productService ?? RealProductService();
 
   // Backend service. Inject via constructor in tests; defaults to the real HTTP client.
   final IProductService _productService;
-  // Analytics service — used to fire `home_view` once per session.
-  // Defaults to a real HTTP client; injected in tests.
-  final IAnalyticsService _analyticsService;
 
   List<Product> _products = [];
   List<Product> _filteredProducts = [];
-  List<String> _categories = [];
 
   // 2-level hierarchy state.
   final List<String> _largeCategories = [];
@@ -31,22 +22,16 @@ class HomeViewModel extends ChangeNotifier {
   String _selectedLarge = 'All';
   String _selectedCategory = 'All';
 
-  // Store identifier used to filter products for a specific store.
-  String? _selectedStoreId;
   bool _isLoading = false;
   String? _error;
-  String _searchQuery = '';
 
   // Getters
   List<Product> get products => _filteredProducts;
-  List<String> get categories => _categories;
   List<String> get largeCategories => ['All', ..._largeCategories];
   String get selectedLarge => _selectedLarge;
   String get selectedCategory => _selectedCategory;
-  String? get selectedStoreId => _selectedStoreId;
   bool get isLoading => _isLoading;
   String? get error => _error;
-  String get searchQuery => _searchQuery;
 
   /// Sub-categories to display in the second chip row.
   ///
@@ -64,13 +49,7 @@ class HomeViewModel extends ChangeNotifier {
 
   /// Initialize the view model and load products.
   Future<void> initialize() async {
-    // Fire a home_view event before loading so the analytics endpoint
-    // sees the visit even if subsequent loads fail. Fire-and-forget:
-    // recordPageview returns Future but we deliberately don't await —
-    // navigation must not block on analytics.
-    unawaited(_analyticsService.recordPageview('home_view'));
-
-    // Fan-out the four independent endpoints in parallel. Previously
+    // Fan-out the three independent endpoints in parallel. Previously
     // these were awaited serially, so the wall-clock cost of the
     // cold-start was the *sum* of all four latencies (often 800ms+
     // on slow networks). With [Future.wait] the cost collapses to
@@ -80,7 +59,6 @@ class HomeViewModel extends ChangeNotifier {
     // product grid, just as they did before.
     await Future.wait([
       loadProducts(),
-      loadCategories(),
       loadLargeCategories(),
       loadSubCategories(),
     ]);
@@ -103,17 +81,6 @@ class HomeViewModel extends ChangeNotifier {
     } finally {
       _isLoading = false;
       notifyListeners();
-    }
-  }
-
-  /// Load product categories (flat list — used as a fallback for the legacy UI).
-  Future<void> loadCategories() async {
-    try {
-      final categories = await _productService.getCategories();
-      _categories = [...categories];
-      notifyListeners();
-    } catch (e) {
-      _error = 'Failed to load categories: $e';
     }
   }
 
@@ -160,57 +127,9 @@ class HomeViewModel extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Update the selected store identifier and re‑apply filters.
-  void selectStore(String? storeId) {
-    if (_selectedStoreId != storeId) {
-      _selectedStoreId = storeId;
-      _applyFilters();
-      notifyListeners();
-    }
-  }
-
-  /// Search products by query via backend.
-  Future<void> searchProducts(String query) async {
-    _searchQuery = query;
-    // Searching resets both filter levels.
-    _selectedLarge = 'All';
-    _selectedCategory = 'All';
-
-    if (query.isEmpty) {
-      _filteredProducts = _products;
-      notifyListeners();
-    } else {
-      _isLoading = true;
-      notifyListeners();
-
-      try {
-        _filteredProducts = await _productService.searchProducts(query);
-      } catch (e) {
-        _error = 'Search failed: $e';
-        _filteredProducts = [];
-      } finally {
-        _isLoading = false;
-        notifyListeners();
-      }
-    }
-  }
-
-  /// Reset search and show all products.
-  void resetSearch() {
-    _searchQuery = '';
-    _selectedLarge = 'All';
-    _selectedCategory = 'All';
-    _filteredProducts = _products;
-    notifyListeners();
-  }
-
-  /// Apply local store / Large / sub filters on top of already-loaded products.
+  /// Apply local Large / sub filters on top of already-loaded products.
   void _applyFilters() {
     Iterable<Product> filtered = _products;
-
-    if (_selectedStoreId != null) {
-      filtered = filtered.where((p) => p.storeId == _selectedStoreId);
-    }
 
     // Sub-category filter (most specific).
     if (_selectedCategory != 'All' && !_selectedCategory.startsWith('All ')) {
@@ -238,12 +157,4 @@ class HomeViewModel extends ChangeNotifier {
     if (product.category == subName) return true;
     return false;
   }
-
-  /// Get featured products (on sale).
-  List<Product> getFeaturedProducts() =>
-      _products.where((product) => product.isOnSale).take(6).toList();
-
-  /// Get promotional products.
-  List<Product> getPromotionalProducts() =>
-      _products.where((product) => product.rating >= 4.7).take(4).toList();
 }
