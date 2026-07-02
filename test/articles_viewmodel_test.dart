@@ -7,6 +7,12 @@ import 'package:simshop/viewmodels/articles_viewmodel.dart';
 /// In-memory service used to drive the viewmodel in tests without
 /// touching the network.
 class _FakeArticleService implements IArticleService {
+  // [articles] is not used by the tests in this file (they only cover
+  // the banner path), but a sibling `_FakeArticleService` in
+  // `article_screen_test.dart` does pass `articles:` — keeping the
+  // parameter here matches that shape so future tests can swap a
+  // single fake across files without changing the constructor.
+  // ignore: unused_element_parameter
   _FakeArticleService({this.banners = const [], this.articles = const []});
 
   List<BannerSlide> banners;

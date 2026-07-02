@@ -67,10 +67,6 @@ class _FakeProductService implements IProductService {
   Future<Product> getProductById(String id) async =>
       throw UnimplementedError('not used');
   @override
-  Future<List<String>> getCategories() async => const [];
-  @override
-  Future<void> createCategory(String name) async {}
-  @override
   Future<void> deleteCategory(String name) async {}
   @override
   Future<List<String>> getLargeCategories() async => const [];
