@@ -1,5 +1,3 @@
-import 'dart:async';
-
 import 'package:flutter/material.dart';
 import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
 import 'package:provider/provider.dart';
@@ -7,7 +5,6 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../models/product.dart';
 import '../models/store_info.dart';
-import '../services/analytics_service.dart';
 import '../utils/currency_formatter.dart';
 import '../utils/responsive.dart';
 import '../viewmodels/site_config_viewmodel.dart';
@@ -62,7 +59,6 @@ class ProductDetailScreen extends StatefulWidget {
 
 class _ProductDetailScreenState extends State<ProductDetailScreen> {
   late Product product;
-  bool _isFavorite = false;
 
   /// Currently selected option id. Null means "no option chosen /
   /// default view" — in that case the gallery shows every image
@@ -75,28 +71,11 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
   void initState() {
     super.initState();
     product = widget.product;
-    // Fire product_view exactly once per product-detail open.
-    // Fire-and-forget: navigation back must not wait on analytics.
-    unawaited(
-      context.read<IAnalyticsService>().recordPageview(
-            'product_view',
-            productId: product.id,
-          ),
-    );
   }
 
   Future<void> _openMap(String url) async {
     final uri = Uri.parse(url);
     await launchUrl(uri, mode: LaunchMode.externalApplication);
-  }
-
-  void _toggleFavorite() {
-    setState(() => _isFavorite = !_isFavorite);
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(_isFavorite ? 'Đã thêm vào yêu thích' : 'Đã bỏ yêu thích'),
-      ),
-    );
   }
 
   /// Compute the image list to show in the gallery.
@@ -130,22 +109,6 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
       appBar: AppBar(
         title: const Text('Chi tiết sản phẩm'),
         centerTitle: true,
-        actions: [
-          IconButton(
-            tooltip: _isFavorite ? 'Bỏ yêu thích' : 'Yêu thích',
-            onPressed: _toggleFavorite,
-            icon: AnimatedSwitcher(
-              duration: const Duration(milliseconds: 200),
-              transitionBuilder: (child, anim) =>
-                  ScaleTransition(scale: anim, child: child),
-              child: Icon(
-                _isFavorite ? Icons.favorite : Icons.favorite_border,
-                key: ValueKey(_isFavorite),
-                color: _isFavorite ? scheme.error : null,
-              ),
-            ),
-          ),
-        ],
       ),
       body: SingleChildScrollView(
         child: Center(
@@ -211,6 +174,13 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                           // to feel sticky.
                           physics: const PageScrollPhysics()
                               .applyTo(const ClampingScrollPhysics()),
+                          // Floating prev/next buttons because the
+                          // product-detail carousel has no auto-advance
+                          // — without explicit controls the only way
+                          // to navigate is touch drag or wheel scroll,
+                          // which desktop users (and hesitant mobile
+                          // users) often miss.
+                          showNavigationButtons: true,
                         ),
                       ),
 
@@ -253,28 +223,45 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      /// Category pill
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 12,
-                          vertical: 6,
-                        ),
-                        decoration: BoxDecoration(
-                          color: scheme.secondaryContainer,
-                          borderRadius: BorderRadius.circular(999),
-                        ),
-                        child: Text(
-                          product.category,
-                          style: TextStyle(
-                            color: scheme.onSecondaryContainer,
-                            fontWeight: FontWeight.w500,
-                            fontSize: context.responsive<double>(
-                              mobile: 12,
-                              tablet: 13,
-                              desktop: 14,
-                            ),
-                          ),
-                        ),
+                      /// Categories — render every entry from [Product.categories] as
+                      /// a pill. We deliberately do NOT fall back to
+                      /// the legacy singular [Product.category]
+                      /// string when [Product.categories] is an
+                      /// explicit empty list: that would re-attach a
+                      /// category the admin just removed, and show a
+                      /// stray pink pill on the detail page.
+                      ///
+                      /// [Wrap] lets multiple pills flow onto a
+                      /// second row instead of overflowing the card
+                      /// edge. When the list is empty the [Wrap]
+                      /// renders no children — no leftover pill.
+                      Wrap(
+                        spacing: 6,
+                        runSpacing: 6,
+                        children: product.categories
+                            .map((cat) => Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 12,
+                                    vertical: 6,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: scheme.secondaryContainer,
+                                    borderRadius: BorderRadius.circular(999),
+                                  ),
+                                  child: Text(
+                                    cat,
+                                    style: TextStyle(
+                                      color: scheme.onSecondaryContainer,
+                                      fontWeight: FontWeight.w500,
+                                      fontSize: context.responsive<double>(
+                                        mobile: 12,
+                                        tablet: 13,
+                                        desktop: 14,
+                                      ),
+                                    ),
+                                  ),
+                                ))
+                            .toList(),
                       ),
 
                       SizedBox(
@@ -436,7 +423,13 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                         desktop: 24,
                       )),
 
-                      /// Stock info
+                      /// Stock info. Three visual states share the same card shape so the
+                      /// layout doesn't reflow when stock crosses zero:
+                      ///   stock == null   → neutral "Số lượng không xác định"
+                      ///   stock == 0      → error "Hết hàng" (distinct from
+                      ///                     the amber "Sắp hết" pill on the card)
+                      ///   0 < stock < 10  → tertiary "Còn N sản phẩm"
+                      ///   stock >= 10     → tertiary "Còn N sản phẩm"
                       Container(
                         padding: EdgeInsets.all(context.responsive<double>(
                           mobile: 12,
@@ -444,19 +437,38 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                           desktop: 16,
                         )),
                         decoration: BoxDecoration(
-                          color: scheme.tertiaryContainer,
+                          // Out-of-stock gets a red background so the
+                          // state is unmissable; everything else keeps
+                          // the tertiary "info" tone.
+                          color: product.isOutOfStock
+                              ? scheme.errorContainer
+                              : scheme.tertiaryContainer,
                           borderRadius: BorderRadius.circular(12),
                         ),
                         child: Row(
                           children: [
-                            Icon(Icons.inventory_2_outlined,
-                                color: scheme.onTertiaryContainer),
+                            Icon(
+                              product.isOutOfStock
+                                  ? Icons.do_disturb_alt_outlined
+                                  : Icons.inventory_2_outlined,
+                              color: product.isOutOfStock
+                                  ? scheme.onErrorContainer
+                                  : scheme.onTertiaryContainer,
+                            ),
                             const SizedBox(width: 8),
                             Text(
-                              'Còn ${product.stock ?? 0} sản phẩm',
+                              () {
+                                if (product.isOutOfStock) return 'Hết hàng';
+                                if (product.stock == null) {
+                                  return 'Số lượng không xác định';
+                                }
+                                return 'Còn ${product.stock} sản phẩm';
+                              }(),
                               style: TextStyle(
-                                color: scheme.onTertiaryContainer,
-                                fontWeight: FontWeight.w500,
+                                color: product.isOutOfStock
+                                    ? scheme.onErrorContainer
+                                    : scheme.onTertiaryContainer,
+                                fontWeight: FontWeight.w600,
                                 fontSize: context.responsive<double>(
                                   mobile: 14,
                                   tablet: 15,
