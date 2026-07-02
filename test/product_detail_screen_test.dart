@@ -120,6 +120,15 @@ void main() {
     // Address appears as the button label (plus may also appear in
     // the SiteInfoFooter; that's fine).
     expect(find.text('123 Nguyễn Huệ'), findsWidgets);
+    // The "Mua trực tiếp tại:" caption sits OUTSIDE the button, so
+    // it's rendered as a separate widget (not concatenated with
+    // the address inside the FilledButton label).
+    expect(find.text('Mua trực tiếp tại:'), findsOneWidget);
+    // The button itself must NOT contain the inline concatenated
+    // form — that was the previous design, replaced so the
+    // caption reads as a label and the address reads as the
+    // button's own destination.
+    expect(find.text('Mua trực tiếp tại 123 Nguyễn Huệ'), findsNothing);
   });
 
   // Slice 1, case 3: when StoreInfo has no address, the CTA must

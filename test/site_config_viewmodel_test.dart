@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:simshop/models/store_info.dart';
+import 'package:simshop/services/_http_with_admin_token.dart';
 import 'package:simshop/services/store_service.dart';
 import 'package:simshop/viewmodels/site_config_viewmodel.dart';
 
@@ -13,6 +14,12 @@ class _FakeStoreService implements IStoreService {
   int updateCount = 0;
   bool shouldFail = false;
 
+  /// When non-null, [updateStoreInfo] throws this instead of the
+  /// generic failure. Lets us pin the typed
+  /// [AdminSessionExpiredException] branch without going through a
+  /// real HTTP layer.
+  Object? updateError;
+
   set info(StoreInfo value) => _info = value;
 
   @override
@@ -25,6 +32,7 @@ class _FakeStoreService implements IStoreService {
   @override
   Future<StoreInfo> updateStoreInfo(StoreInfo info) async {
     updateCount++;
+    if (updateError != null) throw updateError!;
     if (shouldFail) throw Exception('boom');
     _info = info;
     return _info;
@@ -90,6 +98,30 @@ void main() {
     test('default model renders "simshop" so the home AppBar never blank', () {
       final vm = SiteConfigViewModel();
       expect(vm.siteInfo.name, 'simshop');
+    });
+
+    test(
+        'update() flips adminSessionExpired when the service throws '
+        'AdminSessionExpiredException (cached token is dead)', () async {
+      final fake = _FakeStoreService(
+        const StoreInfo(name: 'Original'),
+      );
+      final vm = SiteConfigViewModel(service: fake);
+      await vm.load();
+      expect(vm.adminSessionExpired, isFalse);
+
+      fake.updateError = AdminSessionExpiredException(
+        'Phiên quản trị đã hết hạn, vui lòng đăng nhập lại.',
+      );
+      final ok = await vm.update(const StoreInfo(name: 'New'));
+
+      expect(ok, isFalse);
+      expect(vm.adminSessionExpired, isTrue,
+          reason: 'admin shell pops back to auth gate when this is true');
+      expect(vm.siteInfo.name, 'Original',
+          reason: 'failed write must not overwrite local model');
+      expect(vm.error, isNotNull,
+          reason: 'user sees the localized message in the snackbar');
     });
   });
 
