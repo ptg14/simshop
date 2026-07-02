@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:provider/provider.dart';
+import 'config/api_config.dart';
 import 'services/admin_auth_service.dart';
 import 'services/article_service.dart';
 import 'services/event_service.dart';
@@ -31,13 +33,40 @@ void _setGlobalError(String text) {
 }
 
 void main() {
-  // Surface uncaught Flutter errors and async errors on-screen for debugging
-  FlutterError.onError = (details) {
-    FlutterError.dumpErrorToConsole(details);
-    _setGlobalError('${details.exceptionAsString()}\n${details.stack ?? ''}');
-  };
+  // `ensureInitialized()` + `runApp()` MUST run in the same zone —
+  // otherwise the Flutter framework throws "Zone mismatch" because
+  // bindings are stashed on the Zone they're created in. The previous
+  // version called `ensureInitialized` outside `runZonedGuarded` and
+  // `runApp` inside it, which produced exactly that warning at every
+  // cold start.
+  //
+  // Inside this single zone we:
+  //   1. Initialize the binding (required before any Flutter API).
+  //   2. Load `.env` so [ApiConfig.apiBaseUrl] returns the real URL.
+  //   3. Print the resolved URL to the dev console (the first place
+  //      to look when the home page can't reach the backend).
+  //   4. Install the on-screen error reporter.
+  //   5. runApp.
+  //
+  // `isOptional: true` lets the app boot even when the asset
+  // bundle doesn't contain `.env` — e.g. a stale `flutter run`
+  // session started before the asset was registered in
+  // `pubspec.yaml`. [ApiConfig.apiBaseUrl] already falls back to
+  // `http://localhost:8080` when dotenv has no value for the key,
+  // so a missing file degrades to "use the local default" instead
+  // of crashing the whole app. A `flutter clean && flutter pub
+  // get` is still required to pick up the `.env` asset on the
+  // next cold start.
+  runZonedGuarded(() async {
+    WidgetsFlutterBinding.ensureInitialized();
+    await dotenv.load(fileName: '.env', isOptional: true);
+    debugPrint('simshop: API_BASE_URL = ${ApiConfig.apiBaseUrl}');
 
-  runZonedGuarded(() {
+    FlutterError.onError = (details) {
+      FlutterError.dumpErrorToConsole(details);
+      _setGlobalError('${details.exceptionAsString()}\n${details.stack ?? ''}');
+    };
+
     runApp(const GuardedApp());
   }, (error, stack) {
     // Catch all other errors
