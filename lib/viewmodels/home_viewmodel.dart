@@ -25,6 +25,15 @@ class HomeViewModel extends ChangeNotifier {
   bool _isLoading = false;
   String? _error;
 
+  /// True after [dispose] has run. The three `load*` methods fan
+  /// out HTTP requests from [initialize] / explicit refreshes — on
+  /// web (especially with hot-restart during dev) those responses
+  /// can arrive *after* the widget tree has been torn down. Without
+  /// the guard, the late `notifyListeners()` call throws
+  /// "ChangeNotifier used after being disposed", which surfaces as
+  /// an uncaught promise rejection in the browser console.
+  bool _disposed = false;
+
   // Getters
   List<Product> get products => _filteredProducts;
   List<String> get largeCategories => ['All', ..._largeCategories];
@@ -69,7 +78,7 @@ class HomeViewModel extends ChangeNotifier {
   Future<void> loadProducts() async {
     _isLoading = true;
     _error = null;
-    notifyListeners();
+    _notifyIfAlive();
 
     try {
       _products = await _productService.getAllProducts();
@@ -80,7 +89,7 @@ class HomeViewModel extends ChangeNotifier {
       _filteredProducts = [];
     } finally {
       _isLoading = false;
-      notifyListeners();
+      _notifyIfAlive();
     }
   }
 
@@ -91,7 +100,7 @@ class HomeViewModel extends ChangeNotifier {
       _largeCategories
         ..clear()
         ..addAll(list);
-      notifyListeners();
+      _notifyIfAlive();
     } catch (_) {
       // Keep previous value on failure.
     }
@@ -104,7 +113,7 @@ class HomeViewModel extends ChangeNotifier {
       _subCategories
         ..clear()
         ..addAll(list);
-      notifyListeners();
+      _notifyIfAlive();
     } catch (_) {
       // Keep previous value on failure.
     }
@@ -116,7 +125,7 @@ class HomeViewModel extends ChangeNotifier {
     _selectedLarge = large;
     _selectedCategory = 'All';
     _applyFilters();
-    notifyListeners();
+    _notifyIfAlive();
   }
 
   /// Select a sub-category and re-apply filters locally.
@@ -124,7 +133,7 @@ class HomeViewModel extends ChangeNotifier {
     if (_selectedCategory == category) return;
     _selectedCategory = category;
     _applyFilters();
-    notifyListeners();
+    _notifyIfAlive();
   }
 
   /// Apply local Large / sub filters on top of already-loaded products.
@@ -156,5 +165,18 @@ class HomeViewModel extends ChangeNotifier {
     if (product.categories.contains(subName)) return true;
     if (product.category == subName) return true;
     return false;
+  }
+
+  /// Wrapper around `notifyListeners` that's a no-op after [dispose].
+  /// See [_disposed] for why this exists.
+  void _notifyIfAlive() {
+    if (_disposed) return;
+    notifyListeners();
+  }
+
+  @override
+  void dispose() {
+    _disposed = true;
+    super.dispose();
   }
 }
