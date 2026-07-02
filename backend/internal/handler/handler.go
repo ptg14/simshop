@@ -106,36 +106,6 @@ func GetProductsHandler(repo *ProductRepo, eventRepo *EventRepo) http.HandlerFun
 	}
 }
 
-// GetAllProductsHandler is the unfiltered variant used by the admin
-// product list (no pagination). Decorated the same way as
-// GetProductsHandler so the admin sees the same effective prices
-// the customer will see.
-func GetAllProductsHandler(repo *ProductRepo, eventRepo *EventRepo) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		products, err := repo.GetAll()
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "Failed to fetch products")
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{"products": decorateProductsWithEvents(products, eventRepo)})
-	}
-}
-
-// GetCategoriesHandler returns persisted categories.
-func GetCategoriesHandler(repo *ProductRepo) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		// Return simple list of category names for frontend compatibility.
-		cats, err := repo.GetCategories()
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "Failed to fetch categories")
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{"categories": cats})
-	}
-}
-
 // GetCategoriesWithParentHandler returns all categories with their large category name.
 func GetCategoriesWithParentHandler(repo *ProductRepo) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -376,7 +346,7 @@ func UpdateStoreInfoHandler(repo *StoreRepo) http.HandlerFunc {
 		var body struct {
 			Name          string `json:"name"`
 			Description   string `json:"description"`
-			LogoURL       string `json:"logo_url"`
+			BannerURL     string `json:"banner_url"`
 			Phone         string `json:"phone"`
 			Email         string `json:"email"`
 			Address       string `json:"address"`
@@ -390,7 +360,7 @@ func UpdateStoreInfoHandler(repo *StoreRepo) http.HandlerFunc {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		info, err := repo.Update(body.Name, body.Description, body.LogoURL, body.Phone, body.Email, body.Address, body.GoogleMapsURL)
+		info, err := repo.Update(body.Name, body.Description, body.BannerURL, body.Phone, body.Email, body.Address, body.GoogleMapsURL)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "Failed to save site info")
 			return
@@ -406,7 +376,7 @@ func UpdateStoreInfoHandler(repo *StoreRepo) http.HandlerFunc {
 func validateStoreInfo(body *struct {
 	Name          string `json:"name"`
 	Description   string `json:"description"`
-	LogoURL       string `json:"logo_url"`
+	BannerURL     string `json:"banner_url"`
 	Phone         string `json:"phone"`
 	Email         string `json:"email"`
 	Address       string `json:"address"`
@@ -414,7 +384,7 @@ func validateStoreInfo(body *struct {
 }) error {
 	body.Name = strings.TrimSpace(body.Name)
 	body.Description = strings.TrimSpace(body.Description)
-	body.LogoURL = strings.TrimSpace(body.LogoURL)
+	body.BannerURL = strings.TrimSpace(body.BannerURL)
 	body.Phone = strings.TrimSpace(body.Phone)
 	body.Email = strings.TrimSpace(body.Email)
 	body.Address = strings.TrimSpace(body.Address)
@@ -430,8 +400,8 @@ func validateStoreInfo(body *struct {
 	if len(body.Description) > 500 {
 		errs = append(errs, "description must be 500 characters or fewer")
 	}
-	if len(body.LogoURL) > 1000 {
-		errs = append(errs, "logo_url must be 1000 characters or fewer")
+	if len(body.BannerURL) > 1000 {
+		errs = append(errs, "banner_url must be 1000 characters or fewer")
 	}
 	if len(body.Phone) > 50 {
 		errs = append(errs, "phone must be 50 characters or fewer")
@@ -712,79 +682,6 @@ func UploadImageHandler(cfg *UploadConfig) http.HandlerFunc {
 		resp := map[string]any{"image_urls": uploadedURLs, "filenames": filenames, "image_url": uploadedURLs[0]}
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(resp)
-	}
-}
-
-// AnalyticsRepo is an alias for the db package's analytics repo.
-// We re-export the type here so callers (router, tests) can stay
-// in the handler namespace.
-type AnalyticsRepo = db.AnalyticsRepo
-
-// PostPageviewHandler records a single anonymous pageview event.
-//
-// POST /api/analytics/pageview
-// Body: {"event_type": "home_view" | "product_view",
-//        "product_id": "..." (optional)}
-//
-// Anonymous on purpose — there's no auth and no user_id. The admin
-// overview uses this data to show aggregate flow. Returns 204
-// No Content on success (fire-and-forget from the client).
-func PostPageviewHandler(repo *AnalyticsRepo) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		var body struct {
-			EventType string `json:"event_type"`
-			ProductID string `json:"product_id"`
-		}
-		if err := readJSONBody(r, &body); err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
-			return
-		}
-		if body.EventType == "" {
-			writeError(w, http.StatusBadRequest, "event_type is required")
-			return
-		}
-		// Whitelist the event types we accept. Anything else is a
-		// client bug or an attempt to pollute analytics with junk.
-		switch body.EventType {
-		case "home_view", "product_view":
-			// ok
-		default:
-			writeError(w, http.StatusBadRequest, "unknown event_type")
-			return
-		}
-		if err := repo.RecordPageview(body.EventType, body.ProductID); err != nil {
-			writeError(w, http.StatusInternalServerError, "Failed to record pageview")
-			return
-		}
-		w.WriteHeader(http.StatusNoContent)
-	}
-}
-
-// GetAnalyticsSummaryHandler returns the top-N most-viewed products
-// + total visit count for the admin overview screen.
-//
-// GET /api/admin/analytics/summary?limit=5
-//
-// limit defaults to 5 if absent and is capped at 50 to bound the
-// response payload.
-func GetAnalyticsSummaryHandler(repo *AnalyticsRepo) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		limit := 5
-		if v := r.URL.Query().Get("limit"); v != "" {
-			if n, err := strconv.Atoi(v); err == nil && n > 0 {
-				limit = n
-			}
-		}
-		if limit > 50 {
-			limit = 50
-		}
-		summary, err := repo.GetSummary(limit)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "Failed to load analytics")
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(summary)
 	}
 }
 

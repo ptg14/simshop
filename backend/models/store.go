@@ -10,7 +10,7 @@ type StoreInfo struct {
 	ID            int64  `json:"id"`
 	Name          string `json:"name"`
 	Description   string `json:"description,omitempty"`
-	LogoURL       string `json:"logo_url,omitempty"`
+	BannerURL     string `json:"banner_url,omitempty"`
 	Phone         string `json:"phone,omitempty"`
 	Email         string `json:"email,omitempty"`
 	Address       string `json:"address,omitempty"`

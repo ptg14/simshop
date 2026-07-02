@@ -1,6 +1,8 @@
 package router
 
 import (
+	"crypto/ed25519"
+	"encoding/hex"
 	"net/http"
 
 	"github.com/gorilla/mux"
@@ -9,13 +11,36 @@ import (
 )
 
 // New returns a mux.Router with all routes and middleware registered.
-func New(productRepo *handler.ProductRepo, storeRepo *handler.StoreRepo, articleRepo *handler.ArticleRepo, eventRepo *handler.EventRepo, analyticsRepo *handler.AnalyticsRepo, uploadCfg *handler.UploadConfig, allowedOrigin string) *mux.Router {
+//
+// [stores] holds admin auth state (challenges + session tokens). When
+// nil, admin auth is fully bypassed (no challenge/verify endpoints
+// registered, every write subrouter is unprotected). That matches the
+// behavior before admin auth was introduced so older deployments
+// don't crash if they haven't been configured.
+//
+// [adminPublicKeyHex] is the hex-encoded Ed25519 public key. When
+// empty the middleware is a no-op (same back-compat reasoning).
+func New(productRepo *handler.ProductRepo, storeRepo *handler.StoreRepo, articleRepo *handler.ArticleRepo, eventRepo *handler.EventRepo, uploadCfg *handler.UploadConfig, stores *handler.SessionStore, adminPublicKeyHex string, allowedOrigin string) *mux.Router {
 	r := mux.NewRouter()
 	// Global middleware – use configurable allowed origin.
 	r.Use(middleware.CORSMiddleware(allowedOrigin))
 
 	// Rate limit mutating endpoints: 10 req/s with burst of 20.
 	rateLimit := middleware.RateLimit(10, 20)
+
+	// Decode the admin public key once. Empty / malformed → disabled.
+	var adminPub ed25519.PublicKey
+	if adminPublicKeyHex != "" {
+		raw, err := hex.DecodeString(adminPublicKeyHex)
+		if err != nil || len(raw) != ed25519.PublicKeySize {
+			// Bad config — leave adminPub nil so the middleware
+			// no-ops. Server startup logs the warning.
+			adminPub = nil
+		} else {
+			adminPub = ed25519.PublicKey(raw)
+		}
+	}
+	adminAuth := middleware.RequireAdminSession(stores, len(adminPub))
 
 	// Ensure preflight requests for API paths always return CORS headers.
 	// Some clients issue OPTIONS preflight to endpoints that are method-restricted;
@@ -32,24 +57,41 @@ func New(productRepo *handler.ProductRepo, storeRepo *handler.StoreRepo, article
 	// Health
 	r.HandleFunc("/health", handler.HealthHandler).Methods(http.MethodGet)
 
+	// Admin auth (challenge + verify + logout) — public. Wrapping
+	// these in rateLimit (and later RequireAdminSession) would
+	// deadlock the very endpoint needed to GET a session token.
+	if stores != nil && len(adminPub) > 0 {
+		authWrite := r.PathPrefix("/api/admin/auth").Subrouter()
+		// No rate limit on verify: legitimate admins signing in would
+		// hit it once per browser tab. We rely on the secret-key
+		// verification being computationally cheap (~µs) and the
+		// nonce TTL of 60s to bound abuse.
+		authWrite.HandleFunc("/challenge", handler.ChallengeHandler(stores)).Methods(http.MethodPost)
+		authWrite.HandleFunc("/verify", handler.VerifyHandler(stores, adminPub)).Methods(http.MethodPost)
+		authWrite.HandleFunc("/logout", handler.LogoutHandler(stores)).Methods(http.MethodPost)
+	}
+
 	// Product routes – the handler package expects a repository.
 	// eventRepo decorates each read with effective_price + current_event.
 	r.HandleFunc("/api/products", handler.GetProductsHandler(productRepo, eventRepo)).Methods(http.MethodGet)
 	r.HandleFunc("/api/products/{id}", handler.GetProductHandler(productRepo, eventRepo)).Methods(http.MethodGet)
 
-	// Mutating product routes with rate limiting.
+	// Mutating product routes with rate limiting + admin auth.
+	// Middleware order: RateLimit first (cheap, applies to every
+	// write to throttle brute-force), then RequireAdminSession (more
+	// expensive because of the map lookup).
 	productsWrite := r.PathPrefix("/api/products").Subrouter()
 	productsWrite.Use(rateLimit)
+	productsWrite.Use(adminAuth)
 	productsWrite.HandleFunc("", handler.CreateProductHandler(productRepo)).Methods(http.MethodPost)
 	productsWrite.HandleFunc("/{id}", handler.UpdateProductHandler(productRepo)).Methods(http.MethodPut)
 	productsWrite.HandleFunc("/{id}", handler.DeleteProductHandler(productRepo)).Methods(http.MethodDelete)
 
-	// Categories
-	r.HandleFunc("/api/categories", handler.GetCategoriesHandler(productRepo)).Methods(http.MethodGet)
 	// Structured categories with their large-category parent (for frontend hierarchy).
 	r.HandleFunc("/api/categories/with-parent", handler.GetCategoriesWithParentHandler(productRepo)).Methods(http.MethodGet)
 	categoriesWrite := r.PathPrefix("/api/categories").Subrouter()
 	categoriesWrite.Use(rateLimit)
+	categoriesWrite.Use(adminAuth)
 	categoriesWrite.HandleFunc("", handler.CreateCategoryHandler(productRepo)).Methods(http.MethodPost)
 	categoriesWrite.HandleFunc("/{name}", handler.DeleteCategoryHandler(productRepo)).Methods(http.MethodDelete)
 
@@ -57,20 +99,23 @@ func New(productRepo *handler.ProductRepo, storeRepo *handler.StoreRepo, article
 	r.HandleFunc("/api/large-categories", handler.GetLargeCategoriesHandler(productRepo)).Methods(http.MethodGet)
 	largeCategoriesWrite := r.PathPrefix("/api/large-categories").Subrouter()
 	largeCategoriesWrite.Use(rateLimit)
+	largeCategoriesWrite.Use(adminAuth)
 	largeCategoriesWrite.HandleFunc("", handler.CreateLargeCategoryHandler(productRepo)).Methods(http.MethodPost)
 	largeCategoriesWrite.HandleFunc("/{name}", handler.DeleteLargeCategoryHandler(productRepo)).Methods(http.MethodDelete)
 
 	// Site info (singleton). GET is public (used by home + product detail),
-	// PUT is admin-only and rate-limited.
+	// PUT is admin-only.
 	r.HandleFunc("/api/store-info", handler.GetStoreInfoHandler(storeRepo)).Methods(http.MethodGet)
 	storeInfoWrite := r.PathPrefix("/api/store-info").Subrouter()
 	storeInfoWrite.Use(rateLimit)
+	storeInfoWrite.Use(adminAuth)
 	storeInfoWrite.HandleFunc("", handler.UpdateStoreInfoHandler(storeRepo)).Methods(http.MethodPut)
 
-	// Banners (carousel). GET is public; mutating routes are rate-limited.
+	// Banners (carousel). GET is public; mutating routes require admin auth.
 	r.HandleFunc("/api/banners", handler.ListBannersHandler(articleRepo)).Methods(http.MethodGet)
 	bannersWrite := r.PathPrefix("/api/banners").Subrouter()
 	bannersWrite.Use(rateLimit)
+	bannersWrite.Use(adminAuth)
 	bannersWrite.HandleFunc("", handler.CreateBannerHandler(articleRepo)).Methods(http.MethodPost)
 	bannersWrite.HandleFunc("/{id}", handler.UpdateBannerHandler(articleRepo)).Methods(http.MethodPut)
 	bannersWrite.HandleFunc("/{id}", handler.DeleteBannerHandler(articleRepo)).Methods(http.MethodDelete)
@@ -84,6 +129,7 @@ func New(productRepo *handler.ProductRepo, storeRepo *handler.StoreRepo, article
 	r.HandleFunc("/api/events/{id}", handler.GetEventHandler(eventRepo)).Methods(http.MethodGet)
 	eventsWrite := r.PathPrefix("/api/events").Subrouter()
 	eventsWrite.Use(rateLimit)
+	eventsWrite.Use(adminAuth)
 	eventsWrite.HandleFunc("", handler.CreateEventHandler(eventRepo)).Methods(http.MethodPost)
 	eventsWrite.HandleFunc("/{id}", handler.UpdateEventHandler(eventRepo)).Methods(http.MethodPut)
 	eventsWrite.HandleFunc("/{id}", handler.DeleteEventHandler(eventRepo)).Methods(http.MethodDelete)
@@ -94,22 +140,16 @@ func New(productRepo *handler.ProductRepo, storeRepo *handler.StoreRepo, article
 	r.HandleFunc("/api/articles", handler.ListArticlesHandler(articleRepo)).Methods(http.MethodGet)
 	articlesWrite := r.PathPrefix("/api/articles").Subrouter()
 	articlesWrite.Use(rateLimit)
+	articlesWrite.Use(adminAuth)
 	articlesWrite.HandleFunc("", handler.CreateArticleHandler(articleRepo)).Methods(http.MethodPost)
 	articlesWrite.HandleFunc("/{id}", handler.UpdateArticleHandler(articleRepo)).Methods(http.MethodPut)
 	articlesWrite.HandleFunc("/{id}", handler.DeleteArticleHandler(articleRepo)).Methods(http.MethodDelete)
 
-	// Upload route with rate limiting.
+	// Upload route with rate limiting + admin auth.
 	uploadWrite := r.PathPrefix("/api/upload").Subrouter()
 	uploadWrite.Use(rateLimit)
+	uploadWrite.Use(adminAuth)
 	uploadWrite.HandleFunc("", handler.UploadImageHandler(uploadCfg)).Methods(http.MethodPost)
-
-	// Analytics. POST is anonymous + rate-limited (clients fire it
-	// from initState on every page load). GET is for the admin
-	// overview — same path prefix convention as other admin routes.
-	analyticsWrite := r.PathPrefix("/api/analytics").Subrouter()
-	analyticsWrite.Use(rateLimit)
-	analyticsWrite.HandleFunc("/pageview", handler.PostPageviewHandler(analyticsRepo)).Methods(http.MethodPost)
-	r.HandleFunc("/api/admin/analytics/summary", handler.GetAnalyticsSummaryHandler(analyticsRepo)).Methods(http.MethodGet)
 
 	// Serve uploaded files as static content.
 	uploadDir := http.Dir(uploadCfg.UploadDir)

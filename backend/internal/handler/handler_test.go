@@ -59,20 +59,22 @@ func newTestServer(t *testing.T) (*httptest.Server, *sql.DB, func()) {
 		t.Fatalf("ping db: %v", err)
 	}
 
-	// Apply schema by reusing the production migrations.
-	d := &db.DB{DB: database}
-	if err := applyMigrations(d); err != nil {
+	// Apply schema by reusing the production migrations. The
+	// test harness goes through the same SchemaFor registry so
+	// the SQLite test schema can never drift from what production
+	// sees against a real SQLite file.
+	if err := applyMigrations(database); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
 
-	productRepo := db.NewProductRepo(database)
-	storeRepo := db.NewStoreRepo(database)
-	articleRepo := db.NewArticleRepo(database)
-	eventRepo := db.NewEventRepo(database)
-	analyticsRepo := db.NewAnalyticsRepo(database)
+	dialect := db.DialectSQLite
+	productRepo := db.NewProductRepo(database, dialect)
+	storeRepo := db.NewStoreRepo(database, dialect)
+	articleRepo := db.NewArticleRepo(database, dialect)
+	eventRepo := db.NewEventRepo(database, dialect)
 	uploadCfg := uploadConfigForTest(uploadsDir)
 
-	r := router.New(productRepo, storeRepo, articleRepo, eventRepo, analyticsRepo, uploadCfg, "*")
+	r := router.New(productRepo, storeRepo, articleRepo, eventRepo, uploadCfg, handler.NewSessionStore(), "", "*")
 	srv := httptest.NewServer(r)
 
 	cleanup := func() {
@@ -82,99 +84,20 @@ func newTestServer(t *testing.T) (*httptest.Server, *sql.DB, func()) {
 	return srv, database, cleanup
 }
 
-// applyMigrations is a copy of db.runMigrations so the test doesn't reach
-// into the package's private API. Kept in lock-step manually; if the
-// production schema changes, mirror the change here.
-func applyMigrations(d *db.DB) error {
-	stmts := []string{
-		`CREATE TABLE IF NOT EXISTS products (
-            id TEXT PRIMARY KEY,
-            name TEXT NOT NULL,
-            description TEXT NOT NULL,
-            price REAL NOT NULL,
-            original_price REAL,
-            image_url TEXT,
-            category TEXT NOT NULL,
-            store_id TEXT,
-            rating REAL NOT NULL,
-            reviews INTEGER,
-            stock INTEGER,
-            specs TEXT NOT NULL DEFAULT '[]'
-        )`,
-		`CREATE TABLE IF NOT EXISTS product_images (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            product_id TEXT NOT NULL,
-            image_url TEXT NOT NULL,
-            ord INTEGER NOT NULL DEFAULT 0,
-            FOREIGN KEY(product_id) REFERENCES products(id) ON DELETE CASCADE
-        )`,
-		`CREATE TABLE IF NOT EXISTS product_options (
-            id TEXT PRIMARY KEY,
-            product_id TEXT NOT NULL,
-            name TEXT NOT NULL,
-            image_urls TEXT NOT NULL DEFAULT '[]',
-            ord INTEGER NOT NULL DEFAULT 0,
-            FOREIGN KEY(product_id) REFERENCES products(id) ON DELETE CASCADE
-        )`,
-		`CREATE TABLE IF NOT EXISTS large_categories (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL UNIQUE
-        )`,
-		`CREATE TABLE IF NOT EXISTS categories (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL UNIQUE,
-            large_category_id INTEGER,
-            FOREIGN KEY(large_category_id) REFERENCES large_categories(id) ON DELETE SET NULL
-        )`,
-		`CREATE TABLE IF NOT EXISTS store_info (
-            id INTEGER PRIMARY KEY CHECK (id = 1),
-            name TEXT NOT NULL DEFAULT 'simshop',
-            description TEXT NOT NULL DEFAULT '',
-            logo_url TEXT NOT NULL DEFAULT '',
-            phone TEXT NOT NULL DEFAULT '',
-            email TEXT NOT NULL DEFAULT '',
-            address TEXT NOT NULL DEFAULT '',
-            google_maps_url TEXT NOT NULL DEFAULT ''
-        )`,
-		`INSERT OR IGNORE INTO store_info (id) VALUES (1)`,
-		`ALTER TABLE products ADD COLUMN categories TEXT`,
-		`CREATE TABLE IF NOT EXISTS articles (
-			id TEXT PRIMARY KEY,
-			title TEXT NOT NULL,
-			body_markdown TEXT NOT NULL DEFAULT '',
-			cover_image_url TEXT NOT NULL DEFAULT '',
-			product_ids TEXT NOT NULL DEFAULT '[]',
-			created_at INTEGER NOT NULL
-		)`,
-		`CREATE TABLE IF NOT EXISTS banner_slides (
-			id TEXT PRIMARY KEY,
-			image_url TEXT NOT NULL,
-			title TEXT NOT NULL DEFAULT '',
-			subtitle TEXT NOT NULL DEFAULT '',
-			ord INTEGER NOT NULL DEFAULT 0,
-			article_id TEXT,
-			FOREIGN KEY(article_id) REFERENCES articles(id) ON DELETE SET NULL
-		)`,
-		`CREATE TABLE IF NOT EXISTS pageview_events (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			event_type TEXT NOT NULL,
-			product_id TEXT,
-			created_at INTEGER NOT NULL
-		)`,
-		`CREATE INDEX IF NOT EXISTS idx_pageview_events_type_created ON pageview_events(event_type, created_at)`,
-		`CREATE TABLE IF NOT EXISTS events (
-			id              TEXT PRIMARY KEY,
-			name            TEXT NOT NULL DEFAULT '',
-			end_time        INTEGER,
-			discount_type   TEXT NOT NULL,
-			discount_value  REAL  NOT NULL,
-			product_ids     TEXT NOT NULL DEFAULT '[]',
-			created_at      INTEGER NOT NULL
-		)`,
-		`CREATE INDEX IF NOT EXISTS idx_events_end_time ON events(end_time)`,
-	}
-	for _, s := range stmts {
-		if _, err := d.Exec(s); err != nil {
+// applyMigrations runs the production schema registry against a raw
+// *sql.DB. Tests stay SQLite-only; we hardcode the dialect so the
+// path matches what production sees on a SQLite file.
+func applyMigrations(database *sql.DB) error {
+	for _, stmt := range db.SchemaFor(db.DialectSQLite) {
+		if stmt == "" {
+			continue
+		}
+		if _, err := database.Exec(stmt); err != nil {
+			// SQLite ALTER TABLE on a pre-existing column errors with
+			// "duplicate column name" — treat as no-op.
+			if strings.Contains(err.Error(), "duplicate column name") {
+				continue
+			}
 			return err
 		}
 	}
@@ -217,7 +140,7 @@ func TestStoreInfoUpdatePersists(t *testing.T) {
 	body := strings.NewReader(`{
         "name": "Cửa hàng ABC",
         "description": "Chuyên đồ gia dụng",
-        "logo_url": "http://localhost:8080/uploads/seed-shirt.jpg",
+        "banner_url": "http://localhost:8080/uploads/seed-shirt.jpg",
         "phone": "0901234567",
         "email": "abc@example.com",
         "address": "12 Nguyễn Huệ, Q1"
@@ -313,7 +236,10 @@ func TestStoreInfoGoogleMapsUrlPersists(t *testing.T) {
 	if resp3.StatusCode != http.StatusOK {
 		t.Fatalf("clear PUT status = %d, want 200", resp3.StatusCode)
 	}
-	resp4, _ := http.Get(srv.URL + "/api/store-info")
+	resp4, err := http.Get(srv.URL + "/api/store-info")
+	if err != nil {
+		t.Fatalf("GET after clear: %v", err)
+	}
 	defer resp4.Body.Close()
 	var got2 map[string]any
 	if err := json.NewDecoder(resp4.Body).Decode(&got2); err != nil {
@@ -575,139 +501,6 @@ func TestBannerCreateRequiresImageURL(t *testing.T) {
 	respBody, _ := readAll(resp)
 	if !bytes.Contains(respBody, []byte("image_url is required")) {
 		t.Errorf("body = %s, want it to mention 'image_url is required'", string(respBody))
-	}
-}
-
-// TestPageviewRecorded asserts that POST /api/analytics/pageview stores
-// a row in pageview_events with the correct event_type and product_id.
-// The endpoint is anonymous + rate-limited; success is the only contract.
-func TestPageviewRecorded(t *testing.T) {
-	srv, dbConn, cleanup := newTestServer(t)
-	defer cleanup()
-
-	body := strings.NewReader(`{"event_type": "product_view", "product_id": "p-1"}`)
-	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/api/analytics/pageview", body)
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatalf("POST: %v", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusNoContent {
-		respBody, _ := readAll(resp)
-		t.Fatalf("status = %d, body=%s, want 204", resp.StatusCode, string(respBody))
-	}
-
-	var count int
-	var eventType, productID string
-	var productIDNullable sql.NullString
-	row := dbConn.QueryRow(`SELECT COUNT(*), MAX(event_type), MAX(product_id) FROM pageview_events`)
-	if err := row.Scan(&count, &eventType, &productIDNullable); err != nil {
-		t.Fatalf("scan: %v", err)
-	}
-	if productIDNullable.Valid {
-		productID = productIDNullable.String
-	}
-	if count != 1 {
-		t.Errorf("pageview_events count = %d, want 1", count)
-	}
-	if eventType != "product_view" {
-		t.Errorf("event_type = %q, want product_view", eventType)
-	}
-	if productID != "p-1" {
-		t.Errorf("product_id = %q, want p-1", productID)
-	}
-}
-
-// TestAnalyticsSummaryTopProducts asserts that GET /api/admin/analytics/summary
-// returns total visit count and the top-N most-viewed products in
-// descending view-count order. We POST 5 product views across 3 products
-// (p-A: 3, p-B: 1, p-C: 1) and 1 home view, then ask for top 2 — p-A must
-// rank first, p-B and p-C must not appear.
-func TestAnalyticsSummaryTopProducts(t *testing.T) {
-	srv, dbConn, cleanup := newTestServer(t)
-	defer cleanup()
-
-	// Seed product rows so the LEFT JOIN has something to join against.
-	// p-A / p-B / p-C need ids so the pageview_events.product_id FK-like
-	// reference is valid; the join is LEFT so missing products would
-	// still appear, but we want name + thumbnail populated for the UI.
-	for _, p := range []struct{ id, name, img string }{
-		{"p-A", "Áo thun A", "http://localhost:8080/uploads/a.jpg"},
-		{"p-B", "Áo thun B", "http://localhost:8080/uploads/b.jpg"},
-		{"p-C", "Áo thun C", "http://localhost:8080/uploads/c.jpg"},
-	} {
-		if _, err := dbConn.Exec(
-			`INSERT INTO products (id, name, description, price, category, rating, specs) VALUES (?, ?, '', 0, 'cat', 0, '[]')`,
-			p.id, p.name,
-		); err != nil {
-			t.Fatalf("seed product %s: %v", p.id, err)
-		}
-	}
-
-	// Fire 5 product views: 3 for p-A, 1 for p-B, 1 for p-C; plus 1 home_view.
-	views := []struct{ event, pid string }{
-		{"product_view", "p-A"},
-		{"product_view", "p-A"},
-		{"product_view", "p-A"},
-		{"product_view", "p-B"},
-		{"product_view", "p-C"},
-		{"home_view", ""},
-	}
-	for _, v := range views {
-		var body string
-		if v.pid == "" {
-			body = `{"event_type": "home_view"}`
-		} else {
-			body = `{"event_type": "product_view", "product_id": "` + v.pid + `"}`
-		}
-		req, _ := http.NewRequest(http.MethodPost, srv.URL+"/api/analytics/pageview", strings.NewReader(body))
-		req.Header.Set("Content-Type", "application/json")
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			t.Fatalf("POST %s/%s: %v", v.event, v.pid, err)
-		}
-		resp.Body.Close()
-		if resp.StatusCode != http.StatusNoContent {
-			t.Fatalf("POST %s/%s status = %d, want 204", v.event, v.pid, resp.StatusCode)
-		}
-	}
-
-	resp, err := http.Get(srv.URL + "/api/admin/analytics/summary?limit=2")
-	if err != nil {
-		t.Fatalf("GET summary: %v", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		respBody, _ := readAll(resp)
-		t.Fatalf("summary status = %d, body=%s", resp.StatusCode, string(respBody))
-	}
-
-	var got struct {
-		TotalVisits int `json:"total_visits"`
-		TopProducts []struct {
-			ProductID string `json:"product_id"`
-			Name      string `json:"name"`
-			ImageURL  string `json:"image_url"`
-			ViewCount int    `json:"view_count"`
-		} `json:"top_products"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-
-	// Total visits counts ALL pageview rows (home + product).
-	if got.TotalVisits != 6 {
-		t.Errorf("total_visits = %d, want 6", got.TotalVisits)
-	}
-	if len(got.TopProducts) != 2 {
-		t.Fatalf("top_products len = %d, want 2", len(got.TopProducts))
-	}
-	if got.TopProducts[0].ProductID != "p-A" || got.TopProducts[0].ViewCount != 3 {
-		t.Errorf("top[0] = %+v, want p-A with 3 views", got.TopProducts[0])
-	}
-	if got.TopProducts[1].ProductID != "p-B" || got.TopProducts[1].ViewCount != 1 {
-		t.Errorf("top[1] = %+v, want p-B with 1 view", got.TopProducts[1])
 	}
 }
 

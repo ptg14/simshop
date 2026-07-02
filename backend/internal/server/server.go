@@ -26,11 +26,10 @@ func Start(ctx context.Context) error {
 		return fmt.Errorf("database init: %w", err)
 	}
 
-	productRepo := db.NewProductRepo(database.DB)
-	storeRepo := db.NewStoreRepo(database.DB)
-	articleRepo := db.NewArticleRepo(database.DB)
-	eventRepo := db.NewEventRepo(database.DB)
-	analyticsRepo := db.NewAnalyticsRepo(database.DB)
+	productRepo := db.NewProductRepo(database.DB, database.Dialect)
+	storeRepo := db.NewStoreRepo(database.DB, database.Dialect)
+	articleRepo := db.NewArticleRepo(database.DB, database.Dialect)
+	eventRepo := db.NewEventRepo(database.DB, database.Dialect)
 
 	uploadCfg := &handler.UploadConfig{
 		UploadDir:     cfg.UploadDir,
@@ -44,7 +43,20 @@ func Start(ctx context.Context) error {
 		return fmt.Errorf("create upload dir: %w", err)
 	}
 
-	r := router.New(productRepo, storeRepo, articleRepo, eventRepo, analyticsRepo, uploadCfg, cfg.AllowedOrigin)
+	// Admin auth state. In-memory only — sessions are lost on restart,
+	// which forces the admin to re-prove possession of the secret key
+	// after a deploy. The session/challenge cleanup goroutine runs for
+	// the lifetime of the process; no shutdown hook needed (it dies
+	// with main()).
+	stores := handler.NewSessionStore()
+	go stores.Cleanup()
+	if cfg.AdminPublicKey == "" {
+		log.Printf("WARNING: ADMIN_PUBLIC_KEY is empty — admin auth disabled, all write endpoints are public")
+	} else {
+		log.Printf("admin auth enabled (public key loaded)")
+	}
+
+	r := router.New(productRepo, storeRepo, articleRepo, eventRepo, uploadCfg, stores, cfg.AdminPublicKey, cfg.AllowedOrigin)
 
 	addr := fmt.Sprintf(":%s", cfg.Port)
 	srv := &http.Server{

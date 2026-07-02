@@ -14,34 +14,38 @@ import (
 )
 
 // ProductRepo provides CRUD operations for Product entities.
+//
+// Repos carry the dialect so each SQL fragment can be rewritten to
+// match the driver (Postgres uses $N placeholders + ON CONFLICT DO
+// NOTHING; SQLite uses ? and INSERT OR IGNORE). On SQLite the
+// helpers are no-ops — query strings pass through unchanged — so
+// behavior is identical to the pre-dialect code.
 type ProductRepo struct {
-	db *sql.DB
+	db      *sql.DB
+	dialect Dialect
 }
 
 // NewProductRepo creates a new repository bound to the given DB.
-func NewProductRepo(db *sql.DB) *ProductRepo {
-	return &ProductRepo{db: db}
+// Callers must pass the dialect that was used to open the DB so
+// query rewriting matches the driver.
+func NewProductRepo(db *sql.DB, dialect Dialect) *ProductRepo {
+	return &ProductRepo{db: db, dialect: dialect}
 }
 
-// GetCategories returns all category names persisted in the database.
-func (r *ProductRepo) GetCategories() ([]string, error) {
-	rows, err := r.db.Query(`SELECT name FROM categories ORDER BY name ASC`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var cats []string
-	for rows.Next() {
-		var name string
-		if err := rows.Scan(&name); err != nil {
-			return nil, err
-		}
-		cats = append(cats, name)
-	}
-	if cats == nil {
-		cats = []string{}
-	}
-	return cats, nil
+// exec is a thin wrapper over r.db.Exec that rewrites placeholders
+// for the Postgres dialect. SQLite callers see no change.
+func (r *ProductRepo) exec(query string, args ...any) (sql.Result, error) {
+	return r.db.Exec(r.dialect.Rebind(query), args...)
+}
+
+// query is the Query counterpart of exec.
+func (r *ProductRepo) query(query string, args ...any) (*sql.Rows, error) {
+	return r.db.Query(r.dialect.Rebind(query), args...)
+}
+
+// queryRow is the QueryRow counterpart of exec.
+func (r *ProductRepo) queryRow(query string, args ...any) *sql.Row {
+	return r.db.QueryRow(r.dialect.Rebind(query), args...)
 }
 
 // CategoryInfo represents a category and its optional large category.
@@ -52,7 +56,7 @@ type CategoryInfo struct {
 
 // GetCategoriesWithParent returns all categories with their associated large category name (if any).
 func (r *ProductRepo) GetCategoriesWithParent() ([]CategoryInfo, error) {
-	rows, err := r.db.Query(`SELECT c.name, lc.name FROM categories c LEFT JOIN large_categories lc ON c.large_category_id = lc.id ORDER BY c.name ASC`)
+	rows, err := r.query(`SELECT c.name, lc.name FROM categories c LEFT JOIN large_categories lc ON c.large_category_id = lc.id ORDER BY c.name ASC`)
 	if err != nil {
 		return nil, err
 	}
@@ -77,7 +81,7 @@ func (r *ProductRepo) GetCategoriesWithParent() ([]CategoryInfo, error) {
 
 // GetLargeCategories returns all large category names.
 func (r *ProductRepo) GetLargeCategories() ([]string, error) {
-	rows, err := r.db.Query(`SELECT name FROM large_categories ORDER BY name ASC`)
+	rows, err := r.query(`SELECT name FROM large_categories ORDER BY name ASC`)
 	if err != nil {
 		return nil, err
 	}
@@ -101,7 +105,8 @@ func (r *ProductRepo) AddLargeCategory(name string) error {
 	if name == "" {
 		return nil
 	}
-	_, err := r.db.Exec(`INSERT OR IGNORE INTO large_categories (name) VALUES (?)`, name)
+	_, err := r.exec(r.dialect.UpsertSQL(
+		`INSERT INTO large_categories (name) VALUES (?)`, "name"))
 	return err
 }
 
@@ -110,7 +115,7 @@ func (r *ProductRepo) DeleteLargeCategory(name string) error {
 	if name == "" {
 		return nil
 	}
-	_, err := r.db.Exec(`DELETE FROM large_categories WHERE name=?`, name)
+	_, err := r.exec(`DELETE FROM large_categories WHERE name=?`, name)
 	return err
 }
 
@@ -120,7 +125,8 @@ func (r *ProductRepo) AddCategory(name string) error {
 	if name == "" {
 		return nil
 	}
-	_, err := r.db.Exec(`INSERT OR IGNORE INTO categories (name) VALUES (?)`, name)
+	_, err := r.exec(r.dialect.UpsertSQL(
+		`INSERT INTO categories (name) VALUES (?)`, "name"))
 	return err
 }
 
@@ -133,14 +139,15 @@ func (r *ProductRepo) AddCategoryWithParent(name, largeName string) error {
 	// Resolve large category ID if provided.
 	var largeID sql.NullInt64
 	if largeName != "" {
-		err := r.db.QueryRow(`SELECT id FROM large_categories WHERE name = ?`, largeName).Scan(&largeID)
+		err := r.queryRow(`SELECT id FROM large_categories WHERE name = ?`, largeName).Scan(&largeID)
 		if err != nil {
 			// If not found, create the large category first.
-			if _, err2 := r.db.Exec(`INSERT OR IGNORE INTO large_categories (name) VALUES (?)`, largeName); err2 != nil {
+			if _, err2 := r.exec(r.dialect.UpsertSQL(
+				`INSERT INTO large_categories (name) VALUES (?)`, "name"), largeName); err2 != nil {
 				return err2
 			}
 			// Retrieve the newly inserted ID.
-			err = r.db.QueryRow(`SELECT id FROM large_categories WHERE name = ?`, largeName).Scan(&largeID)
+			err = r.queryRow(`SELECT id FROM large_categories WHERE name = ?`, largeName).Scan(&largeID)
 			if err != nil {
 				return err
 			}
@@ -148,7 +155,8 @@ func (r *ProductRepo) AddCategoryWithParent(name, largeName string) error {
 	}
 	// Insert category with foreign key (may be NULL).
 	if largeID.Valid {
-		_, err := r.db.Exec(`INSERT OR IGNORE INTO categories (name, large_category_id) VALUES (?, ?)`, name, largeID.Int64)
+		_, err := r.exec(r.dialect.UpsertSQL(
+			`INSERT INTO categories (name, large_category_id) VALUES (?, ?)`, "name"), name, largeID.Int64)
 		return err
 	}
 	// No parent.
@@ -160,45 +168,8 @@ func (r *ProductRepo) DeleteCategory(name string) error {
 	if name == "" {
 		return nil
 	}
-	_, err := r.db.Exec(`DELETE FROM categories WHERE name=?`, name)
+	_, err := r.exec(`DELETE FROM categories WHERE name=?`, name)
 	return err
-}
-
-// GetAll returns all products.
-func (r *ProductRepo) GetAll() ([]models.Product, error) {
-	rows, err := r.db.Query(`SELECT id, name, description, price, original_price, image_url, category, store_id, rating, reviews, stock, specs, categories FROM products`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var products []models.Product
-	for rows.Next() {
-		var p models.Product
-		var specsJSON string
-		var categoriesJSON sql.NullString
-		if err := rows.Scan(&p.ID, &p.Name, &p.Description, &p.Price, &p.OriginalPrice, &p.ImageURL, &p.Category, &p.StoreID, &p.Rating, &p.Reviews, &p.Stock, &specsJSON, &categoriesJSON); err != nil {
-			return nil, err
-		}
-		if err := json.Unmarshal([]byte(specsJSON), &p.Specs); err != nil {
-			return nil, err
-		}
-		// parse categories JSON if present
-		p.Categories = []string{}
-		if categoriesJSON.Valid && categoriesJSON.String != "" {
-			_ = json.Unmarshal([]byte(categoriesJSON.String), &p.Categories)
-		}
-		// Load images for this product
-		imgs, _ := r.getImagesForProduct(p.ID)
-		p.Images = imgs
-		if p.ImageURL == "" && len(imgs) > 0 {
-			p.ImageURL = imgs[0]
-		}
-		// Load options
-		opts, _ := r.getOptionsForProduct(p.ID)
-		p.Options = opts
-		products = append(products, p)
-	}
-	return products, nil
 }
 
 // GetByID returns a single product by its ID.
@@ -206,7 +177,7 @@ func (r *ProductRepo) GetByID(id string) (*models.Product, error) {
 	var p models.Product
 	var specsJSON string
 	var categoriesJSON sql.NullString
-	err := r.db.QueryRow(`SELECT id, name, description, price, original_price, image_url, category, store_id, rating, reviews, stock, specs, categories FROM products WHERE id=?`, id).
+	err := r.queryRow(`SELECT id, name, description, price, original_price, image_url, category, store_id, rating, reviews, stock, specs, categories FROM products WHERE id=?`, id).
 		Scan(&p.ID, &p.Name, &p.Description, &p.Price, &p.OriginalPrice, &p.ImageURL, &p.Category, &p.StoreID, &p.Rating, &p.Reviews, &p.Stock, &specsJSON, &categoriesJSON)
 	if err != nil {
 		return nil, err
@@ -247,14 +218,14 @@ func (r *ProductRepo) Create(p *models.Product) error {
 	}()
 
 	// Use primary image_url if provided; otherwise leave null and rely on product_images.
-	if _, err = tx.Exec(`INSERT INTO products (id, name, description, price, original_price, image_url, category, store_id, rating, reviews, stock, specs, categories) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+	if _, err = tx.Exec(r.dialect.Rebind(`INSERT INTO products (id, name, description, price, original_price, image_url, category, store_id, rating, reviews, stock, specs, categories) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`),
 		p.ID, p.Name, p.Description, p.Price, p.OriginalPrice, p.ImageURL, p.Category, p.StoreID, p.Rating, p.Reviews, p.Stock, string(specsJSON), string(categoriesJSON)); err != nil {
 		return err
 	}
 
 	// Insert images if any
 	for i, url := range p.Images {
-		if _, err = tx.Exec(`INSERT INTO product_images (product_id, image_url, ord) VALUES (?,?,?)`, p.ID, url, i); err != nil {
+		if _, err = tx.Exec(r.dialect.Rebind(`INSERT INTO product_images (product_id, image_url, ord) VALUES (?,?,?)`), p.ID, url, i); err != nil {
 			return err
 		}
 	}
@@ -264,7 +235,7 @@ func (r *ProductRepo) Create(p *models.Product) error {
 			o.ID = uuid.New().String()
 		}
 		imgJSON, _ := json.Marshal(o.ImageURLs)
-		if _, err = tx.Exec(`INSERT INTO product_options (id, product_id, name, image_urls, ord) VALUES (?,?,?,?,?)`, o.ID, p.ID, o.Name, string(imgJSON), i); err != nil {
+		if _, err = tx.Exec(r.dialect.Rebind(`INSERT INTO product_options (id, product_id, name, image_urls, ord) VALUES (?,?,?,?,?)`), o.ID, p.ID, o.Name, string(imgJSON), i); err != nil {
 			return err
 		}
 	}
@@ -304,25 +275,25 @@ func (r *ProductRepo) Update(id string, p *models.Product) error {
 		}
 	}()
 
-	if _, err = tx.Exec(`UPDATE products SET name=?, description=?, price=?, original_price=?, image_url=?, category=?, store_id=?, rating=?, reviews=?, stock=?, specs=?, categories=? WHERE id=?`,
+	if _, err = tx.Exec(r.dialect.Rebind(`UPDATE products SET name=?, description=?, price=?, original_price=?, image_url=?, category=?, store_id=?, rating=?, reviews=?, stock=?, specs=?, categories=? WHERE id=?`),
 		p.Name, p.Description, p.Price, p.OriginalPrice, p.ImageURL, p.Category, p.StoreID, p.Rating, p.Reviews, p.Stock, string(specsJSON), string(categoriesJSON), id); err != nil {
 		log.Printf("update product %s: UPDATE products: %v", id, err)
 		return fmt.Errorf("update product %s: %w", id, err)
 	}
 
 	// Replace images: delete existing and insert provided list
-	if _, err = tx.Exec(`DELETE FROM product_images WHERE product_id=?`, id); err != nil {
+	if _, err = tx.Exec(r.dialect.Rebind(`DELETE FROM product_images WHERE product_id=?`), id); err != nil {
 		log.Printf("update product %s: DELETE product_images: %v", id, err)
 		return fmt.Errorf("delete images for product %s: %w", id, err)
 	}
 	for i, url := range p.Images {
-		if _, err = tx.Exec(`INSERT INTO product_images (product_id, image_url, ord) VALUES (?,?,?)`, id, url, i); err != nil {
+		if _, err = tx.Exec(r.dialect.Rebind(`INSERT INTO product_images (product_id, image_url, ord) VALUES (?,?,?)`), id, url, i); err != nil {
 			log.Printf("update product %s: INSERT product_images[%d]=%s: %v", id, i, url, err)
 			return fmt.Errorf("insert image %d for product %s: %w", i, id, err)
 		}
 	}
 	// Replace options: delete existing and insert provided list
-	if _, err = tx.Exec(`DELETE FROM product_options WHERE product_id=?`, id); err != nil {
+	if _, err = tx.Exec(r.dialect.Rebind(`DELETE FROM product_options WHERE product_id=?`), id); err != nil {
 		log.Printf("update product %s: DELETE product_options: %v", id, err)
 		return fmt.Errorf("delete options for product %s: %w", id, err)
 	}
@@ -342,7 +313,7 @@ func (r *ProductRepo) Update(id string, p *models.Product) error {
 		}
 		seenIDs[o.ID] = struct{}{}
 		imgJSON, _ := json.Marshal(o.ImageURLs)
-		if _, err = tx.Exec(`INSERT INTO product_options (id, product_id, name, image_urls, ord) VALUES (?,?,?,?,?)`, o.ID, id, o.Name, string(imgJSON), i); err != nil {
+		if _, err = tx.Exec(r.dialect.Rebind(`INSERT INTO product_options (id, product_id, name, image_urls, ord) VALUES (?,?,?,?,?)`), o.ID, id, o.Name, string(imgJSON), i); err != nil {
 			log.Printf("update product %s: INSERT product_options[%d] id=%s name=%s: %v", id, i, o.ID, o.Name, err)
 			return fmt.Errorf("insert option %d for product %s: %w", i, id, err)
 		}
@@ -354,10 +325,10 @@ func (r *ProductRepo) Update(id string, p *models.Product) error {
 func (r *ProductRepo) Delete(id string) error {
 	// Delete product and its images (FK with ON DELETE CASCADE handles images,
 	// but ensure deletion order).
-	if _, err := r.db.Exec(`DELETE FROM product_images WHERE product_id=?`, id); err != nil {
+	if _, err := r.exec(`DELETE FROM product_images WHERE product_id=?`, id); err != nil {
 		return err
 	}
-	_, err := r.db.Exec(`DELETE FROM products WHERE id=?`, id)
+	_, err := r.exec(`DELETE FROM products WHERE id=?`, id)
 	return err
 }
 
@@ -379,7 +350,21 @@ func (r *ProductRepo) GetAllFiltered(f models.ProductFilter) (*models.ProductLis
 		args = append(args, f.Category)
 	}
 	if f.Search != "" {
-		conditions = append(conditions, "name LIKE ?")
+		// Case-insensitive substring match on the product name.
+		// The previous `name LIKE ?` was case-sensitive on
+		// Postgres and only ASCII-folding on SQLite, so
+		// typing "IPHONE" returned zero matches even though
+		// the catalog contains "iPhone". The dialect helper
+		// wraps both sides in LOWER() so the search is
+		// case-insensitive on both backends.
+		//
+		// Note: SQLite's default LOWER() is C-locale only —
+		// it folds ASCII letters but NOT non-ASCII ones
+		// (e.g. Vietnamese "Á" stays distinct from "á").
+		// Diacritic-insensitive search would need a
+		// normalisation pipeline; this predicate handles
+		// the upper/lower case the customer reported.
+		conditions = append(conditions, r.dialect.CaseInsensitiveNameLike("?"))
 		args = append(args, "%"+f.Search+"%")
 	}
 	if f.MinPrice != nil {
@@ -407,11 +392,13 @@ func (r *ProductRepo) GetAllFiltered(f models.ProductFilter) (*models.ProductLis
 	// Count total matching rows
 	var total int
 	countQuery := "SELECT COUNT(*) FROM products" + whereClause
-	if err := r.db.QueryRow(countQuery, args...).Scan(&total); err != nil {
+	if err := r.queryRow(countQuery, args...).Scan(&total); err != nil {
 		return nil, fmt.Errorf("count products: %w", err)
 	}
 
-	// Sort
+	// Sort. SQLite has a hidden rowid but Postgres doesn't, so we
+	// sort by id DESC for "newest" — UUIDs are time-ordered enough
+	// for the admin overview's "most recently created" view.
 	orderClause := " ORDER BY id"
 	switch f.SortBy {
 	case "price_asc":
@@ -423,7 +410,7 @@ func (r *ProductRepo) GetAllFiltered(f models.ProductFilter) (*models.ProductLis
 	case "name":
 		orderClause = " ORDER BY name ASC"
 	case "newest":
-		orderClause = " ORDER BY rowid DESC"
+		orderClause = " ORDER BY id DESC"
 	}
 
 	offset := (f.Page - 1) * f.PageSize
@@ -432,7 +419,7 @@ func (r *ProductRepo) GetAllFiltered(f models.ProductFilter) (*models.ProductLis
 		whereClause + orderClause + " LIMIT ? OFFSET ?"
 	args = append(args, f.PageSize, offset)
 
-	rows, err := r.db.Query(query, args...)
+	rows, err := r.query(query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("query products: %w", err)
 	}
@@ -482,7 +469,7 @@ func (r *ProductRepo) GetAllFiltered(f models.ProductFilter) (*models.ProductLis
 
 // getImagesForProduct returns ordered image URLs for a product.
 func (r *ProductRepo) getImagesForProduct(productID string) ([]string, error) {
-	rows, err := r.db.Query(`SELECT image_url FROM product_images WHERE product_id=? ORDER BY ord ASC`, productID)
+	rows, err := r.query(`SELECT image_url FROM product_images WHERE product_id=? ORDER BY ord ASC`, productID)
 	if err != nil {
 		return nil, err
 	}
@@ -503,7 +490,7 @@ func (r *ProductRepo) getImagesForProduct(productID string) ([]string, error) {
 
 // getOptionsForProduct returns the ordered options for a product.
 func (r *ProductRepo) getOptionsForProduct(productID string) ([]models.Option, error) {
-	rows, err := r.db.Query(`SELECT id, name, image_urls FROM product_options WHERE product_id=? ORDER BY ord ASC`, productID)
+	rows, err := r.query(`SELECT id, name, image_urls FROM product_options WHERE product_id=? ORDER BY ord ASC`, productID)
 	if err != nil {
 		return nil, err
 	}

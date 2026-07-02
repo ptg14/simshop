@@ -270,7 +270,8 @@ func fetchProductStubs(productRepo *ProductRepo, ids []string) []map[string]any 
 // must also be present.
 func validateArticle(a *models.Article, requireID bool) error {
 	a.Title = strings.TrimSpace(a.Title)
-	a.BodyMarkdown = a.BodyMarkdown // body is preserved verbatim
+	// BodyMarkdown is preserved verbatim — no normalization (no
+	// trim/HTML-escape) so the author controls formatting.
 	a.CoverImageURL = strings.TrimSpace(a.CoverImageURL)
 	if requireID && a.ID == "" {
 		return fmt.Errorf("id is required")

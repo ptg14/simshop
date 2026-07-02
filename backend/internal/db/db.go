@@ -6,18 +6,33 @@ import (
 	"fmt"
 	"time"
 
+	_ "github.com/jackc/pgx/v5/stdlib"
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/ptg14/simshop/backend/internal/config"
 )
 
-// DB wraps a *sql.DB and provides helper methods.
+// DB wraps a *sql.DB and provides helper methods. The dialect is
+// stored alongside the connection so callers that take a *DB can
+// also learn which driver is in use (e.g. to pass into repos that
+// need it for placeholder rewriting).
 type DB struct {
 	*sql.DB
+	Dialect Dialect
 }
 
 // New creates a new DB instance based on the provided configuration.
+// Driver selection is driven by the DATABASE_URL scheme:
+//   - "postgres://" / "postgresql://" → PostgreSQL via pgx
+//   - "sqlite://"   / "sqlite3://"   → SQLite via mattn/go-sqlite3
+//   - bare path     (e.g. "./simshop.db") → SQLite (backward compat)
+//
+// The detected dialect is what the schema and the repos branch on, so
+// every SQL fragment is dialect-aware.
 func New(cfg *config.Config) (*DB, error) {
-	db, err := sql.Open("sqlite3", cfg.DatabaseURL)
+	dialect := DetectDialect(cfg.DatabaseURL)
+	dsn := ResolveDSN(cfg.DatabaseURL)
+
+	db, err := sql.Open(dialect.DriverName(), dsn)
 	if err != nil {
 		return nil, err
 	}
@@ -31,213 +46,74 @@ func New(cfg *config.Config) (*DB, error) {
 		return nil, err
 	}
 
-	// Enable foreign key constraints for SQLite. This ensures ON DELETE/UPDATE actions are enforced.
-	if _, err := db.Exec(`PRAGMA foreign_keys = ON`); err != nil {
-		return nil, fmt.Errorf("enable foreign keys: %w", err)
+	// Enable foreign key constraints for SQLite. Postgres enforces
+	// FKs by default so EnableFKPragma() returns "" for it.
+	if pragma := dialect.EnableFKPragma(); pragma != "" {
+		if _, err := db.Exec(pragma); err != nil {
+			return nil, fmt.Errorf("enable foreign keys: %w", err)
+		}
 	}
 
-	// Run schema migrations.
-	if err := runMigrations(db); err != nil {
+	// Run schema migrations via the shared DDL registry.
+	if err := runMigrations(db, dialect); err != nil {
 		return nil, err
 	}
 
-	return &DB{DB: db}, nil
+	return &DB{DB: db, Dialect: dialect}, nil
 }
 
-// runMigrations executes the initial schema. In a real project this would use a
-// migration tool, but for now we embed the SQL directly.
-func runMigrations(db *sql.DB) error {
-	schema := `
-    CREATE TABLE IF NOT EXISTS products (
-        id TEXT PRIMARY KEY,
-        name TEXT NOT NULL,
-		description TEXT NOT NULL,
-        price REAL NOT NULL,
-        original_price REAL,
-		image_url TEXT,
-        category TEXT NOT NULL,
-        store_id TEXT,
-        rating REAL NOT NULL,
-        reviews INTEGER,
-        stock INTEGER,
-		specs TEXT NOT NULL DEFAULT '[]'
-    );`
-	_, err := db.Exec(schema)
-	if err != nil {
-		return err
+// runMigrations executes the DDL produced by [SchemaFor]. Each
+// statement is idempotent on a fresh database; ALTER TABLE failures
+// on SQLite (where IF NOT EXISTS isn't supported) are swallowed so
+// pre-existing columns don't break the boot path.
+func runMigrations(db *sql.DB, dialect Dialect) error {
+	for _, stmt := range SchemaFor(dialect) {
+		if stmt == "" {
+			// Skipped fragment (e.g. Postgres-only GIN index on SQLite).
+			continue
+		}
+		if _, err := db.Exec(stmt); err != nil {
+			// SQLite ALTER TABLE ADD COLUMN errors when the column
+			// already exists; we treat that as success. All other
+			// errors propagate.
+			if dialect == DialectSQLite && isBenignAlterError(err) {
+				continue
+			}
+			return fmt.Errorf("migration failed: %w", err)
+		}
 	}
-
-	// Table to store multiple images per product. 'ord' preserves ordering.
-	images := `
-	CREATE TABLE IF NOT EXISTS product_images (
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
-		product_id TEXT NOT NULL,
-		image_url TEXT NOT NULL,
-		ord INTEGER NOT NULL DEFAULT 0,
-		FOREIGN KEY(product_id) REFERENCES products(id) ON DELETE CASCADE
-	);`
-	_, err = db.Exec(images)
-	if err != nil {
-		return err
-	}
-
-	// Product options/variants table. Each option may reference multiple image URLs stored as JSON text.
-	options := `
-	CREATE TABLE IF NOT EXISTS product_options (
-		id TEXT PRIMARY KEY,
-		product_id TEXT NOT NULL,
-		name TEXT NOT NULL,
-		image_urls TEXT NOT NULL DEFAULT '[]',
-		ord INTEGER NOT NULL DEFAULT 0,
-		FOREIGN KEY(product_id) REFERENCES products(id) ON DELETE CASCADE
-	);`
-	_, err = db.Exec(options)
-	if err != nil {
-		return err
-	}
-
-	// Ensure the image_urls column exists (SQLite will error if column exists; ignore error).
-	if _, err = db.Exec(`ALTER TABLE product_options ADD COLUMN image_urls TEXT NOT NULL DEFAULT '[]'`); err != nil {
-		// ignore error, column may already exist
-	}
-
-	// Categories table to persist available product categories.
-	// Large categories (parent categories)
-	largeCats := `
-	CREATE TABLE IF NOT EXISTS large_categories (
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
-		name TEXT NOT NULL UNIQUE
-	);`
-	_, err = db.Exec(largeCats)
-	if err != nil {
-		return err
-	}
-
-	// Ensure categories table exists (may already exist from previous migrations).
-	// If it does not exist, create it with optional large_category_id column.
-	if _, err = db.Exec(`CREATE TABLE IF NOT EXISTS categories (
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
-		name TEXT NOT NULL UNIQUE,
-		large_category_id INTEGER,
-		FOREIGN KEY(large_category_id) REFERENCES large_categories(id) ON DELETE SET NULL
-	);`); err != nil {
-		return err
-	}
-
-	// Add large_category_id column if missing (SQLite will error if column exists; ignore).
-	if _, err = db.Exec(`ALTER TABLE categories ADD COLUMN large_category_id INTEGER`); err != nil {
-		// ignore error, column may already exist
-	}
-
-	// Seed categories from existing products to preserve historical data.
-	if _, err := db.Exec(`INSERT OR IGNORE INTO categories (name) SELECT DISTINCT category FROM products WHERE category IS NOT NULL AND category <> ''`); err != nil {
-		return err
-	}
-
-	// Ensure products table has a 'categories' TEXT column to store JSON array of categories.
-	// SQLite ALTER TABLE ADD COLUMN will error if column exists; ignore error.
-	if _, err := db.Exec(`ALTER TABLE products ADD COLUMN categories TEXT`); err != nil {
-		// ignore error; column may already exist
-	}
-
-	// Singleton site identity / branding row. The table holds at most one
-	// row (id = 1) so the API never 404s on a missing site config.
-	// Default values match the existing hardcoded values in the admin
-	// settings UI so first-run behavior is unchanged.
-	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS store_info (
-		id INTEGER PRIMARY KEY CHECK (id = 1),
-		name TEXT NOT NULL DEFAULT 'simshop',
-		description TEXT NOT NULL DEFAULT '',
-		logo_url TEXT NOT NULL DEFAULT '',
-		phone TEXT NOT NULL DEFAULT '',
-		email TEXT NOT NULL DEFAULT '',
-		address TEXT NOT NULL DEFAULT '',
-		google_maps_url TEXT NOT NULL DEFAULT ''
-	)`); err != nil {
-		return err
-	}
-	// Upgrade path for installs that pre-date the google_maps_url column.
-	// SQLite has no ADD COLUMN IF NOT EXISTS, so we ignore the duplicate-
-	// column error the same way the categories/products migrations do.
-	if _, err := db.Exec(`ALTER TABLE store_info ADD COLUMN google_maps_url TEXT NOT NULL DEFAULT ''`); err != nil {
-		// ignore error; column may already exist
-	}
-	// Ensure the single row exists even if the table was created empty.
-	if _, err := db.Exec(`INSERT OR IGNORE INTO store_info (id) VALUES (1)`); err != nil {
-		return err
-	}
-
-	// Articles: editorial content referenced by banner_slides. Body is
-	// Markdown; product_ids is a JSON array of product IDs the article
-	// mentions (rendered as chips in the article screen).
-	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS articles (
-		id TEXT PRIMARY KEY,
-		title TEXT NOT NULL,
-		body_markdown TEXT NOT NULL DEFAULT '',
-		cover_image_url TEXT NOT NULL DEFAULT '',
-		product_ids TEXT NOT NULL DEFAULT '[]',
-		created_at INTEGER NOT NULL
-	)`); err != nil {
-		return err
-	}
-
-	// Banner slides shown on the home carousel. Carries a 1-1
-	// article_id; ON DELETE SET NULL so deleting an article leaves a
-	// banner that goes nowhere rather than 500-ing the home carousel.
-	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS banner_slides (
-		id TEXT PRIMARY KEY,
-		image_url TEXT NOT NULL,
-		title TEXT NOT NULL DEFAULT '',
-		subtitle TEXT NOT NULL DEFAULT '',
-		ord INTEGER NOT NULL DEFAULT 0,
-		article_id TEXT,
-		FOREIGN KEY(article_id) REFERENCES articles(id) ON DELETE SET NULL
-	)`); err != nil {
-		return err
-	}
-
-	// Analytics: anonymous pageview tracking. The Flutter client
-	// fires one row per home load and per product-detail view.
-	// product_id is NULLABLE so 'home_view' (and any future event
-	// types without a product association) fits the same row shape.
-	// The (event_type, created_at) index speeds up the top-N query
-	// for the admin overview's "Sản phẩm xem nhiều nhất" table.
-	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS pageview_events (
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
-		event_type TEXT NOT NULL,
-		product_id TEXT,
-		created_at INTEGER NOT NULL
-	)`); err != nil {
-		return err
-	}
-	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_pageview_events_type_created ON pageview_events(event_type, created_at)`); err != nil {
-		return err
-	}
-
-	// Events: time-boxed promotions applied to a JSON-array list of
-	// product IDs (mirrors articles.product_ids — same pattern, no
-	// separate join table). end_time is NULLABLE: a NULL means the
-	// event never expires, but the admin UI always sets a value so
-	// promotions don't accidentally run forever. product_ids is
-	// stored as JSON so ListActiveEventsForProduct can LIKE-match
-	// cheaply without a join; an index on end_time keeps the active
-	// filter fast even with thousands of past events.
-	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS events (
-		id TEXT PRIMARY KEY,
-		name TEXT NOT NULL DEFAULT '',
-		end_time INTEGER,
-		discount_type TEXT NOT NULL,
-		discount_value REAL NOT NULL,
-		product_ids TEXT NOT NULL DEFAULT '[]',
-		created_at INTEGER NOT NULL
-	)`); err != nil {
-		return err
-	}
-	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_events_end_time ON events(end_time)`); err != nil {
-		return err
-	}
-
 	return nil
+}
+
+// isBenignAlterError returns true for SQLite errors that mean "this
+// ALTER TABLE is a no-op because the column already exists". All
+// other errors should propagate. Centralized here so the migration
+// loop stays readable.
+func isBenignAlterError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	// SQLite returns "duplicate column name: <col>" when ALTER TABLE
+	// ADD COLUMN is run on a column that already exists.
+	return contains(msg, "duplicate column name")
+}
+
+// contains is a tiny substring helper to avoid pulling in strings
+// just for one call site. Keeps imports minimal.
+func contains(haystack, needle string) bool {
+	if len(needle) == 0 {
+		return true
+	}
+	if len(needle) > len(haystack) {
+		return false
+	}
+	for i := 0; i+len(needle) <= len(haystack); i++ {
+		if haystack[i:i+len(needle)] == needle {
+			return true
+		}
+	}
+	return false
 }
 
 // Close safely closes the underlying DB.
