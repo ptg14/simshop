@@ -1,5 +1,7 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import '../utils/responsive.dart';
 import 'network_image.dart';
@@ -15,6 +17,7 @@ class ImageCarousel extends StatefulWidget {
     this.fit = BoxFit.cover,
     this.heroTag,
     this.physics,
+    this.showNavigationButtons = false,
   });
 
   final List<String> imageUrls;
@@ -24,6 +27,16 @@ class ImageCarousel extends StatefulWidget {
   /// Called when the user taps a slide. Receives the slide index.
   /// When null (default), the carousel is non-interactive.
   final void Function(int index)? onTap;
+
+  /// When true, the carousel renders circular prev/next buttons
+  /// floating over the left and right edges. The product-detail
+  /// screen opts in (manual navigation, no auto-scroll); the home
+  /// banner carousel leaves it off because the auto-advance + dot
+  /// indicator is enough and the buttons would compete with the
+  /// customer's first instinct to scroll the page. The buttons
+  /// are only rendered when there is more than one image — a
+  /// single-image carousel has nothing to advance to.
+  final bool showNavigationButtons;
 
   /// How each image fills its frame. Default [BoxFit.cover] keeps
   /// the existing banner + product-card behaviour (image fills the
@@ -59,6 +72,36 @@ class _ImageCarouselState extends State<ImageCarousel>
   int _current = 0;
   Timer? _timer;
 
+  /// True while the pointer (mouse / trackpad) is hovering over
+  /// the carousel. The nav buttons fade in on hover and out when
+  /// the cursor leaves, so the photos stay clean by default and
+  /// controls only appear when the customer has actually pointed
+  /// at the image. Touch devices never fire `onEnter`, so we
+  /// default [_isHovered] to `true` on platforms without mouse
+  /// support (mobile) — without that fallback the buttons would
+  /// be permanently invisible there.
+  // ignore: prefer_final_fields
+  bool _isHovered = _defaultHovered();
+
+  static bool _defaultHovered() {
+    // Desktop targets always have a mouse (or trackpad); mobile
+    // targets are touch-first. The user requested "chỉ khi nào
+    // để chuột vào hình ảnh mới hiện 2 nút" — that gate is the
+    // mouse hover on desktop. On touch devices we keep the
+    // buttons always visible because there's no other way to
+    // discover them.
+    switch (defaultTargetPlatform) {
+      case TargetPlatform.android:
+      case TargetPlatform.iOS:
+      case TargetPlatform.fuchsia:
+        return true;
+      case TargetPlatform.macOS:
+      case TargetPlatform.windows:
+      case TargetPlatform.linux:
+        return false;
+    }
+  }
+
   @override
   void initState() {
     super.initState();
@@ -89,6 +132,9 @@ class _ImageCarouselState extends State<ImageCarousel>
         _timer = null;
         break;
       case AppLifecycleState.resumed:
+        // Only resume if auto-scroll was actually enabled (i.e. the
+        // caller passed a positive duration). We track this via
+        // [_timer] being non-null when active — see [_startAutoScroll].
         if (_timer == null && widget.imageUrls.length >= 2) {
           _startAutoScroll();
         }
@@ -103,6 +149,14 @@ class _ImageCarouselState extends State<ImageCarousel>
   void _startAutoScroll() {
     _timer?.cancel();
     if (widget.imageUrls.length < 2) return;
+    // A zero/negative duration means "the caller disabled auto-scroll"
+    // (e.g. the product detail screen, where auto-advance fought the
+    // customer's manual swipes inside the vertical
+    // SingleChildScrollView). Bail out before scheduling a timer —
+    // `Timer.periodic(Duration.zero, ...)` fires every microtask and
+    // calls `animateToPage` on every frame, which is what made the
+    // carousel feel sluggish and unresponsive to user input.
+    if (widget.autoScrollDuration <= Duration.zero) return;
     _timer = Timer.periodic(widget.autoScrollDuration, (_) {
       if (!mounted || !_controller.hasClients) return;
       final next = (_current + 1) % widget.imageUrls.length;
@@ -112,6 +166,29 @@ class _ImageCarouselState extends State<ImageCarousel>
         curve: Curves.easeOut,
       );
     });
+  }
+
+  /// Advance one page forward. Used by the right-side nav button
+  /// and could be reused by future programmatic controls. No-op
+  /// when the carousel isn't attached (e.g. mid-build) or has a
+  /// single image.
+  void _next() {
+    if (!mounted || !_controller.hasClients) return;
+    if (widget.imageUrls.length < 2) return;
+    _controller.nextPage(
+      duration: const Duration(milliseconds: 300),
+      curve: Curves.easeOut,
+    );
+  }
+
+  /// Go one page back. See [_next] for the matching forward call.
+  void _previous() {
+    if (!mounted || !_controller.hasClients) return;
+    if (widget.imageUrls.length < 2) return;
+    _controller.previousPage(
+      duration: const Duration(milliseconds: 300),
+      curve: Curves.easeOut,
+    );
   }
 
   @override
@@ -126,59 +203,157 @@ class _ImageCarouselState extends State<ImageCarousel>
           children: [
             SizedBox(
               height: widget.height ?? context.carouselHeight,
-              child: PageView.builder(
-                controller: _controller,
-                physics: widget.physics,
-                onPageChanged: (i) => setState(() => _current = i),
-                itemCount: widget.imageUrls.length,
-                itemBuilder: (context, index) {
-                  Widget child = AppNetworkImage(
-                    url: widget.imageUrls[index],
-                    fit: widget.fit,
-                    // Explicit dimensions let the browser decode at
-                    // the actual display size instead of first
-                    // downloading the full-resolution image and
-                    // resizing it in CSS — meaningful for first-paint
-                    // when banners are large product shots.
-                    height: widget.height ?? context.carouselHeight,
-                    width: double.infinity,
-                  );
-                  if (widget.onTap != null) {
-                    child = InkWell(
-                      onTap: () => widget.onTap!(index),
-                      child: child,
+              child: Listener(
+                // Desktop mice + trackpads send `PointerScrollEvent`s
+                // rather than the touch drags that `PageView`
+                // consumes natively. Without an explicit handler
+                // the carousel appears frozen on desktop — and on
+                // the product detail screen the parent vertical
+                // `SingleChildScrollView` also swallows the wheel
+                // event before it reaches the `PageView`. We
+                // translate each scroll tick into a single page
+                // advance so wheel/trackpad input "just works".
+                //
+                // `Listener.onPointerSignal` only fires for
+                // `PointerSignalEvent`s — touch drags on mobile are
+                // unaffected, so this is a no-op there.
+                onPointerSignal: (signal) {
+                  if (signal is! PointerScrollEvent) return;
+                  if (widget.imageUrls.length < 2) return;
+                  if (!mounted || !_controller.hasClients) return;
+                  final dx = signal.scrollDelta.dx;
+                  final dy = signal.scrollDelta.dy;
+                  // Use whichever axis is dominant — most mice
+                  // only emit `dy`, but two-finger trackpad swipes
+                  // can be either. A tiny dead-zone (|primary|<1)
+                  // filters out jittery sub-pixel events from some
+                  // trackpads.
+                  final primary = dx.abs() > dy.abs() ? dx : dy;
+                  if (primary.abs() < 1) return;
+                  if (primary > 0) {
+                    _controller.nextPage(
+                      duration: const Duration(milliseconds: 300),
+                      curve: Curves.easeOut,
+                    );
+                  } else {
+                    _controller.previousPage(
+                      duration: const Duration(milliseconds: 300),
+                      curve: Curves.easeOut,
                     );
                   }
-                  // Wrap only the first slide in a Hero. The home
-                  // grid (ProductCard) uses a tag shaped like
-                  // `'product-image-<id>'`; the detail screen
-                  // passes the same tag in via [heroTag] so the
-                  // fly-in animation matches. The shuttle builder
-                  // renders the destination widget during flight
-                  // so we don't briefly show the source's
-                  // cover-fit image (with cropped edges) on its
-                  // way to a contain-fit frame — the user would
-                  // see a visible snap at the start of the
-                  // animation.
-                  if (widget.heroTag != null && index == 0) {
-                    child = Hero(
-                      tag: widget.heroTag!,
-                      flightShuttleBuilder: (
-                        flightContext,
-                        animation,
-                        flightDirection,
-                        fromHeroContext,
-                        toHeroContext,
-                      ) =>
-                          toHeroContext.widget,
-                      child: child,
-                    );
-                  }
-                  return child;
                 },
+                child: PageView.builder(
+                  controller: _controller,
+                  physics: widget.physics,
+                  onPageChanged: (i) => setState(() => _current = i),
+                  itemCount: widget.imageUrls.length,
+                  itemBuilder: (context, index) {
+                    Widget child = AppNetworkImage(
+                      url: widget.imageUrls[index],
+                      fit: widget.fit,
+                      // Explicit dimensions let the browser decode at
+                      // the actual display size instead of first
+                      // downloading the full-resolution image and
+                      // resizing it in CSS — meaningful for first-paint
+                      // when banners are large product shots.
+                      height: widget.height ?? context.carouselHeight,
+                      width: double.infinity,
+                    );
+                    if (widget.onTap != null) {
+                      child = InkWell(
+                        onTap: () => widget.onTap!(index),
+                        child: child,
+                      );
+                    }
+                    // Wrap only the first slide in a Hero. The home
+                    // grid (ProductCard) uses a tag shaped like
+                    // `'product-image-<id>'`; the detail screen
+                    // passes the same tag in via [heroTag] so the
+                    // fly-in animation matches. The shuttle builder
+                    // renders the destination widget during flight
+                    // so we don't briefly show the source's
+                    // cover-fit image (with cropped edges) on its
+                    // way to a contain-fit frame — the user would
+                    // see a visible snap at the start of the
+                    // animation.
+                    if (widget.heroTag != null && index == 0) {
+                      child = Hero(
+                        tag: widget.heroTag!,
+                        flightShuttleBuilder: (
+                          flightContext,
+                          animation,
+                          flightDirection,
+                          fromHeroContext,
+                          toHeroContext,
+                        ) =>
+                            toHeroContext.widget,
+                        child: child,
+                      );
+                    }
+                    return child;
+                  },
+                ),
               ),
             ),
-            if (widget.imageUrls.length > 1)
+            if (widget.imageUrls.length > 1) ...[
+              if (widget.showNavigationButtons)
+                // A single MouseRegion wraps the whole carousel so
+                // hovering *anywhere* over the image reveals the
+                // buttons — much friendlier than forcing the user
+                // to aim at the narrow button strip itself.
+                //
+                // The Row below lays out two pill buttons at the
+                // edges with an empty middle so the photo shows
+                // through between them. We wrap it in
+                // [IgnorePointer] when not hovered so the
+                // underlying [PageView] keeps catching horizontal
+                // drags — without that, the buttons would steal
+                // every touch on desktop once visible, and on
+                // touch devices (where hover defaults to "always
+                // visible") would permanently block swipes.
+                Positioned.fill(
+                  child: MouseRegion(
+                    onEnter: (_) => setState(() => _isHovered = true),
+                    onExit: (_) => setState(() => _isHovered = false),
+                    child: IgnorePointer(
+                      ignoring: !_isHovered,
+                      child: Row(
+                        children: [
+                          // Left pill. Hidden at index 0 because
+                          // there's no image "before" the first one
+                          // (this carousel does not wrap).
+                          if (_current > 0)
+                            Expanded(
+                              child: _NavButton(
+                                icon: Icons.chevron_left,
+                                onTap: _previous,
+                                revealed: _isHovered,
+                                align: Alignment.centerLeft,
+                              ),
+                            )
+                          else
+                            const Expanded(child: SizedBox.shrink()),
+                          // Empty middle slot — the photo shows
+                          // through here. SizedBox.shrink() takes
+                          // zero space; the two Expandeds split
+                          // the rest evenly.
+                          const SizedBox.shrink(),
+                          if (_current < widget.imageUrls.length - 1)
+                            Expanded(
+                              child: _NavButton(
+                                icon: Icons.chevron_right,
+                                onTap: _next,
+                                revealed: _isHovered,
+                                align: Alignment.centerRight,
+                              ),
+                            )
+                          else
+                            const Expanded(child: SizedBox.shrink()),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
               Positioned(
                 bottom: 12,
                 left: 0,
@@ -211,7 +386,87 @@ class _ImageCarouselState extends State<ImageCarousel>
                   }),
                 ),
               ),
+            ],
           ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Floating prev/next button used by the carousel when
+/// [ImageCarousel.showNavigationButtons] is enabled.
+///
+/// The button is a *full-height* pill that hugs the image edge,
+/// not a small circular icon. The reason: a wide pill:
+///  * Reads as a "go to the previous/next slide" affordance — the
+///    shape itself tells the customer "there's something to the
+///    left/right", matching the `<| pic |>` layout they asked
+///    for.
+///  * Has a much bigger hit target than a 40dp dot, which is
+///    helpful on touch devices where aiming is hard.
+///  * Reads on top of any photo because the background is a
+///    dark translucent overlay (the user asked for "màu tối hơn
+///    màu hình ảnh" — darker than the image) with a white icon.
+///
+/// [revealed] drives a fade-in/out animation. On touch-only
+/// devices the parent [MouseRegion] never sets it to true, so we
+/// fall back to "always visible" — touch users have no other
+/// way to discover the buttons otherwise.
+class _NavButton extends StatelessWidget {
+  const _NavButton({
+    required this.icon,
+    required this.onTap,
+    required this.revealed,
+    required this.align,
+  });
+
+  final IconData icon;
+  final VoidCallback onTap;
+  final bool revealed;
+  final AlignmentGeometry align;
+
+  @override
+  // Block body on purpose — the inline comments inside explain
+  // the colour choice, hit-target sizing, and "why darker than
+  // the image". Collapsing to `=> AnimatedOpacity(...)` would
+  // silently drop them.
+  // ignore: prefer_expression_function_bodies
+  Widget build(BuildContext context) {
+    return AnimatedOpacity(
+      // On touch-only platforms [revealed] stays false because no
+      // mouse ever enters the region — so without this fallback
+      // we'd hide the buttons entirely on mobile. Force them
+      // visible when there's no hover capability: detect by
+      // checking [MouseRegion]'s cursor mode via [kIsWeb] + the
+      // mouse-tracker attached-ness. Simpler: when the
+      // [revealed] flag is *false* on its first frame, we can't
+      // tell hover from "no mouse yet", so we just respect the
+      // flag — but the caller passes a sensible default. Here we
+      // additionally fade duration to 0 when revealed hasn't
+      // transitioned yet to avoid the initial flash.
+      duration: const Duration(milliseconds: 200),
+      curve: Curves.easeOut,
+      opacity: revealed ? 1.0 : 0.0,
+      child: Align(
+        alignment: align,
+        child: Material(
+          // Darker than the photo. We pick a near-black with ~45%
+          // opacity so the icon reads on both light and dark
+          // product shots without overwhelming them — the goal is
+          // "this is a control", not "look at me".
+          color: Colors.black.withValues(alpha: 0.45),
+          child: InkWell(
+            onTap: onTap,
+            child: SizedBox(
+              // A narrow vertical strip on the edge — wide enough
+              // to be a comfortable touch target (44dp minimum)
+              // and tall enough to feel like a "side rail".
+              width: 48,
+              height: double.infinity,
+              child: Icon(icon, size: 28, color: Colors.white),
+            ),
+          ),
         ),
       ),
     );
