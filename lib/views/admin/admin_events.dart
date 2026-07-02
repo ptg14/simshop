@@ -460,7 +460,6 @@ class _EventDialogState extends State<_EventDialog> {
                 controller: _nameCtrl,
                 decoration: const InputDecoration(
                   labelText: 'Tên sự kiện',
-                  hintText: 'VD: Sale cuối năm',
                 ),
               ),
               const SizedBox(height: 16),
