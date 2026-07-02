@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 
+import '../config/api_config.dart';
 import '../models/article.dart';
 import '../models/banner.dart';
 import '_http_with_admin_token.dart';
@@ -82,7 +83,7 @@ class RealArticleService implements IArticleService {
     String? baseUrl,
     http.Client? client,
     IAdminAuthService? authService,
-  })  : _baseUrl = baseUrl ?? 'http://localhost:8080',
+  })  : _baseUrl = baseUrl ?? ApiConfig.apiBaseUrl,
         _client = client ?? http.Client(),
         _auth = authService;
 

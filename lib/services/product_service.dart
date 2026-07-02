@@ -4,6 +4,7 @@ import 'dart:typed_data';
 import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
 
+import '../config/api_config.dart';
 import '../models/category.dart';
 import '../models/product.dart';
 import '_http_with_admin_token.dart';
@@ -100,7 +101,7 @@ abstract class IProductService {
 class RealProductService implements IProductService {
 
   RealProductService({String? baseUrl, IAdminAuthService? authService})
-      : _baseUrl = baseUrl ?? 'http://localhost:8080',
+      : _baseUrl = baseUrl ?? ApiConfig.apiBaseUrl,
         _auth = authService;
   // Base URL of the backend. Adjust if the backend runs on a different host/port.
   final String _baseUrl;

@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 
+import '../config/api_config.dart';
 import '../models/event.dart';
 import '_http_with_admin_token.dart';
 import 'admin_auth_service.dart';
@@ -33,7 +34,7 @@ class RealEventService implements IEventService {
     String? baseUrl,
     http.Client? client,
     IAdminAuthService? authService,
-  })  : _baseUrl = baseUrl ?? 'http://localhost:8080',
+  })  : _baseUrl = baseUrl ?? ApiConfig.apiBaseUrl,
         _client = client ?? http.Client(),
         _auth = authService;
 

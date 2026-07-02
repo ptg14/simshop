@@ -6,6 +6,8 @@ import 'package:cryptography/cryptography.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../config/api_config.dart';
+
 /// Storage key for the admin session token. Survives app restart
 /// on mobile (SharedPreferences) and web (localStorage). Treated as
 /// a long-lived bearer credential — anyone who can read this value
@@ -47,7 +49,7 @@ abstract class IAdminAuthService {
 /// `/api/admin/auth/*` endpoints.
 class RealAdminAuthService implements IAdminAuthService {
   RealAdminAuthService({String? baseUrl, http.Client? client})
-      : _baseUrl = baseUrl ?? 'http://localhost:8080',
+      : _baseUrl = baseUrl ?? ApiConfig.apiBaseUrl,
         _client = client ?? http.Client();
 
   final String _baseUrl;
