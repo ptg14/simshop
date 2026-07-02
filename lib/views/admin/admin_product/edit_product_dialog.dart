@@ -11,6 +11,7 @@ import '../../../widgets/markdown_split_editor.dart';
 import 'widgets/image_picker_grid.dart';
 import 'widgets/options_editor_with_images.dart';
 import 'widgets/product_category_picker.dart';
+import 'widgets/specs_editor.dart';
 
 /// Helper to show the edit dialog from any widget in the admin feature.
 void showEditProductDialog(
@@ -55,6 +56,11 @@ class _EditProductDialogState extends State<EditProductDialog> {
   late List<String> _existingImages;
   late List<String> _selectedCategories;
   late List<Option> _options;
+  // Specs editor state. Seeded from product.specs in initState so a
+  // re-open preserves whatever the admin previously typed (the
+  // bug the old copyWith-skipping path produced: edit, save, all
+  // specs silently wiped).
+  late List<String> _specs;
 
   @override
   void initState() {
@@ -71,6 +77,7 @@ class _EditProductDialogState extends State<EditProductDialog> {
         ? List<String>.from(p.categories)
         : (p.category.isNotEmpty ? [p.category] : []);
     _options = p.options.isNotEmpty ? List<Option>.from(p.options) : [];
+    _specs = List<String>.from(p.specs);
   }
 
   @override
@@ -119,13 +126,20 @@ class _EditProductDialogState extends State<EditProductDialog> {
       name: name,
       price: price,
       description: description,
-      category: _selectedCategories.isNotEmpty
-          ? _selectedCategories.first
-          : widget.product.category,
-      categories: _selectedCategories.isNotEmpty
-          ? _selectedCategories
-          : widget.product.categories,
+      // Primary category string (the legacy single-value field).
+      // Fall back to `''` when the admin removed every category —
+      // keeping the previous value would re-attach the dropped
+      // category on save.
+      category:
+          _selectedCategories.isNotEmpty ? _selectedCategories.first : '',
+      // Plural `categories` list. When the admin has cleared
+      // every selection we send `const []` so the backend overwrites
+      // the old list (previously this fell back to
+      // `widget.product.categories`, which kept the dropped
+      // categories on the product).
+      categories: List<String>.from(_selectedCategories),
       stock: stock,
+      specs: _specs,
     );
 
     dynamic imageFile;
@@ -213,6 +227,14 @@ class _EditProductDialogState extends State<EditProductDialog> {
                 maxLines: 12,
               ),
               const SizedBox(height: 12),
+
+              // Specs editor — seeded from product.specs in
+              // initState, emitted back via copyWith on submit. Same
+              // slot as the Add dialog so the two layouts line up.
+              SpecsEditor(
+                specs: _specs,
+                onChanged: (v) => setState(() => _specs = v),
+              ),
 
               // Categories
               ProductCategoryPicker(

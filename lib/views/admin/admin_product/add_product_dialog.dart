@@ -11,6 +11,7 @@ import '../../../widgets/markdown_split_editor.dart';
 import 'widgets/image_picker_grid.dart';
 import 'widgets/options_editor_with_images.dart';
 import 'widgets/product_category_picker.dart';
+import 'widgets/specs_editor.dart';
 
 /// Dialog for adding a new product.
 class AddProductDialog extends StatefulWidget {
@@ -39,6 +40,11 @@ class _AddProductDialogState extends State<AddProductDialog> {
 
   List<String> _selectedCategories = [];
   List<Option> _options = [];
+  // Specs editor state. Empty list = "Thông số kỹ thuật" section is
+  // hidden on the public detail screen. The SpecsEditor widget owns
+  // the per-row TextEditingControllers; we only hold the canonical
+  // list of strings.
+  List<String> _specs = [];
 
   @override
   void dispose() {
@@ -99,7 +105,7 @@ class _AddProductDialogState extends State<AddProductDialog> {
       rating: 0,
       reviews: 0,
       stock: stock,
-      specs: [],
+      specs: _specs,
       options: _options,
     );
 
@@ -174,6 +180,15 @@ class _AddProductDialogState extends State<AddProductDialog> {
                 maxLines: 12,
               ),
               const SizedBox(height: 12),
+
+              // Specs editor (thông số kỹ thuật) — sits with the
+              // other content fields so the dialog layout reads
+              // top-to-bottom: visuals → identifying fields →
+              // description → specs → taxonomy → variants.
+              SpecsEditor(
+                specs: _specs,
+                onChanged: (v) => setState(() => _specs = v),
+              ),
 
               // Categories
               ProductCategoryPicker(
