@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../../utils/page_transitions.dart';
 import '../../utils/responsive.dart';
 import '../../viewmodels/admin_viewmodel.dart';
+import '../../viewmodels/site_config_viewmodel.dart';
 import 'admin_articles.dart';
 import 'admin_auth_gate.dart';
 import 'admin_categories.dart';
@@ -37,14 +38,23 @@ class _AdminShellState extends State<AdminShell> {
   bool _redirecting = false;
 
   @override
-  Widget build(BuildContext context) => Consumer<AdminViewModel>(
-        builder: (context, viewModel, _) {
+  Widget build(BuildContext context) => Consumer2<AdminViewModel,
+          SiteConfigViewModel>(
+        builder: (context, viewModel, siteConfig, _) {
           // Route back to the auth gate when a write failed because
           // the cached token is no longer valid. Done in a post-frame
           // callback so the [Navigator] push happens outside the
           // build pass — calling `push` from inside `build` throws
           // "Navigator is currently locked".
-          if (viewModel.adminSessionExpired && !_redirecting) {
+          //
+          // We watch both [AdminViewModel.adminSessionExpired] (any
+          // product/category/event write that returned 401) AND
+          // [SiteConfigViewModel.adminSessionExpired] (the site-info
+          // PUT). Without the second check, saving the settings tab
+          // leaves the user stranded on a dead session.
+          if ((viewModel.adminSessionExpired ||
+                  siteConfig.adminSessionExpired) &&
+              !_redirecting) {
             _redirecting = true;
             WidgetsBinding.instance.addPostFrameCallback((_) {
               // Guard against the widget being unmounted before the
