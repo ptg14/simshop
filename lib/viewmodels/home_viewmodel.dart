@@ -20,7 +20,12 @@ class HomeViewModel extends ChangeNotifier {
   final List<String> _largeCategories = [];
   final List<Category> _subCategories = [];
   String _selectedLarge = 'All';
-  String _selectedCategory = 'All';
+
+  /// Currently-selected sub-categories. Always non-empty — the
+  /// "All <Large>" pseudo-sub is included by default and re-added
+  /// whenever the user removes every real sub. Invariant enforced
+  /// by [toggleSub] and [selectLarge].
+  final Set<String> _selectedSubs = <String>{'All All'};
 
   bool _isLoading = false;
   String? _error;
@@ -38,7 +43,11 @@ class HomeViewModel extends ChangeNotifier {
   List<Product> get products => _filteredProducts;
   List<String> get largeCategories => ['All', ..._largeCategories];
   String get selectedLarge => _selectedLarge;
-  String get selectedCategory => _selectedCategory;
+
+  /// The sub-categories currently selected. Always non-empty: when
+  /// the user has not picked anything specific, this set contains
+  /// only the "All <Large>" pseudo-sub for the active Large.
+  Set<String> get selectedSubs => Set.unmodifiable(_selectedSubs);
   bool get isLoading => _isLoading;
   String? get error => _error;
 
@@ -119,32 +128,88 @@ class HomeViewModel extends ChangeNotifier {
     }
   }
 
-  /// Select a Large category. Resets the sub-category filter to "All".
+  /// "All <Large>" pseudo-sub for the currently selected Large.
+  ///
+  /// When `_selectedLarge == 'All'` the Large row is hidden entirely
+  /// (see [visibleSubCategories]), so the sub row is never shown
+  /// and the value of this helper does not matter — but the
+  /// initialiser must still produce a valid string, hence the
+  /// placeholder `'All All'`.
+  String get _allSubPseudo => 'All $_selectedLarge';
+
+  /// Select a Large category. Resets the sub-category filter to
+  /// "All <Large>" because the previously-selected subs may not
+  /// belong to the new Large.
   void selectLarge(String large) {
     if (_selectedLarge == large) return;
     _selectedLarge = large;
-    _selectedCategory = 'All';
+    _selectedSubs
+      ..clear()
+      ..add(_allSubPseudo);
     _applyFilters();
     _notifyIfAlive();
   }
 
-  /// Select a sub-category and re-apply filters locally.
-  void selectCategory(String category) {
-    if (_selectedCategory == category) return;
-    _selectedCategory = category;
+  /// Toggle a sub-category in the multi-select set, then re-apply
+  /// filters.
+  ///
+  /// Rules (UX contract):
+  ///   • Tapping the "All <Large>" pseudo-sub clears every other
+  ///     selection — leaves the set holding only that pseudo-sub.
+  ///   • Tapping a real sub that is currently selected removes it.
+  ///     If that empties the set, the "All <Large>" pseudo-sub is
+  ///     re-added so the user always has at least one pill selected
+  ///     (= no way to render an empty filter and show zero products).
+  ///   • Tapping a real sub that is not selected adds it and removes
+  ///     the "All <Large>" pseudo-sub, since the user has now
+  ///     expressed a concrete intent.
+  void toggleSub(String sub) {
+    final allPseudo = _allSubPseudo;
+    if (sub == allPseudo) {
+      _selectedSubs
+        ..clear()
+        ..add(allPseudo);
+    } else if (_selectedSubs.contains(sub)) {
+      _selectedSubs.remove(sub);
+      // Preserve invariant: always at least one entry.
+      if (_selectedSubs.isEmpty) {
+        _selectedSubs.add(allPseudo);
+      }
+    } else {
+      _selectedSubs
+        ..remove(allPseudo)
+        ..add(sub);
+    }
     _applyFilters();
     _notifyIfAlive();
   }
 
   /// Apply local Large / sub filters on top of already-loaded products.
+  ///
+  /// Filter priority (most specific wins):
+  ///   1. If the user picked one or more real subs → keep only
+  ///      products whose `categories` (or legacy `category`) cover
+  ///      **every** selected sub (AND logic — products must have
+  ///      all the chosen tags).
+  ///   2. Otherwise — only the "All <Large>" pseudo-sub is active
+  ///      and a specific Large is selected → keep products whose
+  ///      `categories` (or legacy `category`) intersect any sub
+  ///      belonging to that Large.
+  ///   3. Otherwise → no filtering.
   void _applyFilters() {
     Iterable<Product> filtered = _products;
 
-    // Sub-category filter (most specific).
-    if (_selectedCategory != 'All' && !_selectedCategory.startsWith('All ')) {
-      filtered = filtered.where((p) => _productMatchesSub(p, _selectedCategory));
+    // Strip the pseudo-sub if present so the real subs below are
+    // the only ones that matter for matching.
+    final realSubs = _selectedSubs.where((s) => !s.startsWith('All ')).toSet();
+
+    if (realSubs.isNotEmpty) {
+      // Multi-select (AND): product matches only if it belongs to
+      // EVERY selected sub. Products missing any one of the chosen
+      // tags are filtered out.
+      filtered = filtered.where((p) => realSubs.every((s) => _productMatchesSub(p, s)));
     } else if (_selectedLarge != 'All') {
-      // Filter by any sub-category that belongs to the selected Large.
+      // "All <Large>" semantics: keep any product under this Large.
       final subsInLarge = _subCategories
           .where((c) => c.largeCategory == _selectedLarge)
           .map((c) => c.name)

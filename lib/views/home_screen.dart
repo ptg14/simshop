@@ -124,8 +124,8 @@ class _HomeScreenState extends State<HomeScreen> {
                           selectedLarge: viewModel.selectedLarge,
                           onLargeSelected: viewModel.selectLarge,
                           subCategories: viewModel.visibleSubCategories,
-                          selectedSub: viewModel.selectedCategory,
-                          onSubSelected: viewModel.selectCategory,
+                          selectedSubs: viewModel.selectedSubs,
+                          onSubToggled: viewModel.toggleSub,
                         ),
                         // Product grid or empty state
                         if (viewModel.products.isEmpty)

@@ -13,8 +13,8 @@ class CategorySelector extends StatelessWidget {
     required this.selectedLarge,
     required this.onLargeSelected,
     required this.subCategories,
-    required this.selectedSub,
-    required this.onSubSelected,
+    required this.selectedSubs,
+    required this.onSubToggled,
   });
 
   final List<String> largeCategories;
@@ -24,8 +24,17 @@ class CategorySelector extends StatelessWidget {
   /// Sub-categories of the currently selected Large. Caller should pass
   /// `[]` to hide the sub row (typically when `selectedLarge == 'All'`).
   final List<String> subCategories;
-  final String selectedSub;
-  final ValueChanged<String> onSubSelected;
+
+  /// Set of currently-selected sub-categories. Any sub in
+  /// [subCategories] that appears here is rendered as selected.
+  /// The widget itself does not enforce the "always at least one
+  /// entry" invariant — that's the view-model's job.
+  final Set<String> selectedSubs;
+
+  /// Fired when the user taps any sub pill. The view-model is
+  /// expected to apply its own add/remove/auto-All logic and
+  /// re-emit a new [selectedSubs] set.
+  final ValueChanged<String> onSubToggled;
 
   @override
   Widget build(BuildContext context) {
@@ -48,11 +57,11 @@ class CategorySelector extends StatelessWidget {
                 top: context.responsive<double>(
                     mobile: 6, tablet: 8, desktop: 10),
               ),
-              child: _buildRow(
+              child: _buildMultiRow(
                 context: context,
                 items: subCategories,
-                selected: selectedSub,
-                onSelected: onSubSelected,
+                selectedSubs: selectedSubs,
+                onToggled: onSubToggled,
               ),
             ),
         ],
@@ -60,6 +69,7 @@ class CategorySelector extends StatelessWidget {
     );
   }
 
+  /// Single-select row (Large).
   Widget _buildRow({
     required BuildContext context,
     required List<String> items,
@@ -76,6 +86,36 @@ class CategorySelector extends StatelessWidget {
               label: items[i],
               selected: items[i] == selected,
               onTap: () => onSelected(items[i]),
+            ),
+            if (i != items.length - 1)
+              SizedBox(
+                width: context.responsive<double>(
+                    mobile: 8, tablet: 10, desktop: 12),
+              ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  /// Multi-select row (subs). The tap is a toggle — the view-model
+  /// decides whether the click adds or removes the entry.
+  Widget _buildMultiRow({
+    required BuildContext context,
+    required List<String> items,
+    required Set<String> selectedSubs,
+    required ValueChanged<String> onToggled,
+  }) {
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      padding: EdgeInsets.symmetric(horizontal: context.horizontalPadding),
+      child: Row(
+        children: [
+          for (var i = 0; i < items.length; i++) ...[
+            _CategoryPill(
+              label: items[i],
+              selected: selectedSubs.contains(items[i]),
+              onTap: () => onToggled(items[i]),
             ),
             if (i != items.length - 1)
               SizedBox(
