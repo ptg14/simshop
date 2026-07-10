@@ -17,6 +17,7 @@ import (
 	"github.com/ptg14/simshop/backend/internal/db"
 	"github.com/ptg14/simshop/backend/internal/handler"
 	"github.com/ptg14/simshop/backend/internal/router"
+	"github.com/ptg14/simshop/backend/models"
 )
 
 // uploadConfigForTest builds an UploadConfig pointing at the test's temp
@@ -74,7 +75,7 @@ func newTestServer(t *testing.T) (*httptest.Server, *sql.DB, func()) {
 	articleRepo := db.NewArticleRepo(database, dialect, uploadCfg)
 	eventRepo := db.NewEventRepo(database, dialect)
 
-	r := router.New(productRepo, storeRepo, articleRepo, eventRepo, uploadCfg, handler.NewSessionStore(), "", "*")
+	r := router.New(productRepo, storeRepo, articleRepo, eventRepo, uploadCfg, handler.NewSessionStore(), "", "*", nil)
 	srv := httptest.NewServer(r)
 
 	cleanup := func() {
@@ -672,5 +673,249 @@ func TestProductUpdateDuplicateOptionIDs(t *testing.T) {
 	}
 	if got[1].name != "Size L" {
 		t.Errorf("second option name = %q, want Size L", got[1].name)
+	}
+}
+
+// ---------- Pentest remediation tests ----------
+
+// TestCreateCategory_PersistsName is the regression test for the
+// CRITICAL-001 bug: AddCategory/AddLargeCategory used to bind the
+// literal string "name" rather than the supplied variable, so every
+// category POST silently stored NULL. After the fix the row's name
+// column must equal the value the client sent.
+func TestCreateCategory_PersistsName(t *testing.T) {
+	srv, database, cleanup := newTestServer(t)
+	defer cleanup()
+
+	body := strings.NewReader(`{"name": "Phụ kiện"}`)
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/api/categories", body)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("POST: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		respBody, _ := readAll(resp)
+		t.Fatalf("POST status = %d, body=%s", resp.StatusCode, string(respBody))
+	}
+
+	// Verify the row's name column actually equals "Phụ kiện" — the
+	// old bug stored NULL despite the 201.
+	var name sql.NullString
+	if err := database.QueryRow(`SELECT name FROM categories WHERE name = ?`, "Phụ kiện").Scan(&name); err != nil {
+		t.Fatalf("re-read stored name: %v", err)
+	}
+	if !name.Valid {
+		t.Fatal("stored name is NULL — CRITICAL-001 regression")
+	}
+	if name.String != "Phụ kiện" {
+		t.Errorf("stored name = %q, want %q", name.String, "Phụ kiện")
+	}
+}
+
+// TestCreateLargeCategory_PersistsName mirrors the above for large
+// categories (same root-cause bug).
+func TestCreateLargeCategory_PersistsName(t *testing.T) {
+	srv, database, cleanup := newTestServer(t)
+	defer cleanup()
+
+	body := strings.NewReader(`{"name": "Điện tử"}`)
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/api/large-categories", body)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("POST: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		respBody, _ := readAll(resp)
+		t.Fatalf("POST status = %d, body=%s", resp.StatusCode, string(respBody))
+	}
+
+	var name sql.NullString
+	if err := database.QueryRow(`SELECT name FROM large_categories WHERE name = ?`, "Điện tử").Scan(&name); err != nil {
+		t.Fatalf("re-read: %v", err)
+	}
+	if !name.Valid {
+		t.Fatal("stored name is NULL — CRITICAL-001 regression for large categories")
+	}
+}
+
+// TestCreateCategory_RejectsInvalidName covers the MEDIUM-003 input
+// validation. Three sub-cases: <script>-style payload, oversized
+// name, and pure-whitespace.
+func TestCreateCategory_RejectsInvalidName(t *testing.T) {
+	srv, _, cleanup := newTestServer(t)
+	defer cleanup()
+
+	cases := []struct {
+		name     string
+		body     string
+		wantSubs string
+	}{
+		{
+			name:     "script tag",
+			body:     `{"name": "<script>alert(1)</script>"}`,
+			wantSubs: "disallowed characters",
+		},
+		{
+			name:     "oversized name",
+			body:     `{"name": "` + strings.Repeat("a", 65) + `"}`,
+			wantSubs: "64 characters",
+		},
+		{
+			name:     "whitespace only",
+			body:     `{"name": "   "}`,
+			wantSubs: "name is required",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req, _ := http.NewRequest(http.MethodPost, srv.URL+"/api/categories", strings.NewReader(tc.body))
+			req.Header.Set("Content-Type", "application/json")
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				t.Fatalf("POST: %v", err)
+			}
+			defer resp.Body.Close()
+			if resp.StatusCode != http.StatusBadRequest {
+				respBody, _ := readAll(resp)
+				t.Fatalf("status = %d, want 400 (body=%s)", resp.StatusCode, string(respBody))
+			}
+			respBody, _ := readAll(resp)
+			if !bytes.Contains(respBody, []byte(tc.wantSubs)) {
+				t.Errorf("body = %s, want it to contain %q", string(respBody), tc.wantSubs)
+			}
+		})
+	}
+}
+
+// TestDeleteProduct_Returns404OnMissing is the regression test for
+// HIGH-001: the handler used to return 204 unconditionally, hiding
+// from admins whether their delete attempt hit a row.
+func TestDeleteProduct_Returns404OnMissing(t *testing.T) {
+	srv, _, cleanup := newTestServer(t)
+	defer cleanup()
+
+	req, _ := http.NewRequest(http.MethodDelete, srv.URL+"/api/products/does-not-exist-uuid", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("DELETE: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", resp.StatusCode)
+	}
+}
+
+// TestGetCategoriesWithParent_HandlesNULL covers the MEDIUM-001 fix:
+// the read path now scans c.name via sql.NullString instead of a bare
+// string. The production schema declares c.name NOT NULL, so we can't
+// inject a NULL row without disabling the constraint — we instead use
+// a dedicated in-memory DB that mirrors SchemaFor minus the NOT NULL
+// on categories.name, then exercise the read path through the live
+// handler.
+func TestGetCategoriesWithParent_HandlesNULL(t *testing.T) {
+	// Stand up a parallel SQLite DB with categories.name as nullable.
+	tmpDir := t.TempDir()
+	dsn := filepath.Join(tmpDir, "null.db")
+	d, err := sql.Open("sqlite3", dsn)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer d.Close()
+	if _, err := d.Exec(`PRAGMA foreign_keys = ON`); err != nil {
+		t.Fatalf("FK: %v", err)
+	}
+	if _, err := d.Exec(`
+		CREATE TABLE large_categories (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE);
+		CREATE TABLE categories (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, large_category_id INTEGER);
+		CREATE TABLE store_info (id INTEGER PRIMARY KEY, name TEXT NOT NULL DEFAULT 'simshop', description TEXT NOT NULL DEFAULT '', banner_url TEXT NOT NULL DEFAULT '', phone TEXT NOT NULL DEFAULT '', email TEXT NOT NULL DEFAULT '', address TEXT NOT NULL DEFAULT '', google_maps_url TEXT NOT NULL DEFAULT '');
+		INSERT INTO store_info (id) VALUES (1);
+	`); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if _, err := d.Exec(`INSERT INTO categories (name) VALUES (NULL)`); err != nil {
+		t.Fatalf("insert NULL: %v", err)
+	}
+
+	uploadCfg := uploadConfigForTest(t.TempDir())
+	productRepo := db.NewProductRepo(d, db.DialectSQLite, uploadCfg)
+	storeRepo := db.NewStoreRepo(d, db.DialectSQLite, uploadCfg)
+	articleRepo := db.NewArticleRepo(d, db.DialectSQLite, uploadCfg)
+	eventRepo := db.NewEventRepo(d, db.DialectSQLite)
+
+	r := router.New(productRepo, storeRepo, articleRepo, eventRepo, uploadCfg, handler.NewSessionStore(), "", "*", nil)
+	srv := httptest.NewServer(r)
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/api/categories/with-parent")
+	if err != nil {
+		t.Fatalf("GET: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := readAll(resp)
+		t.Fatalf("status = %d, want 200 (body=%s)", resp.StatusCode, string(respBody))
+	}
+	var got map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	cats, ok := got["categories"].([]any)
+	if !ok {
+		t.Fatalf("categories field missing or not array: %v", got)
+	}
+	if len(cats) == 0 {
+		t.Errorf("expected at least one row (the NULL-name row), got 0")
+	}
+}
+
+// TestArticleDraftHidesFromAnonymous pins the LOW-001 repo contract:
+// GetArticlePublic returns sql.ErrNoRows for drafts, while the admin
+// GetArticle still returns the row. The handler layer maps the
+// sql.ErrNoRows into a 404 via the existing pattern; the contract
+// tested here is what the handler relies on.
+func TestArticleDraftHidesFromAnonymous(t *testing.T) {
+	// Stand up a dedicated in-memory DB so we control the schema
+	// exactly and don't depend on the test server's admin-bypass
+	// behavior.
+	tmpDir := t.TempDir()
+	dsn := filepath.Join(tmpDir, "drafts.db")
+	d, err := sql.Open("sqlite3", dsn)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer d.Close()
+	if _, err := d.Exec(`PRAGMA foreign_keys = ON`); err != nil {
+		t.Fatalf("FK: %v", err)
+	}
+	if err := applyMigrations(d); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	repo := db.NewArticleRepo(d, db.DialectSQLite, nil)
+	draft := models.Article{
+		ID:            "draft-1",
+		Title:         "WIP",
+		BodyMarkdown:  "secret body",
+		CoverImageURL: "",
+		ProductIDs:    []string{},
+		CreatedAt:     time.Now().Unix(),
+		IsDraft:       true,
+	}
+	if _, err := repo.CreateArticle(draft); err != nil {
+		t.Fatalf("create draft: %v", err)
+	}
+
+	if _, err := repo.GetArticlePublic("draft-1"); err != sql.ErrNoRows {
+		t.Errorf("GetArticlePublic(draft) = %v, want sql.ErrNoRows", err)
+	}
+	got, err := repo.GetArticle("draft-1")
+	if err != nil {
+		t.Fatalf("GetArticle(draft) admin path: %v", err)
+	}
+	if !got.IsDraft {
+		t.Errorf("IsDraft = false, want true (admin view)")
 	}
 }

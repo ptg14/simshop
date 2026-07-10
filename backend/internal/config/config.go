@@ -2,6 +2,7 @@ package config
 
 import (
 	"bufio"
+	"net"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -39,6 +40,17 @@ type Config struct {
 	// endpoints behave exactly like before — public — so a developer
 	// who hasn't set up keys yet isn't locked out. Logged at startup.
 	AdminPublicKey string
+	// Env identifies the deployment environment. "production" triggers
+	// fail-fast startup if AdminPublicKey is empty so a misconfigured
+	// deploy can't run with admin write endpoints publicly exposed.
+	// Empty (= development) keeps the legacy warning-only behaviour.
+	Env string
+	// TrustedProxies is the parsed list of CIDR networks whose
+	// X-Forwarded-For (and similar proxy) headers will be honored by
+	// the rate limiter and the upload URL builder. Empty (= default)
+	// disables proxy-header trust: callers see r.RemoteAddr and the
+	// upload handler emits a relative URL.
+	TrustedProxies []string
 }
 
 // Load reads configuration from environment variables, providing sensible defaults.
@@ -99,6 +111,10 @@ func Load() *Config {
 
 	adminPublicKey := os.Getenv("ADMIN_PUBLIC_KEY")
 
+	env := os.Getenv("ENV")
+
+	trustedProxies := parseTrustedProxies(os.Getenv("TRUSTED_PROXIES"))
+
 	return &Config{
 		Port:            port,
 		DatabaseURL:     dsn,
@@ -109,6 +125,8 @@ func Load() *Config {
 		AllowedOrigin:   allowedOrigin,
 		BaseURL:         baseURL,
 		AdminPublicKey:  adminPublicKey,
+		Env:             env,
+		TrustedProxies:  trustedProxies,
 	}
 }
 
@@ -182,4 +200,42 @@ func findDotEnv() (string, error) {
 		dir = parent
 	}
 	return "", os.ErrNotExist
+}
+
+// parseTrustedProxies turns the TRUSTED_PROXIES env var (a
+// comma-separated list of CIDRs or single IPs) into the canonical CIDR
+// list the middleware expects. Bare IPs are wrapped to /32 (v4) or /128
+// (v6). Unparseable entries are silently dropped — the middleware then
+// falls back to "never trust X-Forwarded-For", which is the safer
+// default.
+//
+// Empty input returns nil so the empty-list check stays idiomatic
+// downstream (`len(cfg.TrustedProxies) == 0`).
+func parseTrustedProxies(raw string) []string {
+	if raw == "" {
+		return nil
+	}
+	var out []string
+	for _, p := range strings.Split(raw, ",") {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		if strings.Contains(p, "/") {
+			if _, _, err := net.ParseCIDR(p); err == nil {
+				out = append(out, p)
+			}
+			continue
+		}
+		ip := net.ParseIP(p)
+		if ip == nil {
+			continue
+		}
+		if ip4 := ip.To4(); ip4 != nil {
+			out = append(out, p+"/32")
+		} else {
+			out = append(out, p+"/128")
+		}
+	}
+	return out
 }

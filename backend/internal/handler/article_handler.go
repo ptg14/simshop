@@ -46,7 +46,13 @@ func ListBannersHandler(repo *ArticleRepo) http.HandlerFunc {
 // GetArticleWithProductsHandler returns the article plus the products
 // it mentions. The join collapses what would otherwise be an N+1 from
 // the Flutter article screen.
-func GetArticleWithProductsHandler(articleRepo *ArticleRepo, productRepo *ProductRepo) http.HandlerFunc {
+//
+// [isAdmin] decides whether drafts are visible: when true the
+// handler calls articleRepo.GetArticle (admin view); when false it
+// calls GetArticlePublic (drafts hidden, returns 404 for them). nil
+// isAdmin means "admin auth is disabled" — every caller is treated
+// as admin (back-compat with pre-draft deployments).
+func GetArticleWithProductsHandler(articleRepo *ArticleRepo, productRepo *ProductRepo, isAdmin IsAdminFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := mux.Vars(r)["id"]
 		if id == "" {
@@ -54,7 +60,13 @@ func GetArticleWithProductsHandler(articleRepo *ArticleRepo, productRepo *Produc
 			return
 		}
 
-		article, err := articleRepo.GetArticle(id)
+		var article models.Article
+		var err error
+		if isAdmin != nil && isAdmin(extractBearer(r.Header.Get("Authorization"))) {
+			article, err = articleRepo.GetArticle(id)
+		} else {
+			article, err = articleRepo.GetArticlePublic(id)
+		}
 		if err == sql.ErrNoRows {
 			writeError(w, http.StatusNotFound, "article not found")
 			return
@@ -170,9 +182,21 @@ func DeleteArticleHandler(repo *ArticleRepo) http.HandlerFunc {
 
 // ListArticlesHandler returns every article (newest first). Used by
 // the admin "Bài viết" tab.
-func ListArticlesHandler(repo *ArticleRepo) http.HandlerFunc {
+//
+// [isAdmin] mirrors GetArticleWithProductsHandler: when true the
+// admin view is returned (drafts included); when false the public
+// view (drafts hidden). nil isAdmin → admin view (back-compat).
+func ListArticlesHandler(repo *ArticleRepo, isAdmin IsAdminFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		articles, err := repo.ListArticles()
+		var (
+			articles []models.Article
+			err      error
+		)
+		if isAdmin != nil && isAdmin(extractBearer(r.Header.Get("Authorization"))) {
+			articles, err = repo.ListArticles()
+		} else {
+			articles, err = repo.ListArticlesPublic()
+		}
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "Failed to fetch articles")
 			return

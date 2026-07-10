@@ -20,13 +20,34 @@ import (
 //
 // [adminPublicKeyHex] is the hex-encoded Ed25519 public key. When
 // empty the middleware is a no-op (same back-compat reasoning).
-func New(productRepo *handler.ProductRepo, storeRepo *handler.StoreRepo, articleRepo *handler.ArticleRepo, eventRepo *handler.EventRepo, uploadCfg *handler.UploadConfig, stores *handler.SessionStore, adminPublicKeyHex string, allowedOrigin string) *mux.Router {
+//
+// [trustedCIDRs] is the list of CIDR networks whose X-Forwarded-For
+// header will be honored by the rate limiter. Empty (the safe default)
+// disables proxy-header trust — clients see r.RemoteAddr. Operators
+// behind a reverse proxy must populate this from config.
+func New(productRepo *handler.ProductRepo, storeRepo *handler.StoreRepo, articleRepo *handler.ArticleRepo, eventRepo *handler.EventRepo, uploadCfg *handler.UploadConfig, stores *handler.SessionStore, adminPublicKeyHex string, allowedOrigin string, trustedCIDRs []string) *mux.Router {
 	r := mux.NewRouter()
 	// Global middleware – use configurable allowed origin.
 	r.Use(middleware.CORSMiddleware(allowedOrigin))
 
 	// Rate limit mutating endpoints: 10 req/s with burst of 20.
-	rateLimit := middleware.RateLimit(10, 20)
+	// Trusts X-Forwarded-For only when the immediate peer is in one of
+	// [trustedCIDRs] (parsed upstream by config.parseTrustedProxies).
+	rateLimit := middleware.RateLimit(10, 20, trustedCIDRs)
+	// Stricter rate limit for the unauthenticated /challenge endpoint.
+	// Never trusts XFF — every request costs server CPU (rand.Read +
+	// map insertion) so abusive clients must be cut off faster.
+	strictRateLimit := middleware.RateLimitStrict(2, 5)
+
+	// isAdminRequest is the closure the article handler uses to decide
+	// between admin (sees drafts) and public (drafts hidden) reads.
+	// nil when admin auth is disabled, in which case every caller is
+	// treated as admin — matching the pre-draft behavior so older
+	// deployments don't 404 on seeded articles.
+	var isAdminRequest handler.IsAdminFunc
+	if stores != nil {
+		isAdminRequest = func(token string) bool { return stores.ValidSession(token) }
+	}
 
 	// Decode the admin public key once. Empty / malformed → disabled.
 	var adminPub ed25519.PublicKey
@@ -58,18 +79,22 @@ func New(productRepo *handler.ProductRepo, storeRepo *handler.StoreRepo, article
 	r.HandleFunc("/health", handler.HealthHandler).Methods(http.MethodGet)
 
 	// Admin auth (challenge + verify + logout) — public. Wrapping
-	// these in rateLimit (and later RequireAdminSession) would
-	// deadlock the very endpoint needed to GET a session token.
-	if stores != nil && len(adminPub) > 0 {
-		authWrite := r.PathPrefix("/api/admin/auth").Subrouter()
-		// No rate limit on verify: legitimate admins signing in would
-		// hit it once per browser tab. We rely on the secret-key
-		// verification being computationally cheap (~µs) and the
-		// nonce TTL of 60s to bound abuse.
-		authWrite.HandleFunc("/challenge", handler.ChallengeHandler(stores)).Methods(http.MethodPost)
-		authWrite.HandleFunc("/verify", handler.VerifyHandler(stores, adminPub)).Methods(http.MethodPost)
-		authWrite.HandleFunc("/logout", handler.LogoutHandler(stores)).Methods(http.MethodPost)
-	}
+// these in rateLimit (and later RequireAdminSession) would
+// deadlock the very endpoint needed to GET a session token.
+//
+// /challenge is rate-limited strictly (never trusts proxy headers) so
+// anonymous attackers can't burn CPU issuing nonces. /verify and
+// /logout are NOT rate-limited — legitimate admins hit them once per
+// browser tab and we rely on Ed25519 verification (~µs) plus the 60s
+// nonce TTL to bound abuse.
+if stores != nil && len(adminPub) > 0 {
+	authBase := r.PathPrefix("/api/admin/auth").Subrouter()
+	challengeSub := authBase.PathPrefix("").Subrouter()
+	challengeSub.Use(strictRateLimit)
+	challengeSub.HandleFunc("/challenge", handler.ChallengeHandler(stores)).Methods(http.MethodPost)
+	authBase.HandleFunc("/verify", handler.VerifyHandler(stores, adminPub)).Methods(http.MethodPost)
+	authBase.HandleFunc("/logout", handler.LogoutHandler(stores)).Methods(http.MethodPost)
+}
 
 	// Product routes – the handler package expects a repository.
 	// eventRepo decorates each read with effective_price + current_event.
@@ -136,8 +161,10 @@ func New(productRepo *handler.ProductRepo, storeRepo *handler.StoreRepo, article
 
 	// Articles. The GET on /:id joins the products the article
 	// mentions (used by the home carousel tap → article screen flow).
-	r.HandleFunc("/api/articles/{id}", handler.GetArticleWithProductsHandler(articleRepo, productRepo)).Methods(http.MethodGet)
-	r.HandleFunc("/api/articles", handler.ListArticlesHandler(articleRepo)).Methods(http.MethodGet)
+	// Both endpoints take isAdminRequest so admins see drafts and
+	// anonymous callers don't.
+	r.HandleFunc("/api/articles/{id}", handler.GetArticleWithProductsHandler(articleRepo, productRepo, isAdminRequest)).Methods(http.MethodGet)
+	r.HandleFunc("/api/articles", handler.ListArticlesHandler(articleRepo, isAdminRequest)).Methods(http.MethodGet)
 	articlesWrite := r.PathPrefix("/api/articles").Subrouter()
 	articlesWrite.Use(rateLimit)
 	articlesWrite.Use(adminAuth)

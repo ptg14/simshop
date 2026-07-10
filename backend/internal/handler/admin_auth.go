@@ -31,26 +31,40 @@ import (
 
 // SessionStore holds active admin sessions (token → expiry) and
 // pending challenges (nonce → expiry). Safe for concurrent use.
+//
+// MaxChallenges and MaxSessions cap the in-memory map sizes so an
+// unauthenticated attacker can't OOM the server by issuing challenges
+// or verifying them at a high rate. Defaults are 1024 each — orders
+// of magnitude more than any legitimate admin fleet would produce.
+// Tests can mutate these fields directly to exercise the cap paths.
 type SessionStore struct {
 	mu          sync.RWMutex
 	sessions    map[string]time.Time // token → expiry
 	challenges  map[string]time.Time // nonce → expiry
 	tokenTTL    time.Duration
 	challengeTTL time.Duration
+	MaxChallenges int // public: max in-flight challenges; default 1024
+	MaxSessions   int // public: max active sessions; default 1024
 }
 
 // NewSessionStore returns a SessionStore with sensible defaults:
-// 24-hour token TTL, 60-second challenge TTL.
+// 24-hour token TTL, 60-second challenge TTL, 1024-entry caps on
+// each in-memory map.
 func NewSessionStore() *SessionStore {
 	return &SessionStore{
-		sessions:     make(map[string]time.Time),
-		challenges:   make(map[string]time.Time),
-		tokenTTL:     24 * time.Hour,
-		challengeTTL: 60 * time.Second,
+		sessions:      make(map[string]time.Time),
+		challenges:    make(map[string]time.Time),
+		tokenTTL:      24 * time.Hour,
+		challengeTTL:  60 * time.Second,
+		MaxChallenges: 1024,
+		MaxSessions:   1024,
 	}
 }
 
 // IssueChallenge generates a random nonce, stores it, and returns it.
+// Returns ErrChallengeCapacity when the in-memory map is already at
+// MaxChallenges entries — the caller (ChallengeHandler) maps that to
+// a 429.
 func (s *SessionStore) IssueChallenge() (string, error) {
 	raw := make([]byte, 32)
 	if _, err := rand.Read(raw); err != nil {
@@ -58,6 +72,10 @@ func (s *SessionStore) IssueChallenge() (string, error) {
 	}
 	nonce := hex.EncodeToString(raw)
 	s.mu.Lock()
+	if s.MaxChallenges > 0 && len(s.challenges) >= s.MaxChallenges {
+		s.mu.Unlock()
+		return "", ErrChallengeCapacity
+	}
 	s.challenges[nonce] = time.Now().Add(s.challengeTTL)
 	s.mu.Unlock()
 	return nonce, nil
@@ -76,7 +94,9 @@ func (s *SessionStore) ConsumeChallenge(nonce string) error {
 	return nil
 }
 
-// IssueSession mints a token for a verified admin.
+// IssueSession mints a token for a verified admin. Returns
+// ErrSessionCapacity when the in-memory map is already at
+// MaxSessions entries.
 func (s *SessionStore) IssueSession() (string, time.Time, error) {
 	raw := make([]byte, 32)
 	if _, err := rand.Read(raw); err != nil {
@@ -85,6 +105,10 @@ func (s *SessionStore) IssueSession() (string, time.Time, error) {
 	token := hex.EncodeToString(raw)
 	expiry := time.Now().Add(s.tokenTTL)
 	s.mu.Lock()
+	if s.MaxSessions > 0 && len(s.sessions) >= s.MaxSessions {
+		s.mu.Unlock()
+		return "", time.Time{}, ErrSessionCapacity
+	}
 	s.sessions[token] = expiry
 	s.mu.Unlock()
 	return token, expiry, nil
@@ -108,30 +132,68 @@ func (s *SessionStore) RevokeSession(token string) {
 // Cleanup runs a goroutine that prunes expired sessions + challenges
 // every 5 minutes. Returns immediately; cancel via context if needed
 // (we don't bother — the goroutine is fine for a process lifetime).
+//
+// The sweep is two-pass: collect expired keys under RLock so other
+// readers/writers don't block, then re-lock for the deletes. The
+// previous single-pass version held the write lock for the entire
+// sweep and could stall concurrent verifications on a busy server.
 func (s *SessionStore) Cleanup() {
 	ticker := time.NewTicker(5 * time.Minute)
 	defer ticker.Stop()
 	for range ticker.C {
-		now := time.Now()
-		s.mu.Lock()
-		for k, exp := range s.challenges {
-			if now.After(exp) {
-				delete(s.challenges, k)
-			}
-		}
-		for k, exp := range s.sessions {
-			if now.After(exp) {
-				delete(s.sessions, k)
-			}
-		}
-		s.mu.Unlock()
+		s.runCleanupOnce(time.Now())
 	}
+}
+
+// RunCleanupOnce performs a single sweep synchronously. Intended for
+// tests that need deterministic behavior; production uses Cleanup's
+// ticker.
+func (s *SessionStore) RunCleanupOnce() {
+	s.runCleanupOnce(time.Now())
+}
+
+func (s *SessionStore) runCleanupOnce(now time.Time) {
+	var expiredChallenges, expiredSessions []string
+	s.mu.RLock()
+	for k, exp := range s.challenges {
+		if now.After(exp) {
+			expiredChallenges = append(expiredChallenges, k)
+		}
+	}
+	for k, exp := range s.sessions {
+		if now.After(exp) {
+			expiredSessions = append(expiredSessions, k)
+		}
+	}
+	s.mu.RUnlock()
+
+	if len(expiredChallenges) == 0 && len(expiredSessions) == 0 {
+		return
+	}
+	s.mu.Lock()
+	for _, k := range expiredChallenges {
+		delete(s.challenges, k)
+	}
+	for _, k := range expiredSessions {
+		delete(s.sessions, k)
+	}
+	s.mu.Unlock()
 }
 
 // ErrChallengeExpired is returned when a verify call uses an unknown
 // or aged-out nonce. We use a sentinel error so the handler can map
 // it to a 401 without leaking internal detail.
 var ErrChallengeExpired = errors.New("challenge expired or unknown")
+
+// ErrChallengeCapacity is returned by IssueChallenge when the
+// in-memory challenges map is at MaxChallenges entries. The handler
+// maps it to 429 so legitimate admins see a transient rate-limit-like
+// response.
+var ErrChallengeCapacity = errors.New("challenge capacity exceeded")
+
+// ErrSessionCapacity is returned by IssueSession when the in-memory
+// sessions map is at MaxSessions entries. The handler maps it to 503.
+var ErrSessionCapacity = errors.New("session capacity exceeded")
 
 // MaxSecretKeySize bounds the uploaded secret key file. A raw Ed25519
 // seed is 32 bytes; the expanded secret key is 64 bytes; allow some
@@ -143,9 +205,17 @@ const MaxSecretKeySize = 1024
 //
 //	POST /api/admin/auth/challenge
 //	→ 200 { "nonce": "<64-hex>" }
+//	→ 429 when the in-memory challenge map is at MaxChallenges.
+//	→ 500 on rand.Read failure.
 func ChallengeHandler(store *SessionStore) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		nonce, err := store.IssueChallenge()
+		if errors.Is(err, ErrChallengeCapacity) {
+			writeJSON(w, http.StatusTooManyRequests, map[string]string{
+				"error": "challenge capacity exceeded",
+			})
+			return
+		}
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{
 				"error": "failed to issue challenge",
@@ -253,6 +323,12 @@ func VerifyHandler(store *SessionStore, pubKey ed25519.PublicKey) http.HandlerFu
 		}
 
 		token, expiry, err := store.IssueSession()
+		if errors.Is(err, ErrSessionCapacity) {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{
+				"error": "session capacity exceeded",
+			})
+			return
+		}
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{
 				"error": "failed to issue session",
@@ -272,6 +348,12 @@ func VerifyHandler(store *SessionStore, pubKey ed25519.PublicKey) http.HandlerFu
 //	  Authorization: Bearer <token>
 //	→ 204 (idempotent: revoking an unknown token is still a 204 so a
 //	  caller can't probe which tokens are alive).
+//
+// We intentionally do NOT issue a new session on logout (token
+// rotation). The current contract — revoke-only — is what the Flutter
+// admin client expects (idempotent fire-and-forget). Switching to
+// rotation would change the response body from 204 to 200 and break
+// that client.
 func LogoutHandler(store *SessionStore) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		token := extractBearer(r.Header.Get("Authorization"))
@@ -281,6 +363,17 @@ func LogoutHandler(store *SessionStore) http.HandlerFunc {
 		w.WriteHeader(http.StatusNoContent)
 	}
 }
+
+// IsAdminFunc is the contract a caller uses to decide whether the
+// incoming request is an authenticated admin. Returns true iff [token]
+// is a live bearer token. A nil IsAdminFunc means "admin auth is
+// disabled" — every caller is treated as admin (back-compat with
+// pre-draft deployments).
+//
+// The article handler uses this to gate draft visibility without
+// importing the SessionStore type — keeps the dependency arrow pointing
+// one way.
+type IsAdminFunc func(token string) bool
 
 // extractBearer pulls the token out of an `Authorization: Bearer ...`
 // header. Returns "" if missing or malformed.

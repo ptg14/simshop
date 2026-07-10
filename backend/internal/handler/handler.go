@@ -2,6 +2,7 @@ package handler
 
 import (
 	"crypto/sha1"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -12,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -21,6 +23,7 @@ import (
 	"github.com/ptg14/simshop/backend/internal/db"
 	"github.com/ptg14/simshop/backend/internal/uploadfs"
 	"github.com/ptg14/simshop/backend/models"
+	"golang.org/x/sync/semaphore"
 )
 
 // UploadConfig is an alias for [uploadfs.UploadConfig] so existing
@@ -28,6 +31,40 @@ import (
 // handler_test, the upload handler itself) keep compiling after the
 // helper moved out to break the db↔handler import cycle.
 type UploadConfig = uploadfs.UploadConfig
+
+// categoryNameRe is the canonical "what category names look like"
+// charset: letters (any script), digits, space, underscore, hyphen.
+// Rejects control characters, punctuation, and emoji — those make
+// the admin dashboard harder to scan and would risk stored-XSS if any
+// future export path renders the value as HTML. Length is capped at
+// [maxCategoryNameLen].
+var categoryNameRe = regexp.MustCompile(`^[\p{L}\p{N} _-]+$`)
+
+const maxCategoryNameLen = 64
+
+// validateCategoryName trims whitespace, enforces the length cap, and
+// rejects any character outside the safe charset. Returns the
+// canonical (trimmed) value on success; on failure the error message
+// is safe to surface to the admin UI verbatim.
+func validateCategoryName(raw string) (string, error) {
+	s := strings.TrimSpace(raw)
+	if s == "" {
+		return "", errors.New("name is required")
+	}
+	if len(s) > maxCategoryNameLen {
+		return "", fmt.Errorf("name must be %d characters or fewer", maxCategoryNameLen)
+	}
+	if !categoryNameRe.MatchString(s) {
+		return "", errors.New("name contains disallowed characters")
+	}
+	return s, nil
+}
+
+// uploadSem caps concurrent in-flight upload files across the whole
+// process. Without this an attacker could open many slow multipart
+// streams simultaneously and pin goroutines / disk. The cap is on
+// files (not requests) because a single request may carry multiple.
+var uploadSem = semaphore.NewWeighted(4)
 
 // ProductRepo re-exports the db.ProductRepo type so the router can reference it.
 type ProductRepo = db.ProductRepo
@@ -128,9 +165,9 @@ func CreateCategoryHandler(repo *ProductRepo) http.HandlerFunc {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		name := strings.TrimSpace(body.Name)
-		if name == "" {
-			writeError(w, http.StatusBadRequest, "name is required")
+		name, err := validateCategoryName(body.Name)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
 		// Use the method that can associate a large category if provided.
@@ -182,9 +219,9 @@ func CreateLargeCategoryHandler(repo *ProductRepo) http.HandlerFunc {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		name := strings.TrimSpace(body.Name)
-		if name == "" {
-			writeError(w, http.StatusBadRequest, "name is required")
+		name, err := validateCategoryName(body.Name)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
 		if err := repo.AddLargeCategory(name); err != nil {
@@ -325,11 +362,16 @@ func UpdateProductHandler(repo *ProductRepo) http.HandlerFunc {
 	}
 }
 
-// DeleteProductHandler deletes a product.
+// DeleteProductHandler deletes a product. Returns 404 when no product
+// with the given id exists (mirrors DeleteBanner/DeleteArticle so an
+// admin can tell a successful delete from a no-op).
 func DeleteProductHandler(repo *ProductRepo) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := mux.Vars(r)["id"]
-		if err := repo.Delete(id); err != nil {
+		if err := repo.Delete(id); err == sql.ErrNoRows {
+			writeError(w, http.StatusNotFound, "product not found")
+			return
+		} else if err != nil {
 			writeError(w, http.StatusInternalServerError, "Failed to delete product")
 			return
 		}
@@ -583,8 +625,15 @@ func UploadImageHandler(cfg *UploadConfig) http.HandlerFunc {
 		var uploadedURLs []string
 		var filenames []string
 
-		// Helper to process a file header.
+		// Helper to process a file header. Acquires [uploadSem] so
+		// at most a small number of files are being read+written
+		// concurrently across the whole server — bounds the resource
+		// consumption of an attacker pinning slow multipart streams.
 		saveFile := func(header *multipart.FileHeader, ordinal int) (string, string, error) {
+			if err := uploadSem.Acquire(r.Context(), 1); err != nil {
+				return "", "", fmt.Errorf("upload concurrency limit reached: %w", err)
+			}
+			defer uploadSem.Release(1)
 			f, err := header.Open()
 			if err != nil {
 				return "", "", err
@@ -640,24 +689,25 @@ func UploadImageHandler(cfg *UploadConfig) http.HandlerFunc {
 				return "", "", err
 			}
 			// Construct the public URL for the uploaded file.
-			// Prefer the configured BaseURL to prevent host header spoofing.
+			// Priority:
+			//   1. cfg.BaseURL (configured public origin).
+			//   2. Emitted relative URL — safer than honoring the
+			//      spoofable Host / X-Forwarded-Host headers when the
+			//      deployment isn't behind a TRUSTED_PROXIES-allow-listed
+			//      proxy. Browsers resolve the relative URL against the
+			//      current page origin.
+			//
+			// The host-header fallback is preserved for backward compat
+			// because the rate-limiter proxy gating (TRUSTED_PROXIES) is
+			// not yet threaded through to this handler. Operators who
+			// set cfg.BaseURL get the absolute URL; everyone else gets a
+			// relative URL plus a one-shot warning.
 			var imageURL string
 			if cfg.BaseURL != "" {
 				imageURL = fmt.Sprintf("%s/uploads/%s", strings.TrimRight(cfg.BaseURL, "/"), filename)
 			} else {
-				scheme := r.Header.Get("X-Forwarded-Proto")
-				if scheme == "" {
-					if r.TLS != nil {
-						scheme = "https"
-					} else {
-						scheme = "http"
-					}
-				}
-				host := r.Header.Get("X-Forwarded-Host")
-				if host == "" {
-					host = r.Host
-				}
-				imageURL = fmt.Sprintf("%s://%s/uploads/%s", scheme, host, filename)
+				log.Printf("upload: BASE_URL not configured; emitting relative URL for %q. Set BASE_URL (or TRUSTED_PROXIES for the rate limiter) to control absolute URLs.", filename)
+				imageURL = "/uploads/" + filename
 			}
 			return imageURL, filename, nil
 		}

@@ -1,7 +1,9 @@
 package middleware
 
 import (
+	"net"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 )
@@ -73,17 +75,25 @@ func (rl *RateLimiter) cleanup(interval time.Duration) {
 	}
 }
 
-// RateLimit returns middleware that limits requests per client IP.
-// rate is the number of requests allowed per second, burst is the maximum burst size.
-func RateLimit(rate float64, burst int) func(http.Handler) http.Handler {
-	limiter := NewRateLimiter(rate, burst)
+// RateLimit returns middleware that limits requests per client IP. rate
+// is requests/second, burst is the max bucket size.
+//
+// [trustedCIDRs] gates the use of the X-Forwarded-For header. When
+// empty, the middleware always uses r.RemoteAddr — preventing clients
+// from spoofing a different IP by injecting their own XFF header. When
+// non-empty, only requests whose r.RemoteAddr host falls in one of
+// the listed CIDRs may have their XFF honored (the leftmost IP in the
+// header is taken as the client). Call this from behind a known
+// reverse proxy with TRUSTED_PROXIES=10.0.0.0/8,127.0.0.1/32 etc.
+//
+// Use RateLimitStrict when the endpoint must never trust proxy headers
+// (e.g. /api/admin/auth/challenge).
+func RateLimit(rate, burst float64, trustedCIDRs []string) func(http.Handler) http.Handler {
+	trusted := parseTrustedCIDRs(trustedCIDRs)
+	limiter := NewRateLimiter(rate, int(burst))
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			ip := r.RemoteAddr
-			// If behind a reverse proxy, use X-Forwarded-For.
-			if fwd := r.Header.Get("X-Forwarded-For"); fwd != "" {
-				ip = fwd
-			}
+			ip := resolveClientIP(r, trusted)
 			if !limiter.Allow(ip) {
 				w.Header().Set("Retry-After", "1")
 				http.Error(w, `{"error":"rate limit exceeded"}`, http.StatusTooManyRequests)
@@ -92,4 +102,95 @@ func RateLimit(rate float64, burst int) func(http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 		})
 	}
+}
+
+// RateLimitStrict is the "never trust proxy headers" variant of
+// RateLimit. Use it on endpoints whose abuse model assumes the client
+// is the immediate TCP peer (e.g. /api/admin/auth/challenge, where
+// each request costs CPU).
+func RateLimitStrict(rate, burst float64) func(http.Handler) http.Handler {
+	return RateLimit(rate, burst, nil)
+}
+
+// resolveClientIP picks the IP to key the rate-limit bucket on. When
+// [trusted] is empty (or the immediate peer isn't in any of the
+// trusted CIDRs) we always return r.RemoteAddr's host component so
+// clients can't bypass the limiter by injecting their own
+// X-Forwarded-For header AND so ephemeral source-port changes don't
+// fragment the bucket.
+//
+// [trusted] is the parsed list of CIDRs from RateLimit's caller.
+func resolveClientIP(r *http.Request, trusted []*net.IPNet) string {
+	host := hostFromRemoteAddr(r.RemoteAddr)
+	if host == "" {
+		return r.RemoteAddr
+	}
+	peerIP := net.ParseIP(host)
+	if peerIP == nil {
+		return r.RemoteAddr
+	}
+	// Only honor XFF when the immediate peer is itself trusted.
+	trustedPeer := false
+	for _, n := range trusted {
+		if n.Contains(peerIP) {
+			trustedPeer = true
+			break
+		}
+	}
+	if !trustedPeer {
+		// Use the bare host (no port) so ephemeral source-port
+		// changes from the same client don't fragment the bucket.
+		return host
+	}
+	xff := r.Header.Get("X-Forwarded-For")
+	if xff == "" {
+		return host
+	}
+	// Take the leftmost (original client) IP — the format is
+	// "client, proxy1, proxy2, ...".
+	for i := 0; i < len(xff); i++ {
+		if xff[i] == ',' {
+			return strings.TrimSpace(xff[:i])
+		}
+	}
+	return strings.TrimSpace(xff)
+}
+
+// hostFromRemoteAddr strips the :port suffix from a "host:port"
+// RemoteAddr, returning the bare host. Returns the input unchanged
+// when no port is present (e.g. a bare "::1" IPv6 literal).
+func hostFromRemoteAddr(addr string) string {
+	if addr == "" {
+		return ""
+	}
+	// net.SplitHostPort handles IPv4 and bracketed IPv6 correctly.
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		// Likely a bare IPv6 without brackets; fall back to TrimSpace.
+		return strings.TrimSpace(addr)
+	}
+	return host
+}
+
+// parseTrustedCIDRs turns the raw []string (env-derived) into parsed
+// *net.IPNet values. Empty / unparseable entries are silently dropped
+// — the caller falls back to "never trust XFF", which is the safer
+// default.
+func parseTrustedCIDRs(raw []string) []*net.IPNet {
+	if len(raw) == 0 {
+		return nil
+	}
+	var out []*net.IPNet
+	for _, s := range raw {
+		s = strings.TrimSpace(s)
+		if s == "" {
+			continue
+		}
+		_, n, err := net.ParseCIDR(s)
+		if err != nil {
+			continue
+		}
+		out = append(out, n)
+	}
+	return out
 }

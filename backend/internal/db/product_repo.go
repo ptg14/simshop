@@ -72,6 +72,13 @@ type CategoryInfo struct {
 }
 
 // GetCategoriesWithParent returns all categories with their associated large category name (if any).
+//
+// Defensive against NULL c.name: legacy rows inserted by the buggy
+// AddCategory (which bound the literal "name" rather than the supplied
+// name) may have name=NULL. We map NULL → "" here so the public
+// endpoint stays 200 — the schema migration in SchemaFor also backfills
+// these rows, but reading-time safety is independent of that migration
+// succeeding.
 func (r *ProductRepo) GetCategoriesWithParent() ([]CategoryInfo, error) {
 	rows, err := r.query(`SELECT c.name, lc.name FROM categories c LEFT JOIN large_categories lc ON c.large_category_id = lc.id ORDER BY c.name ASC`)
 	if err != nil {
@@ -81,9 +88,12 @@ func (r *ProductRepo) GetCategoriesWithParent() ([]CategoryInfo, error) {
 	var result []CategoryInfo
 	for rows.Next() {
 		var ci CategoryInfo
-		var large sql.NullString
-		if err := rows.Scan(&ci.Name, &large); err != nil {
+		var nameS, large sql.NullString
+		if err := rows.Scan(&nameS, &large); err != nil {
 			return nil, err
+		}
+		if nameS.Valid {
+			ci.Name = nameS.String
 		}
 		if large.Valid {
 			ci.LargeCategory = large.String
@@ -123,7 +133,7 @@ func (r *ProductRepo) AddLargeCategory(name string) error {
 		return nil
 	}
 	_, err := r.exec(r.dialect.UpsertSQL(
-		`INSERT INTO large_categories (name) VALUES (?)`, "name"))
+		`INSERT INTO large_categories (name) VALUES (?)`, "name"), name)
 	return err
 }
 
@@ -143,7 +153,7 @@ func (r *ProductRepo) AddCategory(name string) error {
 		return nil
 	}
 	_, err := r.exec(r.dialect.UpsertSQL(
-		`INSERT INTO categories (name) VALUES (?)`, "name"))
+		`INSERT INTO categories (name) VALUES (?)`, "name"), name)
 	return err
 }
 
@@ -159,8 +169,9 @@ func (r *ProductRepo) AddCategoryWithParent(name, largeName string) error {
 		err := r.queryRow(`SELECT id FROM large_categories WHERE name = ?`, largeName).Scan(&largeID)
 		if err != nil {
 			// If not found, create the large category first.
-			if _, err2 := r.exec(r.dialect.UpsertSQL(
-				`INSERT INTO large_categories (name) VALUES (?)`, "name"), largeName); err2 != nil {
+			_, err2 := r.exec(r.dialect.UpsertSQL(
+				`INSERT INTO large_categories (name) VALUES (?)`, "name"), largeName)
+			if err2 != nil {
 				return err2
 			}
 			// Retrieve the newly inserted ID.
@@ -368,13 +379,25 @@ func (r *ProductRepo) Update(id string, p *models.Product, removedImageUrls []st
 // authoritative step; filesystem failures are logged and swallowed
 // rather than returned as a 500. Without this the gallery leaks
 // one file per product delete — the bug this method exists to fix.
+//
+// Returns sql.ErrNoRows when no product with [id] exists, mirroring
+// [ArticleRepo.DeleteBanner] so the handler can return 404 instead
+// of misleadingly claiming success.
 func (r *ProductRepo) Delete(id string) error {
 	urls, _ := r.getImageURLsForProduct(id)
 	if _, err := r.exec(`DELETE FROM product_images WHERE product_id=?`, id); err != nil {
 		return err
 	}
-	if _, err := r.exec(`DELETE FROM products WHERE id=?`, id); err != nil {
+	res, err := r.exec(`DELETE FROM products WHERE id=?`, id)
+	if err != nil {
 		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return sql.ErrNoRows
 	}
 	if len(urls) > 0 {
 		log.Printf("delete product %s: cleaning %d image file(s)", id, len(urls))

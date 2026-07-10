@@ -404,3 +404,72 @@ func TestSessionStoreChallengeTTL(t *testing.T) {
 var _ = io.EOF
 var _ = bytes.NewBuffer
 var _ = time.Now
+
+// ---------- Pentest remediation tests ----------
+
+// TestIssueChallenge_CapacityCap pins the MEDIUM-002 / SessionStore
+// OOM fix: once the in-memory challenges map fills, IssueChallenge
+// returns ErrChallengeCapacity and ChallengeHandler surfaces it as 429.
+func TestIssueChallenge_CapacityCap(t *testing.T) {
+	stores := newStores(t)
+	stores.MaxChallenges = 3
+	for i := 0; i < 3; i++ {
+		if _, err := stores.IssueChallenge(); err != nil {
+			t.Fatalf("issue #%d: %v", i, err)
+		}
+	}
+	if _, err := stores.IssueChallenge(); err != handler.ErrChallengeCapacity {
+		t.Fatalf("4th issue: want ErrChallengeCapacity, got %v", err)
+	}
+	// The HTTP handler must surface that as 429.
+	h := handler.ChallengeHandler(stores)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/auth/challenge", nil)
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusTooManyRequests {
+		t.Errorf("status = %d, want 429", rec.Code)
+	}
+}
+
+// TestIssueSession_CapacityCap mirrors the above for sessions — fires
+// the rare VerifyHandler 503 path.
+func TestIssueSession_CapacityCap(t *testing.T) {
+	stores := newStores(t)
+	stores.MaxSessions = 2
+	for i := 0; i < 2; i++ {
+		if _, _, err := stores.IssueSession(); err != nil {
+			t.Fatalf("issue #%d: %v", i, err)
+		}
+	}
+	if _, _, err := stores.IssueSession(); err != handler.ErrSessionCapacity {
+		t.Fatalf("3rd issue: want ErrSessionCapacity, got %v", err)
+	}
+}
+
+// TestCleanup_PreservesLiveEntries pins the new two-pass cleanup: a
+// non-expired challenge + a non-expired session must survive
+// RunCleanupOnce. We can't easily backdate entries because the TTLs
+// are unexported, so this test exercises only the "preserved" half
+// of the contract — confirming the lock rework didn't break the
+// happy path.
+func TestCleanup_PreservesLiveEntries(t *testing.T) {
+	stores := newStores(t)
+	nonce, err := stores.IssueChallenge()
+	if err != nil {
+		t.Fatalf("challenge: %v", err)
+	}
+	token, expiry, err := stores.IssueSession()
+	if err != nil {
+		t.Fatalf("session: %v", err)
+	}
+
+	stores.RunCleanupOnce()
+
+	// Both entries should still be live.
+	if err := stores.ConsumeChallenge(nonce); err != nil {
+		t.Errorf("consume challenge after cleanup: %v", err)
+	}
+	if !stores.ValidSession(token) {
+		t.Errorf("session not valid after cleanup (expiry=%v)", expiry)
+	}
+}

@@ -206,9 +206,9 @@ func (r *ArticleRepo) CreateArticle(a models.Article) (models.Article, error) {
 		return a, err
 	}
 	_, err = r.exec(
-		`INSERT INTO articles (id, title, body_markdown, cover_image_url, product_ids, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?)`,
-		a.ID, a.Title, a.BodyMarkdown, a.CoverImageURL, string(productJSON), a.CreatedAt,
+		`INSERT INTO articles (id, title, body_markdown, cover_image_url, product_ids, created_at, is_draft)
+		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		a.ID, a.Title, a.BodyMarkdown, a.CoverImageURL, string(productJSON), a.CreatedAt, a.IsDraft,
 	)
 	if err != nil {
 		return a, err
@@ -234,9 +234,9 @@ func (r *ArticleRepo) UpdateArticle(id string, a models.Article, oldCoverURL str
 	}
 	res, err := r.exec(
 		`UPDATE articles
-		 SET title = ?, body_markdown = ?, cover_image_url = ?, product_ids = ?
+		 SET title = ?, body_markdown = ?, cover_image_url = ?, product_ids = ?, is_draft = ?
 		 WHERE id = ?`,
-		a.Title, a.BodyMarkdown, a.CoverImageURL, string(productJSON), id,
+		a.Title, a.BodyMarkdown, a.CoverImageURL, string(productJSON), a.IsDraft, id,
 	)
 	if err != nil {
 		return a, err
@@ -296,13 +296,16 @@ func (r *ArticleRepo) getArticleCoverURL(id string) (string, error) {
 
 // GetArticle fetches one article by id. Returns sql.ErrNoRows if
 // missing. product_ids is decoded from the JSON column.
+//
+// Use [GetArticlePublic] for non-admin callers — it returns
+// sql.ErrNoRows for drafts so they're hidden from anonymous readers.
 func (r *ArticleRepo) GetArticle(id string) (models.Article, error) {
 	var a models.Article
 	var productJSON string
 	err := r.queryRow(
-		`SELECT id, title, body_markdown, cover_image_url, product_ids, created_at
+		`SELECT id, title, body_markdown, cover_image_url, product_ids, created_at, is_draft
 		 FROM articles WHERE id = ?`, id,
-	).Scan(&a.ID, &a.Title, &a.BodyMarkdown, &a.CoverImageURL, &productJSON, &a.CreatedAt)
+	).Scan(&a.ID, &a.Title, &a.BodyMarkdown, &a.CoverImageURL, &productJSON, &a.CreatedAt, &a.IsDraft)
 	if err != nil {
 		return a, err
 	}
@@ -318,11 +321,50 @@ func (r *ArticleRepo) GetArticle(id string) (models.Article, error) {
 	return a, nil
 }
 
-// ListArticles returns every article, newest first.
+// GetArticlePublic is the anonymous-caller variant of GetArticle: it
+// returns sql.ErrNoRows for any draft so the public endpoint can 404
+// without leaking the row's existence.
+func (r *ArticleRepo) GetArticlePublic(id string) (models.Article, error) {
+	var a models.Article
+	var productJSON string
+	err := r.queryRow(
+		`SELECT id, title, body_markdown, cover_image_url, product_ids, created_at, is_draft
+		 FROM articles WHERE id = ? AND is_draft = 0`, id,
+	).Scan(&a.ID, &a.Title, &a.BodyMarkdown, &a.CoverImageURL, &productJSON, &a.CreatedAt, &a.IsDraft)
+	if err != nil {
+		return a, err
+	}
+	if productJSON == "" {
+		productJSON = "[]"
+	}
+	if err := json.Unmarshal([]byte(productJSON), &a.ProductIDs); err != nil {
+		return a, fmt.Errorf("decode product_ids: %w", err)
+	}
+	if a.ProductIDs == nil {
+		a.ProductIDs = []string{}
+	}
+	return a, nil
+}
+
+// ListArticles returns every article (admin view, including drafts),
+// newest first.
 func (r *ArticleRepo) ListArticles() ([]models.Article, error) {
+	return r.listArticlesWhere(``)
+}
+
+// ListArticlesPublic returns only non-draft articles — what an
+// anonymous storefront reader is allowed to see.
+func (r *ArticleRepo) ListArticlesPublic() ([]models.Article, error) {
+	return r.listArticlesWhere(`WHERE is_draft = 0`)
+}
+
+// listArticlesWhere is the shared SELECT/scan loop behind ListArticles
+// and ListArticlesPublic. [where] is appended verbatim to the FROM
+// clause (must start with "WHERE" or be empty).
+func (r *ArticleRepo) listArticlesWhere(where string) ([]models.Article, error) {
 	rows, err := r.query(
-		`SELECT id, title, body_markdown, cover_image_url, product_ids, created_at
-		 FROM articles ORDER BY created_at DESC, id ASC`,
+		`SELECT id, title, body_markdown, cover_image_url, product_ids, created_at, is_draft
+		 FROM articles ` + where + ` ORDER BY created_at DESC, id ASC`,
 	)
 	if err != nil {
 		return nil, err
@@ -333,7 +375,7 @@ func (r *ArticleRepo) ListArticles() ([]models.Article, error) {
 	for rows.Next() {
 		var a models.Article
 		var productJSON string
-		if err := rows.Scan(&a.ID, &a.Title, &a.BodyMarkdown, &a.CoverImageURL, &productJSON, &a.CreatedAt); err != nil {
+		if err := rows.Scan(&a.ID, &a.Title, &a.BodyMarkdown, &a.CoverImageURL, &productJSON, &a.CreatedAt, &a.IsDraft); err != nil {
 			return nil, err
 		}
 		if productJSON == "" {

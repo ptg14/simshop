@@ -136,6 +136,20 @@ func SchemaFor(dialect Dialect) []string {
 			product_ids ` + jsonType + ` NOT NULL DEFAULT '[]',
 			created_at ` + ts + ` NOT NULL
 		)`,
+		// is_draft gates the public article endpoint: anonymous GETs see
+		// only is_draft = 0 rows. Admins always see drafts. Idempotent —
+		// SQLite's duplicate-column error is swallowed by runMigrations,
+		// Postgres uses ADD COLUMN IF NOT EXISTS via dialect.AddColumnSQL.
+		dialect.AddColumnSQL("articles", "is_draft", "INTEGER NOT NULL DEFAULT 0"),
+
+		// Backfill: legacy rows from a buggy AddCategory stored NULL in
+		// categories.name. Stamp them with a synthetic name so the
+		// handler's Scan doesn't choke on a NULL and the row stays
+		// addressable. Uses rowid rather than the named `id` column
+		// because some pre-existing databases (created before the
+		// `id INTEGER PRIMARY KEY` was added) don't have it. Idempotent:
+		// WHERE name IS NULL is a no-op on clean databases.
+		`UPDATE categories SET name = 'legacy-' || rowid WHERE name IS NULL`,
 
 		// ----- banner_slides -----
 		`CREATE TABLE IF NOT EXISTS banner_slides (

@@ -54,12 +54,21 @@ func Start(ctx context.Context) error {
 	stores := handler.NewSessionStore()
 	go stores.Cleanup()
 	if cfg.AdminPublicKey == "" {
+		// In production, refuse to start when admin auth would be
+		// silent — the operator likely forgot to set the key, and
+		// running with public write endpoints is much worse than
+		// refusing the deploy. In development, warn and continue so
+		// local iteration isn't painful.
+		if cfg.Env == "production" {
+			log.Fatalf("ADMIN_PUBLIC_KEY is empty in production (ENV=production); refusing to start with admin auth disabled. Set ADMIN_PUBLIC_KEY or unset ENV.")
+		}
 		log.Printf("WARNING: ADMIN_PUBLIC_KEY is empty — admin auth disabled, all write endpoints are public")
 	} else {
 		log.Printf("admin auth enabled (public key loaded)")
 	}
+	log.Printf("starting server (env=%q, adminAuth=%v, trustedProxies=%d)", cfg.Env, cfg.AdminPublicKey != "", len(cfg.TrustedProxies))
 
-	r := router.New(productRepo, storeRepo, articleRepo, eventRepo, uploadCfg, stores, cfg.AdminPublicKey, cfg.AllowedOrigin)
+	r := router.New(productRepo, storeRepo, articleRepo, eventRepo, uploadCfg, stores, cfg.AdminPublicKey, cfg.AllowedOrigin, cfg.TrustedProxies)
 
 	addr := fmt.Sprintf(":%s", cfg.Port)
 	srv := &http.Server{
