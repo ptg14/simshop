@@ -54,6 +54,14 @@ class _EditProductDialogState extends State<EditProductDialog> {
   final List<XFile> _selectedImages = [];
   final List<Uint8List> _selectedImagesBytes = [];
   late List<String> _existingImages;
+  // URLs the admin removed from the existing gallery during this
+  // edit session. Forwarded to the backend on submit, which
+  // best-effort deletes the underlying files from /uploads/ after
+  // the DB UPDATE commits (see RealProductService.updateProduct).
+  // We snapshot the URL at removal time so the dialog can
+  // `removeAt(j)` from `_existingImages` and still hand the
+  // backend the original (post-rename, post-CDN) URL.
+  final List<String> _removedImageUrls = [];
   late List<String> _selectedCategories;
   late List<Option> _options;
   // Specs editor state. Seeded from product.specs in initState so a
@@ -160,6 +168,7 @@ class _EditProductDialogState extends State<EditProductDialog> {
       widget.product.id,
       productWithImages,
       imageFile: imageFile,
+      removedImageUrls: _removedImageUrls,
     );
 
     if (context.mounted) await context.read<HomeViewModel>().initialize();
@@ -190,8 +199,14 @@ class _EditProductDialogState extends State<EditProductDialog> {
                   _selectedImages.removeAt(i);
                   _selectedImagesBytes.removeAt(i);
                 }),
-                onRemoveExistingImage: (j) =>
-                    setState(() => _existingImages.removeAt(j)),
+                onRemoveExistingImage: (j) => setState(() {
+                  // Capture the URL *before* removing it from
+                  // [_existingImages] — once removed, the URL is
+                  // gone from local state and the backend can
+                  // only see it via [_removedImageUrls].
+                  _removedImageUrls.add(_existingImages[j]);
+                  _existingImages.removeAt(j);
+                }),
               ),
               const SizedBox(height: 12),
 
