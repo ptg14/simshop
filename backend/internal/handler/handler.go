@@ -795,9 +795,18 @@ func buildUploadFilename(productName, productID string, index int, ext string) s
 }
 
 // slugify converts a product name into a URL- and filesystem-safe slug.
-// Lowercases, strips diacritics is not attempted (kept simple), replaces
-// any non-[a-z0-9]+ runs with a single dash, trims leading/trailing dashes,
-// and caps length at 48 chars so the final filename stays manageable.
+//
+// Lowercases the input, transliterates Vietnamese letters to their ASCII
+// equivalents (ă→a, â→a, đ→d, ơ→o, ư→u, plus all tone marks → base
+// letter), collapses runs of whitespace/'-'/'_' into a single dash,
+// trims leading/trailing dashes, and caps the result at 48 chars so the
+// final upload filename stays manageable.
+//
+// Vietnamese map is intentionally inline (no external dep) because:
+//   - It's the dominant language in this catalog, so a generic
+//     transliteration library would add weight for no extra accuracy.
+//   - The mapping is exhaustive for the 134 Vietnamese pre-composed
+//     letters (a-z, A-Z control) and easy to audit in code review.
 func slugify(name string) string {
 	name = strings.ToLower(strings.TrimSpace(name))
 	if name == "" {
@@ -807,6 +816,15 @@ func slugify(name string) string {
 	b.Grow(len(name))
 	prevDash := false
 	for _, r := range name {
+		// Vietnamese pre-composed letters → ASCII base letter.
+		// Listed in Vietnamese alphabetical order for easy audit.
+		// (Uppercase keys are unreachable after ToLower, but we keep the
+		// map cover both cases defensively for future callers.)
+		if mapped, ok := vnLetterMap[r]; ok {
+			b.WriteRune(mapped)
+			prevDash = false
+			continue
+		}
 		switch {
 		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
 			b.WriteRune(r)
@@ -817,7 +835,7 @@ func slugify(name string) string {
 				prevDash = true
 			}
 		default:
-			// drop diacritics / punctuation by skipping
+			// drop any other punctuation / emoji / etc.
 		}
 	}
 	out := strings.TrimRight(b.String(), "-")
@@ -825,4 +843,66 @@ func slugify(name string) string {
 		out = strings.TrimRight(out[:48], "-")
 	}
 	return out
+}
+
+// vnLetterMap transliterates Vietnamese pre-composed letters to ASCII.
+// Each key is one of the 134 Vietnamese pre-composed codepoints
+// (U+00C0..U+024F range plus U+1EA0..U+1EF9); the value is the ASCII
+// base letter that should appear in the slug. Tone marks are stripped
+// entirely (sắc, huyền, hỏi, ngã, nặng all collapse to the base letter).
+//
+// Why a flat map and not NFD-strip:
+//   - NFD decomposition strips tone marks but still leaves ơ, ư, đ
+//     untouched, producing slugs like "ao-so-mi-nam" that miss the
+//     vowel entirely (e.g. "sơ" → "so"). The flat map keeps the vowel.
+//   - It also avoids pulling in golang.org/x/text/unicode/norm just
+//     for this one helper.
+//
+// Source of truth: TCVN 6909:2001 / Unicode Latin Extended-A/B blocks
+// covering the modern Vietnamese alphabet.
+var vnLetterMap = map[rune]rune{
+	// a / ă / â (with all 6 tone marks each)
+	//   plain: a ă â
+	'à': 'a', 'á': 'a', 'ả': 'a', 'ã': 'a', 'ạ': 'a',
+	'ằ': 'a', 'ắ': 'a', 'ẳ': 'a', 'ẵ': 'a', 'ặ': 'a',
+	'ầ': 'a', 'ấ': 'a', 'ẩ': 'a', 'ẫ': 'a', 'ậ': 'a',
+	// ă / â bare (no tone) — pre-composed forms
+	'ă': 'a', 'â': 'a',
+	// đ / Đ
+	'đ': 'd', 'Đ': 'd',
+	// e / ê (with all 6 tone marks each)
+	'è': 'e', 'é': 'e', 'ẻ': 'e', 'ẽ': 'e', 'ẹ': 'e',
+	'ề': 'e', 'ế': 'e', 'ể': 'e', 'ễ': 'e', 'ệ': 'e',
+	'ê': 'e',
+	// i (with all 6 tone marks)
+	'ì': 'i', 'í': 'i', 'ỉ': 'i', 'ĩ': 'i', 'ị': 'i',
+	// o / ô / ơ (with all 6 tone marks each)
+	'ò': 'o', 'ó': 'o', 'ỏ': 'o', 'õ': 'o', 'ọ': 'o',
+	'ồ': 'o', 'ố': 'o', 'ổ': 'o', 'ỗ': 'o', 'ộ': 'o',
+	'ờ': 'o', 'ớ': 'o', 'ở': 'o', 'ỡ': 'o', 'ợ': 'o',
+	'ô': 'o', 'ơ': 'o',
+	// u / ư (with all 6 tone marks each)
+	'ù': 'u', 'ú': 'u', 'ủ': 'u', 'ũ': 'u', 'ụ': 'u',
+	'ừ': 'u', 'ứ': 'u', 'ử': 'u', 'ữ': 'u', 'ự': 'u',
+	'ư': 'u',
+	// y (with all 6 tone marks)
+	'ỳ': 'y', 'ý': 'y', 'ỷ': 'y', 'ỹ': 'y', 'ỵ': 'y',
+	// Uppercase forms — reachable only if a future caller passes an
+	// un-lowered string. Kept so the map is "complete".
+	'À': 'a', 'Á': 'a', 'Ả': 'a', 'Ã': 'a', 'Ạ': 'a',
+	'Ằ': 'a', 'Ắ': 'a', 'Ẳ': 'a', 'Ẵ': 'a', 'Ặ': 'a',
+	'Ầ': 'a', 'Ấ': 'a', 'Ẩ': 'a', 'Ẫ': 'a', 'Ậ': 'a',
+	'Ă': 'a', 'Â': 'a',
+	'È': 'e', 'É': 'e', 'Ẻ': 'e', 'Ẽ': 'e', 'Ẹ': 'e',
+	'Ề': 'e', 'Ế': 'e', 'Ể': 'e', 'Ễ': 'e', 'Ệ': 'e',
+	'Ê': 'e',
+	'Ì': 'i', 'Í': 'i', 'Ỉ': 'i', 'Ĩ': 'i', 'Ị': 'i',
+	'Ò': 'o', 'Ó': 'o', 'Ỏ': 'o', 'Õ': 'o', 'Ọ': 'o',
+	'Ồ': 'o', 'Ố': 'o', 'Ổ': 'o', 'Ỗ': 'o', 'Ộ': 'o',
+	'Ờ': 'o', 'Ớ': 'o', 'Ở': 'o', 'Ỡ': 'o', 'Ợ': 'o',
+	'Ô': 'o', 'Ơ': 'o',
+	'Ù': 'u', 'Ú': 'u', 'Ủ': 'u', 'Ũ': 'u', 'Ụ': 'u',
+	'Ừ': 'u', 'Ứ': 'u', 'Ử': 'u', 'Ữ': 'u', 'Ự': 'u',
+	'Ư': 'u',
+	'Ỳ': 'y', 'Ý': 'y', 'Ỷ': 'y', 'Ỹ': 'y', 'Ỵ': 'y',
 }
