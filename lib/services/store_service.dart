@@ -17,7 +17,13 @@ abstract class IStoreService {
 
   /// Persist site config. Throws on validation or network failure so
   /// the viewmodel can surface a SnackBar.
-  Future<StoreInfo> updateStoreInfo(StoreInfo info);
+  ///
+  /// Pass the previously-saved banner URL as [oldBannerUrl]; when
+  /// [info.bannerUrl] differs the backend best-effort deletes the
+  /// previous file from disk after the PUT commits, so /uploads/
+  /// doesn't accumulate orphan banners. Pass `null` or `""` to skip
+  /// the diff (back-compat — the file is left in place).
+  Future<StoreInfo> updateStoreInfo(StoreInfo info, {String? oldBannerUrl});
 }
 
 class RealStoreService implements IStoreService {
@@ -50,15 +56,19 @@ class RealStoreService implements IStoreService {
   }
 
   @override
-  Future<StoreInfo> updateStoreInfo(StoreInfo info) async {
+  Future<StoreInfo> updateStoreInfo(StoreInfo info, {String? oldBannerUrl}) async {
     final headers = await withAdminAuth(
       _auth,
       const {'Content-Type': 'application/json'},
     );
+    final map = info.toJson();
+    if (oldBannerUrl != null && oldBannerUrl.isNotEmpty) {
+      map['old_banner_url'] = oldBannerUrl;
+    }
     final response = await http.put(
       _storeInfoUri(),
       headers: headers,
-      body: json.encode(info.toJson()),
+      body: json.encode(map),
     );
     // Mirror the product_service pattern: if the server rejected our
     // cached admin token with the standard 401, clear it locally and

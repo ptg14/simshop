@@ -55,19 +55,54 @@ abstract class IArticleService {
   Future<ArticleWithProducts?> getArticle(String id);
 
   /// Admin: create a new article. Returns the persisted record.
-  Future<Article> createArticle(Article article);
+  ///
+  /// [oldCoverURL] / [removedImageUrls] are accepted for symmetry with
+  /// the update path but are no-op on create: there is no pre-existing
+  /// cover image to diff against on a brand-new article.
+  Future<Article> createArticle(
+    Article article, {
+    String? oldCoverURL,
+    List<String>? removedImageUrls,
+  });
 
   /// Admin: replace the record at [article.id].
-  Future<Article> updateArticle(Article article);
+  ///
+  /// Pass the cover_image_url the row held before this update as
+  /// [oldCoverURL]; when [article.coverImageUrl] differs the previous
+  /// file is best-effort deleted from disk after the PUT commits.
+  /// [removedImageUrls] is unused for articles today but reserved for
+  /// future galleries (pass `null` to skip).
+  Future<Article> updateArticle(
+    Article article, {
+    String? oldCoverURL,
+    List<String>? removedImageUrls,
+  });
 
-  /// Admin: delete. Server cascades the banner FK to NULL.
+  /// Admin: delete. Server cascades the banner FK to NULL and
+  /// best-effort deletes the cover image file.
   Future<void> deleteArticle(String id);
 
   /// Admin: create a banner slide.
-  Future<BannerSlide> createBanner(BannerSlide slide);
+  ///
+  /// [oldImageURL] / [removedImageUrls] are accepted for symmetry
+  /// with the update path but are no-op on create.
+  Future<BannerSlide> createBanner(
+    BannerSlide slide, {
+    String? oldImageURL,
+    List<String>? removedImageUrls,
+  });
 
   /// Admin: replace the record at [slide.id].
-  Future<BannerSlide> updateBanner(BannerSlide slide);
+  ///
+  /// Pass the image_url the row held before this update as
+  /// [oldImageURL]; when [slide.imageUrl] differs the previous file
+  /// is best-effort deleted from disk after the PUT commits.
+  /// [removedImageUrls] is unused for banners today (pass `null`).
+  Future<BannerSlide> updateBanner(
+    BannerSlide slide, {
+    String? oldImageURL,
+    List<String>? removedImageUrls,
+  });
 
   /// Admin: delete.
   Future<void> deleteBanner(String id);
@@ -130,7 +165,11 @@ class RealArticleService implements IArticleService {
   }
 
   @override
-  Future<Article> createArticle(Article article) async {
+  Future<Article> createArticle(
+    Article article, {
+    String? oldCoverURL,
+    List<String>? removedImageUrls,
+  }) async {
     final headers = await withAdminAuth(
       _auth,
       const {'Content-Type': 'application/json'},
@@ -138,7 +177,10 @@ class RealArticleService implements IArticleService {
     final response = await _client.post(
       _articlesUri(),
       headers: headers,
-      body: json.encode(article.toJson()),
+      body: _encodeArticleBody(
+        article,
+        removedImageUrls: removedImageUrls,
+      ),
     );
     if (response.statusCode != 201 && response.statusCode != 200) {
       throw Exception('Create article failed (${response.statusCode})');
@@ -147,7 +189,11 @@ class RealArticleService implements IArticleService {
   }
 
   @override
-  Future<Article> updateArticle(Article article) async {
+  Future<Article> updateArticle(
+    Article article, {
+    String? oldCoverURL,
+    List<String>? removedImageUrls,
+  }) async {
     final headers = await withAdminAuth(
       _auth,
       const {'Content-Type': 'application/json'},
@@ -155,12 +201,34 @@ class RealArticleService implements IArticleService {
     final response = await _client.put(
       _articleUri(article.id),
       headers: headers,
-      body: json.encode(article.toJson()),
+      body: _encodeArticleBody(
+        article,
+        oldCoverURL: oldCoverURL,
+        removedImageUrls: removedImageUrls,
+      ),
     );
     if (response.statusCode != 200) {
       throw Exception('Update article failed (${response.statusCode})');
     }
     return Article.fromJson(json.decode(response.body) as Map<String, dynamic>);
+  }
+
+  /// Attach [removed_image_urls] and (only when provided) [old_cover_url]
+  /// to the article JSON body. Both fields are optional — the backend
+  /// treats their absence as back-compat (no-op cleanup).
+  String _encodeArticleBody(
+    Article article, {
+    String? oldCoverURL,
+    List<String>? removedImageUrls,
+  }) {
+    final map = article.toJson();
+    if (removedImageUrls != null && removedImageUrls.isNotEmpty) {
+      map['removed_image_urls'] = removedImageUrls;
+    }
+    if (oldCoverURL != null && oldCoverURL.isNotEmpty) {
+      map['old_cover_url'] = oldCoverURL;
+    }
+    return json.encode(map);
   }
 
   @override
@@ -173,7 +241,11 @@ class RealArticleService implements IArticleService {
   }
 
   @override
-  Future<BannerSlide> createBanner(BannerSlide slide) async {
+  Future<BannerSlide> createBanner(
+    BannerSlide slide, {
+    String? oldImageURL,
+    List<String>? removedImageUrls,
+  }) async {
     final headers = await withAdminAuth(
       _auth,
       const {'Content-Type': 'application/json'},
@@ -181,7 +253,10 @@ class RealArticleService implements IArticleService {
     final response = await _client.post(
       _bannersUri(),
       headers: headers,
-      body: json.encode(slide.toJson()),
+      body: _encodeBannerBody(
+        slide,
+        removedImageUrls: removedImageUrls,
+      ),
     );
     if (response.statusCode != 201 && response.statusCode != 200) {
       throw Exception('Create banner failed (${response.statusCode})');
@@ -190,7 +265,11 @@ class RealArticleService implements IArticleService {
   }
 
   @override
-  Future<BannerSlide> updateBanner(BannerSlide slide) async {
+  Future<BannerSlide> updateBanner(
+    BannerSlide slide, {
+    String? oldImageURL,
+    List<String>? removedImageUrls,
+  }) async {
     final headers = await withAdminAuth(
       _auth,
       const {'Content-Type': 'application/json'},
@@ -198,12 +277,34 @@ class RealArticleService implements IArticleService {
     final response = await _client.put(
       _bannerUri(slide.id),
       headers: headers,
-      body: json.encode(slide.toJson()),
+      body: _encodeBannerBody(
+        slide,
+        oldImageURL: oldImageURL,
+        removedImageUrls: removedImageUrls,
+      ),
     );
     if (response.statusCode != 200) {
       throw Exception('Update banner failed (${response.statusCode})');
     }
     return BannerSlide.fromJson(json.decode(response.body) as Map<String, dynamic>);
+  }
+
+  /// Attach [removed_image_urls] and (only when provided) [old_image_url]
+  /// to the banner JSON body. Both fields are optional — the backend
+  /// treats their absence as back-compat (no-op cleanup).
+  String _encodeBannerBody(
+    BannerSlide slide, {
+    String? oldImageURL,
+    List<String>? removedImageUrls,
+  }) {
+    final map = slide.toJson();
+    if (removedImageUrls != null && removedImageUrls.isNotEmpty) {
+      map['removed_image_urls'] = removedImageUrls;
+    }
+    if (oldImageURL != null && oldImageURL.isNotEmpty) {
+      map['old_image_url'] = oldImageURL;
+    }
+    return json.encode(map);
   }
 
   @override

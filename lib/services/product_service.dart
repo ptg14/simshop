@@ -9,93 +9,16 @@ import '../models/category.dart';
 import '../models/product.dart';
 import '_http_with_admin_token.dart';
 import 'admin_auth_service.dart';
+import 'i_product_service.dart';
+import 'product_list_response.dart';
 
-/// Response wrapper for paginated product list from backend.
-class ProductListResponse {
-
-  ProductListResponse({
-    required this.products,
-    required this.total,
-    required this.page,
-    required this.pageSize,
-    required this.totalPages,
-  });
-
-  factory ProductListResponse.fromJson(Map<String, dynamic> json) =>
-      ProductListResponse(
-        products: (json['products'] as List<dynamic>)
-            .map((e) => Product.fromJson(e as Map<String, dynamic>))
-            .toList(),
-        total: json['total'] as int,
-        page: json['page'] as int,
-        pageSize: json['page_size'] as int,
-        totalPages: json['total_pages'] as int,
-      );
-  final List<Product> products;
-  final int total;
-  final int page;
-  final int pageSize;
-  final int totalPages;
-}
-
-/// Service for fetching products from an API or local storage.
-abstract class IProductService {
-  Future<List<Product>> getAllProducts();
-  Future<List<Product>> getProductsByCategory(String category);
-  Future<Product> getProductById(String id);
-  Future<List<Product>> searchProducts(String query);
-  /// Delete a sub-category by name. Used by the admin "Categories" tab.
-  Future<void> deleteCategory(String name);
-
-  // ---- Large / parent categories ----
-  /// Fetch the list of "Large" (parent) category names.
-  Future<List<String>> getLargeCategories();
-
-  /// Fetch every sub-category together with its parent Large category name.
-  Future<List<Category>> getCategoriesWithParent();
-
-  /// Persist a new Large category.
-  Future<void> createLargeCategory(String name);
-
-  /// Delete a Large category. Subs become orphan (`largeCategory == null`).
-  Future<void> deleteLargeCategory(String name);
-
-  /// Persist a new sub-category and link it to the given Large category.
-  /// If [largeCategoryName] does not exist, the backend will create it.
-  Future<void> createCategoryWithParent(String name, String largeCategoryName);
-
-  /// Create a new product and return the created product (with server-generated ID).
-  Future<Product> createProduct(Product product);
-
-  /// Update an existing product and return the updated product.
-  Future<Product> updateProduct(String id, Product product);
-
-  /// Delete a product by its identifier.
-  Future<void> deleteProduct(String id);
-
-  /// Upload an image file and return the image URL.
-  ///
-  /// [productName] / [productId] / [startIndex] are forwarded to the
-  /// backend as multipart form fields so the server can build a
-  /// descriptive filename (YYYYMMDD-<slug>-<index>.<ext>).
-  Future<String?> uploadImage(
-    dynamic file, {
-    String? productName,
-    String? productId,
-    int startIndex = 1,
-  });
-
-  /// Upload multiple images and return their URLs in order.
-  ///
-  /// See [uploadImage] for the meaning of [productName] / [productId] /
-  /// [startIndex]; per-file ordinals run from [startIndex] upward.
-  Future<List<String>> uploadImages(
-    List<dynamic> files, {
-    String? productName,
-    String? productId,
-    int startIndex = 1,
-  });
-}
+// Re-export so existing callers that import
+// `package:simshop/services/product_service.dart` and reference
+// `IProductService` / `ProductListResponse` keep working. The
+// concrete definitions live in the dedicated files; this is a
+// facade for the service layer's public API.
+export 'i_product_service.dart';
+export 'product_list_response.dart';
 
 /// Real implementation that talks to the Go backend API.
 class RealProductService implements IProductService {
@@ -305,16 +228,13 @@ class RealProductService implements IProductService {
   }
 
   @override
-  Future<Product> createProduct(Product product) async {
+  Future<Product> createProduct(Product product, {List<String>? removedImageUrls}) async {
     final headers = await withAdminAuth(
       _auth,
       const {'Content-Type': 'application/json'},
     );
-    final response = await http.post(
-      _productsUri(),
-      headers: headers,
-      body: json.encode(product.toJson()),
-    );
+    final body = _encodeProductBody(product, removedImageUrls: removedImageUrls);
+    final response = await http.post(_productsUri(), headers: headers, body: body);
     await detectAdminSessionExpiry(_auth, response);
     if (response.statusCode != 201 && response.statusCode != 200) {
       final body = response.body.isNotEmpty ? response.body : 'Unknown error';
@@ -326,16 +246,13 @@ class RealProductService implements IProductService {
   }
 
   @override
-  Future<Product> updateProduct(String id, Product product) async {
+  Future<Product> updateProduct(String id, Product product, {List<String>? removedImageUrls}) async {
     final headers = await withAdminAuth(
       _auth,
       const {'Content-Type': 'application/json'},
     );
-    final response = await http.put(
-      _productUri(id),
-      headers: headers,
-      body: json.encode(product.toJson()),
-    );
+    final body = _encodeProductBody(product, removedImageUrls: removedImageUrls);
+    final response = await http.put(_productUri(id), headers: headers, body: body);
     // Detect a stale cached token (server restart, TTL elapsed, etc.)
     // and surface a typed exception so the UI can route the user
     // back to AdminAuthGate. Done before the generic status check so
@@ -348,6 +265,21 @@ class RealProductService implements IProductService {
     return _resolveProductImages(
       Product.fromJson(json.decode(response.body) as Map<String, dynamic>),
     );
+  }
+
+  /// Serialize a product for the create/update endpoints, optionally
+  /// attaching the [removed_image_urls] field the admin dialog uses to
+  /// track images the user unchecked in the gallery. Keeping this in a
+  /// helper lets create/update share identical body assembly logic.
+  String _encodeProductBody(
+    Product product, {
+    List<String>? removedImageUrls,
+  }) {
+    final map = product.toJson();
+    if (removedImageUrls != null && removedImageUrls.isNotEmpty) {
+      map['removed_image_urls'] = removedImageUrls;
+    }
+    return json.encode(map);
   }
 
   @override
