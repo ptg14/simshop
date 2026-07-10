@@ -32,15 +32,35 @@ class _FakeArticleService implements IArticleService {
   @override
   Future<List<Article>> listArticles() async => articles;
   @override
-  Future<Article> createArticle(Article article) async => article;
+  Future<Article> createArticle(
+    Article article, {
+    String? oldCoverURL,
+    List<String>? removedImageUrls,
+  }) async =>
+      article;
   @override
-  Future<Article> updateArticle(Article article) async => article;
+  Future<Article> updateArticle(
+    Article article, {
+    String? oldCoverURL,
+    List<String>? removedImageUrls,
+  }) async =>
+      article;
   @override
   Future<void> deleteArticle(String id) async {}
   @override
-  Future<BannerSlide> createBanner(BannerSlide slide) async => slide;
+  Future<BannerSlide> createBanner(
+    BannerSlide slide, {
+    String? oldImageURL,
+    List<String>? removedImageUrls,
+  }) async =>
+      slide;
   @override
-  Future<BannerSlide> updateBanner(BannerSlide slide) async => slide;
+  Future<BannerSlide> updateBanner(
+    BannerSlide slide, {
+    String? oldImageURL,
+    List<String>? removedImageUrls,
+  }) async =>
+      slide;
   @override
   Future<void> deleteBanner(String id) async {}
 }

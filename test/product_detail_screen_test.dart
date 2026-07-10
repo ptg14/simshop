@@ -17,7 +17,11 @@ class _FakeStoreService implements IStoreService {
   @override
   Future<StoreInfo> getStoreInfo() async => _seed;
   @override
-  Future<StoreInfo> updateStoreInfo(StoreInfo info) async => info;
+  Future<StoreInfo> updateStoreInfo(
+    StoreInfo info, {
+    String? oldBannerUrl,
+  }) async =>
+      info;
 }
 
 Widget _wrap(Widget child, {StoreInfo? storeInfo}) {

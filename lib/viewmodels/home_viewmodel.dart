@@ -27,6 +27,15 @@ class HomeViewModel extends ChangeNotifier {
   /// by [toggleSub] and [selectLarge].
   final Set<String> _selectedSubs = <String>{'All All'};
 
+  /// Optional callback fired from [loadProducts] once the freshly-
+  /// fetched list is in place. The home screen wires this to its
+  /// image-prefetch helper so the first row of hero images is
+  /// already decoded by the time the grid finishes its layout pass.
+  /// Notified synchronously after `_filteredProducts` is assigned so
+  /// the callback sees the same data the next [notifyListeners] tick
+  /// will publish.
+  void Function(List<Product> products)? _onProductsLoaded;
+
   bool _isLoading = false;
   String? _error;
 
@@ -51,6 +60,18 @@ class HomeViewModel extends ChangeNotifier {
   bool get isLoading => _isLoading;
   String? get error => _error;
 
+  /// Install a hook that fires once [loadProducts] has populated
+  /// `_products` with a fresh list. The home screen uses it to
+  /// prefetch the hero images for the first few rows so the grid
+  /// doesn't show shimmer placeholders on scroll.
+  ///
+  /// Pass `null` to detach. Only the most recently installed hook
+  /// fires — replacement, not stacking — so re-mounting the home
+  /// screen doesn't double-fire the prefetch.
+  set onProductsLoaded(void Function(List<Product> products)? hook) {
+    _onProductsLoaded = hook;
+  }
+
   /// Sub-categories to display in the second chip row.
   ///
   /// Returns `[]` when "All" Large is selected (caller should hide the row).
@@ -66,39 +87,71 @@ class HomeViewModel extends ChangeNotifier {
   }
 
   /// Initialize the view model and load products.
+  ///
+  /// Backward-compatible alias for [loadCriticalData] + [loadAuxData]
+  /// — kept so pull-to-refresh and existing tests keep working.
   Future<void> initialize() async {
-    // Fan-out the three independent endpoints in parallel. Previously
-    // these were awaited serially, so the wall-clock cost of the
-    // cold-start was the *sum* of all four latencies (often 800ms+
-    // on slow networks). With [Future.wait] the cost collapses to
-    // the slowest single endpoint. Each load still calls
-    // notifyListeners() so consumers update progressively as data
-    // arrives — the user sees the category chips appear before the
-    // product grid, just as they did before.
+    await Future.wait([
+      loadCriticalData(),
+      loadAuxData(),
+    ]);
+    _applyFilters();
+  }
+
+  /// Fire the "critical" data wave: products + Large categories.
+  ///
+  /// These two endpoints are what the home screen needs to render
+  /// something useful (grid + filter chips). Firing them as soon as
+  /// the first frame paints lets the user see real products without
+  /// waiting for the smaller (sub-categories, banners, site-info)
+  /// polish endpoints.
+  ///
+  /// The `loadProducts` failure path flips `_error` and surfaces the
+  /// "Không thể tải sản phẩm" screen; `loadLargeCategories` keeps
+  /// whatever was previously loaded if the backend is unreachable so
+  /// the user can still scroll the grid with the old filter.
+  Future<void> loadCriticalData() async {
     await Future.wait([
       loadProducts(),
       loadLargeCategories(),
-      loadSubCategories(),
     ]);
     _applyFilters();
+    _notifyIfAlive();
+  }
+
+  /// Fire the "aux" wave: sub-categories (used by the second chip
+  /// row, hidden until the user picks a Large).
+  ///
+  /// This can run a frame after [loadCriticalData] without hurting
+  /// first paint — the home screen already has products + Large
+  /// chips. The aux data finishes filling the rest of the UI in the
+  /// background.
+  Future<void> loadAuxData() async {
+    await loadSubCategories();
+    _applyFilters();
+    _notifyIfAlive();
   }
 
   /// Load all products from service.
   Future<void> loadProducts() async {
     _isLoading = true;
     _error = null;
-    _notifyIfAlive();
 
     try {
       _products = await _productService.getAllProducts();
       _filteredProducts = _products;
+      // Hand the freshly-loaded products back to whoever mounted us
+      // (typically the home screen) so it can prefetch the hero
+      // images. We use a callback rather than [notifyListeners]
+      // because image decoding is a side-effect of "products
+      // arrived", not a UI rebuild hint.
+      _onProductsLoaded?.call(_products);
     } catch (e) {
       _error = 'Failed to load products: $e';
       _products = [];
       _filteredProducts = [];
     } finally {
       _isLoading = false;
-      _notifyIfAlive();
     }
   }
 
@@ -109,7 +162,6 @@ class HomeViewModel extends ChangeNotifier {
       _largeCategories
         ..clear()
         ..addAll(list);
-      _notifyIfAlive();
     } catch (_) {
       // Keep previous value on failure.
     }
@@ -122,7 +174,6 @@ class HomeViewModel extends ChangeNotifier {
       _subCategories
         ..clear()
         ..addAll(list);
-      _notifyIfAlive();
     } catch (_) {
       // Keep previous value on failure.
     }

@@ -240,7 +240,8 @@ class AdminViewModel extends ChangeNotifier {
   /// `updateProduct` until the matching fix there. Aligning the
   /// two methods keeps callers from having to remember a hidden
   /// behavioural difference between create and update.
-  Future<void> addProduct(Product product, {dynamic imageFile}) async {
+  Future<void> addProduct(Product product,
+      {dynamic imageFile, List<String>? removedImageUrls}) async {
     _isLoading = true;
     _error = null;
     notifyListeners();
@@ -281,8 +282,13 @@ class AdminViewModel extends ChangeNotifier {
       }
 
       // Persist to backend and get the created product with real ID.
+      // [removedImageUrls] is normally null/empty on create — there's
+      // no pre-existing gallery to prune. The parameter is plumbed
+      // through for symmetry with [updateProduct] so the dialog can
+      // use a single call shape for both flows.
       final created = await _productService.createProduct(
         product.copyWith(imageUrl: imageUrl, images: images),
+        removedImageUrls: removedImageUrls,
       );
       // Update local list with the real product from backend.
       _products.add(created);
@@ -296,8 +302,14 @@ class AdminViewModel extends ChangeNotifier {
   }
 
   /// Update a product.
+  ///
+  /// [removedImageUrls] collects image URLs the admin dropped from
+  /// the gallery. Forwarded to the backend, which best-effort
+  /// deletes each underlying file from /uploads/ after the DB UPDATE
+  /// commits — see RealProductService.updateProduct for the body
+  /// assembly.
   Future<void> updateProduct(String id, Product product,
-      {dynamic imageFile}) async {
+      {dynamic imageFile, List<String>? removedImageUrls}) async {
     _isLoading = true;
     _error = null;
     _adminSessionExpired = false;
@@ -348,7 +360,11 @@ class AdminViewModel extends ChangeNotifier {
           product.copyWith(imageUrl: imageUrl, images: images);
 
       // Persist changes to backend and get the updated product.
-      final updated = await _productService.updateProduct(id, updatedProduct);
+      final updated = await _productService.updateProduct(
+        id,
+        updatedProduct,
+        removedImageUrls: removedImageUrls,
+      );
       final index = _products.indexWhere((p) => p.id == id);
       if (index >= 0) {
         _products[index] = updated;

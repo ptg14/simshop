@@ -30,7 +30,10 @@ class _FakeStoreService implements IStoreService {
   }
 
   @override
-  Future<StoreInfo> updateStoreInfo(StoreInfo info) async {
+  Future<StoreInfo> updateStoreInfo(
+    StoreInfo info, {
+    String? oldBannerUrl,
+  }) async {
     updateCount++;
     if (updateError != null) throw updateError!;
     if (shouldFail) throw Exception('boom');

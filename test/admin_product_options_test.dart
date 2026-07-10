@@ -39,9 +39,18 @@ class _FakeProductService implements IProductService {
   @override
   Future<void> createCategoryWithParent(String name, String largeCategoryName) async {}
   @override
-  Future<Product> createProduct(Product product) async => product;
+  Future<Product> createProduct(
+    Product product, {
+    List<String>? removedImageUrls,
+  }) async =>
+      product;
   @override
-  Future<Product> updateProduct(String id, Product product) async => product;
+  Future<Product> updateProduct(
+    String id,
+    Product product, {
+    List<String>? removedImageUrls,
+  }) async =>
+      product;
   @override
   Future<void> deleteProduct(String id) async {}
   @override
@@ -63,8 +72,12 @@ class _CapturingAdminViewModel extends AdminViewModel {
   Product? lastSubmitted;
 
   @override
-  Future<void> updateProduct(String id, Product product,
-      {dynamic imageFile}) async {
+  Future<void> updateProduct(
+    String id,
+    Product product, {
+    dynamic imageFile,
+    List<String>? removedImageUrls,
+  }) async {
     lastSubmitted = product;
   }
 }

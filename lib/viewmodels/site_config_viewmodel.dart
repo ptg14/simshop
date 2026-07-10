@@ -62,12 +62,18 @@ class SiteConfigViewModel extends ChangeNotifier {
   /// Persist [info] to the backend. On success, the local model is
   /// updated so listeners see the new values immediately. On failure
   /// the previous values are preserved and [error] is set.
-  Future<bool> update(StoreInfo info) async {
+  ///
+  /// [oldBannerUrl] is the banner_url the row held before this save.
+  /// When the admin replaces the banner, the backend best-effort
+  /// deletes the previous file from disk after the PUT commits —
+  /// forward the prior URL so that diff happens. Pass `null` to skip
+  /// the diff (back-compat — the file is left in place).
+  Future<bool> update(StoreInfo info, {String? oldBannerUrl}) async {
     _isLoading = true;
     _error = null;
     _notifyIfAlive();
     try {
-      _info = await _service.updateStoreInfo(info);
+      _info = await _service.updateStoreInfo(info, oldBannerUrl: oldBannerUrl);
       _isLoading = false;
       _notifyIfAlive();
       return true;

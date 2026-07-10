@@ -54,10 +54,17 @@ class _FakeProductService implements IProductService {
           String name, String largeCategoryName) async =>
       throw UnimplementedError('not used in these tests');
   @override
-  Future<Product> createProduct(Product product) async =>
+  Future<Product> createProduct(
+    Product product, {
+    List<String>? removedImageUrls,
+  }) async =>
       throw UnimplementedError('not used in these tests');
   @override
-  Future<Product> updateProduct(String id, Product product) async =>
+  Future<Product> updateProduct(
+    String id,
+    Product product, {
+    List<String>? removedImageUrls,
+  }) async =>
       throw UnimplementedError('not used in these tests');
   @override
   Future<void> deleteProduct(String id) async =>

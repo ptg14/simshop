@@ -69,12 +69,26 @@ class ArticlesViewModel extends ChangeNotifier {
 
   // -- Article CRUD --
 
-  Future<bool> createArticle(Article article) async {
+  /// [oldCoverURL] is the cover_image_url the row held before this
+  /// create/update. On update it lets the backend diff the URL and
+  /// best-effort delete the previous file after the PUT commits; it
+  /// is plumbed through create for signature symmetry (no-op on create).
+  /// [removedImageUrls] is unused today but reserved for future
+  /// multi-image galleries.
+  Future<bool> createArticle(
+    Article article, {
+    String? oldCoverURL,
+    List<String>? removedImageUrls,
+  }) async {
     _isLoading = true;
     _error = null;
     _notifyIfAlive();
     try {
-      final saved = await _service.createArticle(article);
+      final saved = await _service.createArticle(
+        article,
+        oldCoverURL: oldCoverURL,
+        removedImageUrls: removedImageUrls,
+      );
       _articles = [saved, ..._articles];
       _isLoading = false;
       _notifyIfAlive();
@@ -87,12 +101,20 @@ class ArticlesViewModel extends ChangeNotifier {
     }
   }
 
-  Future<bool> updateArticle(Article article) async {
+  Future<bool> updateArticle(
+    Article article, {
+    String? oldCoverURL,
+    List<String>? removedImageUrls,
+  }) async {
     _isLoading = true;
     _error = null;
     _notifyIfAlive();
     try {
-      final saved = await _service.updateArticle(article);
+      final saved = await _service.updateArticle(
+        article,
+        oldCoverURL: oldCoverURL,
+        removedImageUrls: removedImageUrls,
+      );
       _articles = [
         for (final a in _articles)
           if (a.id == saved.id) saved else a,
@@ -130,12 +152,25 @@ class ArticlesViewModel extends ChangeNotifier {
 
   // -- Banner CRUD --
 
-  Future<bool> createBanner(BannerSlide slide) async {
+  /// [oldImageURL] is the image_url the row held before this
+  /// create/update. On update the backend diffs the URL and
+  /// best-effort deletes the previous file after the PUT commits; it
+  /// is plumbed through create for signature symmetry (no-op on create).
+  /// [removedImageUrls] is unused for single-image banners today.
+  Future<bool> createBanner(
+    BannerSlide slide, {
+    String? oldImageURL,
+    List<String>? removedImageUrls,
+  }) async {
     _isLoading = true;
     _error = null;
     _notifyIfAlive();
     try {
-      final saved = await _service.createBanner(slide);
+      final saved = await _service.createBanner(
+        slide,
+        oldImageURL: oldImageURL,
+        removedImageUrls: removedImageUrls,
+      );
       _banners = [..._banners, saved]
         ..sort((a, b) => a.ord.compareTo(b.ord));
       _isLoading = false;
@@ -149,12 +184,20 @@ class ArticlesViewModel extends ChangeNotifier {
     }
   }
 
-  Future<bool> updateBanner(BannerSlide slide) async {
+  Future<bool> updateBanner(
+    BannerSlide slide, {
+    String? oldImageURL,
+    List<String>? removedImageUrls,
+  }) async {
     _isLoading = true;
     _error = null;
     _notifyIfAlive();
     try {
-      final saved = await _service.updateBanner(slide);
+      final saved = await _service.updateBanner(
+        slide,
+        oldImageURL: oldImageURL,
+        removedImageUrls: removedImageUrls,
+      );
       _banners = [
         for (final b in _banners)
           if (b.id == saved.id) saved else b,

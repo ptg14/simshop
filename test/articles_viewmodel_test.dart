@@ -42,7 +42,11 @@ class _FakeArticleService implements IArticleService {
   }
 
   @override
-  Future<Article> createArticle(Article article) async {
+  Future<Article> createArticle(
+    Article article, {
+    String? oldCoverURL,
+    List<String>? removedImageUrls,
+  }) async {
     if (shouldFail) throw Exception('boom');
     final saved = article.copyWith();
     articles = [saved, ...articles];
@@ -50,7 +54,11 @@ class _FakeArticleService implements IArticleService {
   }
 
   @override
-  Future<Article> updateArticle(Article article) async {
+  Future<Article> updateArticle(
+    Article article, {
+    String? oldCoverURL,
+    List<String>? removedImageUrls,
+  }) async {
     if (shouldFail) throw Exception('boom');
     articles = [
       for (final a in articles)
@@ -66,7 +74,11 @@ class _FakeArticleService implements IArticleService {
   }
 
   @override
-  Future<BannerSlide> createBanner(BannerSlide slide) async {
+  Future<BannerSlide> createBanner(
+    BannerSlide slide, {
+    String? oldImageURL,
+    List<String>? removedImageUrls,
+  }) async {
     createBannerCount++;
     if (shouldFail) throw Exception('boom');
     banners = [...banners, slide]..sort((a, b) => a.ord.compareTo(b.ord));
@@ -74,7 +86,11 @@ class _FakeArticleService implements IArticleService {
   }
 
   @override
-  Future<BannerSlide> updateBanner(BannerSlide slide) async {
+  Future<BannerSlide> updateBanner(
+    BannerSlide slide, {
+    String? oldImageURL,
+    List<String>? removedImageUrls,
+  }) async {
     if (shouldFail) throw Exception('boom');
     banners = [
       for (final b in banners)

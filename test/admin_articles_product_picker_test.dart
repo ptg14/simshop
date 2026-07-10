@@ -18,15 +18,35 @@ class _FakeArticleService implements IArticleService {
   @override
   Future<List<Article>> listArticles() async => const [];
   @override
-  Future<Article> createArticle(Article article) async => article;
+  Future<Article> createArticle(
+    Article article, {
+    String? oldCoverURL,
+    List<String>? removedImageUrls,
+  }) async =>
+      article;
   @override
-  Future<Article> updateArticle(Article article) async => article;
+  Future<Article> updateArticle(
+    Article article, {
+    String? oldCoverURL,
+    List<String>? removedImageUrls,
+  }) async =>
+      article;
   @override
   Future<void> deleteArticle(String id) async {}
   @override
-  Future<BannerSlide> createBanner(BannerSlide slide) async => slide;
+  Future<BannerSlide> createBanner(
+    BannerSlide slide, {
+    String? oldImageURL,
+    List<String>? removedImageUrls,
+  }) async =>
+      slide;
   @override
-  Future<BannerSlide> updateBanner(BannerSlide slide) async => slide;
+  Future<BannerSlide> updateBanner(
+    BannerSlide slide, {
+    String? oldImageURL,
+    List<String>? removedImageUrls,
+  }) async =>
+      slide;
   @override
   Future<void> deleteBanner(String id) async {}
 }
@@ -79,9 +99,18 @@ class _FakeProductService implements IProductService {
   @override
   Future<void> createCategoryWithParent(String name, String largeCategoryName) async {}
   @override
-  Future<Product> createProduct(Product product) async => product;
+  Future<Product> createProduct(
+    Product product, {
+    List<String>? removedImageUrls,
+  }) async =>
+      product;
   @override
-  Future<Product> updateProduct(String id, Product product) async => product;
+  Future<Product> updateProduct(
+    String id,
+    Product product, {
+    List<String>? removedImageUrls,
+  }) async =>
+      product;
   @override
   Future<void> deleteProduct(String id) async {}
   @override
