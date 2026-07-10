@@ -19,17 +19,15 @@ import (
 	"github.com/google/uuid"
 	"github.com/gorilla/mux"
 	"github.com/ptg14/simshop/backend/internal/db"
+	"github.com/ptg14/simshop/backend/internal/uploadfs"
 	"github.com/ptg14/simshop/backend/models"
 )
 
-// UploadConfig holds configuration for file uploads.
-type UploadConfig struct {
-	UploadDir     string
-	MaxUploadSize int64
-	// BaseURL is the public base URL used to construct absolute image URLs.
-	// When set, it overrides Host/X-Forwarded-Host headers to prevent host header spoofing.
-	BaseURL string
-}
+// UploadConfig is an alias for [uploadfs.UploadConfig] so existing
+// call sites that reference handler.UploadConfig (router, server,
+// handler_test, the upload handler itself) keep compiling after the
+// helper moved out to break the db↔handler import cycle.
+type UploadConfig = uploadfs.UploadConfig
 
 // ProductRepo re-exports the db.ProductRepo type so the router can reference it.
 type ProductRepo = db.ProductRepo
@@ -235,11 +233,18 @@ func GetProductHandler(repo *ProductRepo, eventRepo *EventRepo) http.HandlerFunc
 // CreateProductHandler creates a new product.
 func CreateProductHandler(repo *ProductRepo) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		var p models.Product
-		if err := json.NewDecoder(r.Body).Decode(&p); err != nil {
-			writeError(w, http.StatusBadRequest, "Invalid request body")
+		// [removed_image_urls] is accepted on create for symmetry with
+		// the update path but is no-op in practice — there's no
+		// pre-existing image to delete on a brand-new product.
+		var body struct {
+			models.Product
+			RemovedImageURLs []string `json:"removed_image_urls"`
+		}
+		if err := readJSONBody(r, &body); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
+		p := body.Product
 
 		if err := validateProduct(&p); err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
@@ -276,14 +281,23 @@ func CreateProductHandler(repo *ProductRepo) http.HandlerFunc {
 }
 
 // UpdateProductHandler updates an existing product.
+//
+// The request body may include a top-level [removed_image_urls] array
+// listing image URLs the admin dropped from the gallery. After the
+// DB UPDATE commits, each of those files is best-effort deleted from
+// disk so /uploads/ doesn't fill up with orphan images.
 func UpdateProductHandler(repo *ProductRepo) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := mux.Vars(r)["id"]
-		var p models.Product
-		if err := json.NewDecoder(r.Body).Decode(&p); err != nil {
-			writeError(w, http.StatusBadRequest, "Invalid request body")
+		var body struct {
+			models.Product
+			RemovedImageURLs []string `json:"removed_image_urls"`
+		}
+		if err := readJSONBody(r, &body); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
+		p := body.Product
 
 		if err := validateProduct(&p); err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
@@ -295,7 +309,7 @@ func UpdateProductHandler(repo *ProductRepo) http.HandlerFunc {
 			p.ImageURL = p.Images[0]
 		}
 
-		if err := repo.Update(id, &p); err != nil {
+		if err := repo.Update(id, &p, body.RemovedImageURLs); err != nil {
 			writeError(w, http.StatusInternalServerError, "Failed to update product")
 			return
 		}
@@ -341,6 +355,12 @@ func GetStoreInfoHandler(repo *StoreRepo) http.HandlerFunc {
 // Name is required; all other fields are optional (stored as empty strings
 // when blank). Field-length limits match the handler-side validation below
 // so a malformed client payload is rejected before reaching the DB.
+//
+// [body.OldBannerURL] is the banner URL the row held before this update.
+// When the admin replaces the banner, the previous file is best-effort
+// deleted from disk after the UPDATE commits — see store_repo for the
+// exact diff logic. Omitting the field is back-compat: the old file is
+// simply left in place.
 func UpdateStoreInfoHandler(repo *StoreRepo) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
@@ -351,6 +371,7 @@ func UpdateStoreInfoHandler(repo *StoreRepo) http.HandlerFunc {
 			Email         string `json:"email"`
 			Address       string `json:"address"`
 			GoogleMapsURL string `json:"google_maps_url"`
+			OldBannerURL  string `json:"old_banner_url"`
 		}
 		if err := readJSONBody(r, &body); err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
@@ -360,7 +381,7 @@ func UpdateStoreInfoHandler(repo *StoreRepo) http.HandlerFunc {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		info, err := repo.Update(body.Name, body.Description, body.BannerURL, body.Phone, body.Email, body.Address, body.GoogleMapsURL)
+		info, err := repo.Update(body.Name, body.Description, body.BannerURL, body.Phone, body.Email, body.Address, body.GoogleMapsURL, body.OldBannerURL)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "Failed to save site info")
 			return
@@ -381,6 +402,7 @@ func validateStoreInfo(body *struct {
 	Email         string `json:"email"`
 	Address       string `json:"address"`
 	GoogleMapsURL string `json:"google_maps_url"`
+	OldBannerURL  string `json:"old_banner_url"`
 }) error {
 	body.Name = strings.TrimSpace(body.Name)
 	body.Description = strings.TrimSpace(body.Description)

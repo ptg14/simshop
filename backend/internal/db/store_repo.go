@@ -2,22 +2,29 @@ package db
 
 import (
 	"database/sql"
+	"log"
 	"strings"
 
+	"github.com/ptg14/simshop/backend/internal/uploadfs"
 	"github.com/ptg14/simshop/backend/models"
 )
 
 // StoreRepo provides read/write access to the singleton site config row.
+//
+// [uploadCfg] enables post-commit best-effort cleanup of the
+// previous banner image when the admin replaces it. nil disables
+// filesystem deletes (used in unit tests that don't touch uploads).
 type StoreRepo struct {
-	db      *sql.DB
-	dialect Dialect
+	db        *sql.DB
+	dialect   Dialect
+	uploadCfg *uploadfs.UploadConfig
 }
 
 // NewStoreRepo wires the repo onto an already-open *sql.DB.
 // Pass the dialect so any future parameterized queries get
-// placeholders rewritten for Postgres.
-func NewStoreRepo(database *sql.DB, dialect Dialect) *StoreRepo {
-	return &StoreRepo{db: database, dialect: dialect}
+// placeholders rewritten for Postgres. [uploadCfg] may be nil.
+func NewStoreRepo(database *sql.DB, dialect Dialect, uploadCfg *uploadfs.UploadConfig) *StoreRepo {
+	return &StoreRepo{db: database, dialect: dialect, uploadCfg: uploadCfg}
 }
 
 // exec is the dialect-aware Exec wrapper used by every method below.
@@ -47,7 +54,12 @@ func (r *StoreRepo) Get() (*models.StoreInfo, error) {
 // Update persists the editable fields. Name is required (handler validates
 // this first); other fields are trimmed and stored as empty strings if blank.
 // Returns the updated row so callers can confirm what was saved.
-func (r *StoreRepo) Update(name, description, bannerURL, phone, email, address, googleMapsURL string) (*models.StoreInfo, error) {
+//
+// [oldBannerURL] is the banner_url the row held before this update.
+// When it differs from the new [bannerURL], the old file is
+// best-effort deleted from disk after the UPDATE commits. Pass ""
+// for back-compat with older clients that don't track the prior URL.
+func (r *StoreRepo) Update(name, description, bannerURL, phone, email, address, googleMapsURL, oldBannerURL string) (*models.StoreInfo, error) {
 	_, err := r.exec(`UPDATE store_info SET name = ?, description = ?, banner_url = ?, phone = ?, email = ?, address = ?, google_maps_url = ? WHERE id = 1`,
 		strings.TrimSpace(name),
 		strings.TrimSpace(description),
@@ -59,6 +71,12 @@ func (r *StoreRepo) Update(name, description, bannerURL, phone, email, address, 
 	)
 	if err != nil {
 		return nil, err
+	}
+	// Post-commit file cleanup. Only when the URL actually changed —
+	// re-saving the same banner must not delete the live file.
+	if oldBannerURL != "" && oldBannerURL != bannerURL {
+		log.Printf("update store_info: deleting replaced banner %q", oldBannerURL)
+		uploadfs.DeleteByURL(oldBannerURL, r.uploadCfg)
 	}
 	return r.Get()
 }

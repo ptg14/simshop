@@ -26,16 +26,19 @@ func Start(ctx context.Context) error {
 		return fmt.Errorf("database init: %w", err)
 	}
 
-	productRepo := db.NewProductRepo(database.DB, database.Dialect)
-	storeRepo := db.NewStoreRepo(database.DB, database.Dialect)
-	articleRepo := db.NewArticleRepo(database.DB, database.Dialect)
-	eventRepo := db.NewEventRepo(database.DB, database.Dialect)
-
+	// Build uploadCfg first so we can pass it into the repos —
+	// productRepo/storeRepo/articleRepo need it to best-effort
+	// delete physical image files after DB writes commit.
 	uploadCfg := &handler.UploadConfig{
 		UploadDir:     cfg.UploadDir,
 		MaxUploadSize: cfg.MaxUploadSize,
 		BaseURL:       cfg.BaseURL,
 	}
+
+	productRepo := db.NewProductRepo(database.DB, database.Dialect, uploadCfg)
+	storeRepo := db.NewStoreRepo(database.DB, database.Dialect, uploadCfg)
+	articleRepo := db.NewArticleRepo(database.DB, database.Dialect, uploadCfg)
+	eventRepo := db.NewEventRepo(database.DB, database.Dialect)
 
 	// Ensure upload directory exists.
 	if err := os.MkdirAll(cfg.UploadDir, 0755); err != nil {

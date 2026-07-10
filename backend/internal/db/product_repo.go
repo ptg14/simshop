@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
+	"github.com/ptg14/simshop/backend/internal/uploadfs"
 	"github.com/ptg14/simshop/backend/models"
 )
 
@@ -20,16 +21,32 @@ import (
 // NOTHING; SQLite uses ? and INSERT OR IGNORE). On SQLite the
 // helpers are no-ops — query strings pass through unchanged — so
 // behavior is identical to the pre-dialect code.
+//
+// [uploadCfg] enables post-commit best-effort cleanup of the
+// images associated with each product. Pass nil to disable
+// filesystem deletes (unit tests that don't touch uploads do this).
 type ProductRepo struct {
-	db      *sql.DB
-	dialect Dialect
+	db        *sql.DB
+	dialect   Dialect
+	uploadCfg *uploadfs.UploadConfig
 }
 
 // NewProductRepo creates a new repository bound to the given DB.
 // Callers must pass the dialect that was used to open the DB so
-// query rewriting matches the driver.
-func NewProductRepo(db *sql.DB, dialect Dialect) *ProductRepo {
-	return &ProductRepo{db: db, dialect: dialect}
+// query rewriting matches the driver. [uploadCfg] may be nil; when
+// non-nil, Update/Delete will best-effort delete orphaned image
+// files from /uploads/ after the DB write commits.
+func NewProductRepo(db *sql.DB, dialect Dialect, uploadCfg *uploadfs.UploadConfig) *ProductRepo {
+	return &ProductRepo{db: db, dialect: dialect, uploadCfg: uploadCfg}
+}
+
+// deleteUploadURLs is the per-repo thin wrapper that forwards each
+// URL through the safe uploadfs helper. Centralizes the nil-cfg
+// no-op so call sites stay terse.
+func (r *ProductRepo) deleteUploadURLs(urls []string) {
+	for _, u := range urls {
+		uploadfs.DeleteByURL(u, r.uploadCfg)
+	}
 }
 
 // exec is a thin wrapper over r.db.Exec that rewrites placeholders
@@ -250,7 +267,18 @@ func (r *ProductRepo) Create(p *models.Product) error {
 // boundary so callers can inspect the underlying error with
 // [errors.Is] / [errors.As] (mirrors the existing style in
 // [ProductRepo.GetAllFiltered]).
-func (r *ProductRepo) Update(id string, p *models.Product) error {
+//
+// [removedImageUrls] is an optional list of image URLs the admin
+// dropped from the gallery during this edit. After the DB UPDATE
+// commits successfully, each of those files is best-effort deleted
+// from /uploads/ via uploadfs.DeleteByURL — see RealProductService
+// for the wiring. Cleanup runs only after a successful Commit so
+// a failed DB write leaves the files intact (admin can retry). The
+// cleanup itself is best-effort: disk failures are logged and
+// swallowed, never returned to the caller — losing an orphan file
+// is exactly what this code is fixing, never 500 over a delete hiccup.
+// Pass nil for back-compat (no files removed).
+func (r *ProductRepo) Update(id string, p *models.Product, removedImageUrls []string) error {
 	specsJSON, _ := json.Marshal(p.Specs)
 	categoriesJSON, _ := json.Marshal(p.Categories)
 	tx, err := r.db.Begin()
@@ -318,18 +346,65 @@ func (r *ProductRepo) Update(id string, p *models.Product) error {
 			return fmt.Errorf("insert option %d for product %s: %w", i, id, err)
 		}
 	}
+	// Reached the end of the deferred tx.Commit block successfully —
+	// the DB write is durable. Now best-effort delete the orphaned
+	// image files. Wrapped in a nil-check on err because the
+	// deferred Commit may have set err via the named return; if
+	// it did, we must NOT delete files (otherwise we'd be deleting
+	// files referenced by the still-present row, which the next
+	// admin GET would then 404 on).
+	if err == nil && len(removedImageUrls) > 0 {
+		log.Printf("update product %s: deleting %d removed image(s)", id, len(removedImageUrls))
+		r.deleteUploadURLs(removedImageUrls)
+	}
 	return nil
 }
 
-// Delete removes a product.
+// Delete removes a product and best-effort deletes its image files
+// from /uploads/. Image URLs are snapshotted *before* the rows
+// disappear so the cleanup loop has something to act on.
+//
+// Same best-effort contract as [Update]: the DB delete is the
+// authoritative step; filesystem failures are logged and swallowed
+// rather than returned as a 500. Without this the gallery leaks
+// one file per product delete — the bug this method exists to fix.
 func (r *ProductRepo) Delete(id string) error {
-	// Delete product and its images (FK with ON DELETE CASCADE handles images,
-	// but ensure deletion order).
+	urls, _ := r.getImageURLsForProduct(id)
 	if _, err := r.exec(`DELETE FROM product_images WHERE product_id=?`, id); err != nil {
 		return err
 	}
-	_, err := r.exec(`DELETE FROM products WHERE id=?`, id)
-	return err
+	if _, err := r.exec(`DELETE FROM products WHERE id=?`, id); err != nil {
+		return err
+	}
+	if len(urls) > 0 {
+		log.Printf("delete product %s: cleaning %d image file(s)", id, len(urls))
+		r.deleteUploadURLs(urls)
+	}
+	return nil
+}
+
+// getImageURLsForProduct returns every image_url attached to a
+// product. Used by [Delete] to snapshot URLs before the rows go
+// away. sql.NullString isn't needed — the schema declares
+// image_url NOT NULL.
+func (r *ProductRepo) getImageURLsForProduct(productID string) ([]string, error) {
+	rows, err := r.query(`SELECT image_url FROM product_images WHERE product_id=?`, productID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var urls []string
+	for rows.Next() {
+		var u string
+		if err := rows.Scan(&u); err != nil {
+			return nil, err
+		}
+		urls = append(urls, u)
+	}
+	if urls == nil {
+		urls = []string{}
+	}
+	return urls, rows.Err()
 }
 
 // GetAllFiltered returns products matching the given filter criteria with pagination.

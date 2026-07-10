@@ -76,13 +76,21 @@ func GetArticleWithProductsHandler(articleRepo *ArticleRepo, productRepo *Produc
 
 // CreateArticleHandler persists a new article. The id in the body is
 // trusted; the admin UI generates a UUID client-side.
+//
+// [removed_image_urls] is accepted on create for symmetry with the
+// update path but is no-op in practice — there's no pre-existing
+// image to delete on a brand-new article.
 func CreateArticleHandler(repo *ArticleRepo) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		var a models.Article
-		if err := readJSONBody(r, &a); err != nil {
+		var body struct {
+			models.Article
+			RemovedImageURLs []string `json:"removed_image_urls"`
+		}
+		if err := readJSONBody(r, &body); err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
+		a := body.Article
 		if err := validateArticle(&a, false); err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
@@ -99,6 +107,12 @@ func CreateArticleHandler(repo *ArticleRepo) http.HandlerFunc {
 }
 
 // UpdateArticleHandler replaces an article. The id in the URL wins.
+//
+// The body may include a top-level [old_cover_url] field carrying
+// the cover_image_url the row held before this update. When the
+// admin swaps the cover, the previous file is best-effort deleted
+// from disk after the UPDATE commits. Omitting the field is
+// back-compat: the old file is simply left in place.
 func UpdateArticleHandler(repo *ArticleRepo) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := mux.Vars(r)["id"]
@@ -106,16 +120,21 @@ func UpdateArticleHandler(repo *ArticleRepo) http.HandlerFunc {
 			writeError(w, http.StatusBadRequest, "id is required")
 			return
 		}
-		var a models.Article
-		if err := readJSONBody(r, &a); err != nil {
+		var body struct {
+			models.Article
+			RemovedImageURLs []string `json:"removed_image_urls"`
+			OldCoverURL      string   `json:"old_cover_url"`
+		}
+		if err := readJSONBody(r, &body); err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
+		a := body.Article
 		if err := validateArticle(&a, true); err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		saved, err := repo.UpdateArticle(id, a)
+		saved, err := repo.UpdateArticle(id, a, body.OldCoverURL)
 		if err == sql.ErrNoRows {
 			writeError(w, http.StatusNotFound, "article not found")
 			return
@@ -167,13 +186,21 @@ func ListArticlesHandler(repo *ArticleRepo) http.HandlerFunc {
 }
 
 // CreateBannerHandler persists a new banner slide.
+//
+// [removed_image_urls] is accepted on create for symmetry with the
+// update path but is no-op in practice — there's no pre-existing
+// image to delete on a brand-new banner.
 func CreateBannerHandler(repo *ArticleRepo) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		var b models.BannerSlide
-		if err := readJSONBody(r, &b); err != nil {
+		var body struct {
+			models.BannerSlide
+			RemovedImageURLs []string `json:"removed_image_urls"`
+		}
+		if err := readJSONBody(r, &body); err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
+		b := body.BannerSlide
 		if err := validateBanner(&b); err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
@@ -190,6 +217,12 @@ func CreateBannerHandler(repo *ArticleRepo) http.HandlerFunc {
 }
 
 // UpdateBannerHandler replaces a banner slide. The id in the URL wins.
+//
+// The body may include a top-level [old_image_url] field carrying
+// the image_url the row held before this update. When the admin
+// swaps the banner image, the previous file is best-effort deleted
+// from disk after the UPDATE commits. Omitting the field is
+// back-compat: the old file is simply left in place.
 func UpdateBannerHandler(repo *ArticleRepo) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := mux.Vars(r)["id"]
@@ -197,16 +230,21 @@ func UpdateBannerHandler(repo *ArticleRepo) http.HandlerFunc {
 			writeError(w, http.StatusBadRequest, "id is required")
 			return
 		}
-		var b models.BannerSlide
-		if err := readJSONBody(r, &b); err != nil {
+		var body struct {
+			models.BannerSlide
+			RemovedImageURLs []string `json:"removed_image_urls"`
+			OldImageURL      string   `json:"old_image_url"`
+		}
+		if err := readJSONBody(r, &body); err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
+		b := body.BannerSlide
 		if err := validateBanner(&b); err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		saved, err := repo.UpdateBanner(id, b)
+		saved, err := repo.UpdateBanner(id, b, body.OldImageURL)
 		if err == sql.ErrNoRows {
 			writeError(w, http.StatusNotFound, "banner not found")
 			return

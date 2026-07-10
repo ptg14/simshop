@@ -68,11 +68,11 @@ func newTestServer(t *testing.T) (*httptest.Server, *sql.DB, func()) {
 	}
 
 	dialect := db.DialectSQLite
-	productRepo := db.NewProductRepo(database, dialect)
-	storeRepo := db.NewStoreRepo(database, dialect)
-	articleRepo := db.NewArticleRepo(database, dialect)
-	eventRepo := db.NewEventRepo(database, dialect)
 	uploadCfg := uploadConfigForTest(uploadsDir)
+	productRepo := db.NewProductRepo(database, dialect, uploadCfg)
+	storeRepo := db.NewStoreRepo(database, dialect, uploadCfg)
+	articleRepo := db.NewArticleRepo(database, dialect, uploadCfg)
+	eventRepo := db.NewEventRepo(database, dialect)
 
 	r := router.New(productRepo, storeRepo, articleRepo, eventRepo, uploadCfg, handler.NewSessionStore(), "", "*")
 	srv := httptest.NewServer(r)
