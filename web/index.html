@@ -35,10 +35,12 @@
   <link rel="manifest" href="manifest.json">
 
   <!-- Performance: warm DNS + TLS to the API origin before the app
-       fires its first request. Update the host when the deployment
-       target changes (dev = localhost:8080, prod = api.simshop.vn). -->
-  <link rel="preconnect" href="http://localhost:8080" crossorigin>
-  <link rel="dns-prefetch" href="http://localhost:8080">
+       fires its first request. The host placeholder is rewritten at
+       Docker build time from the API_BASE_URL build arg
+       (see docker/Dockerfile.web). Dev (`flutter run`) replaces it
+       with the dev host via local sed in tool/dev.dart. -->
+  <link rel="preconnect" href="$API_BASE_URL" crossorigin>
+  <link rel="dns-prefetch" href="$API_BASE_URL">
 
   <style>
     html, body {

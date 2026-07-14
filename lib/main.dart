@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:flutter/foundation.dart' show kReleaseMode;
 import 'package:flutter/material.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:provider/provider.dart';
@@ -49,17 +50,27 @@ void main() {
   //   5. runApp.
   //
   // `isOptional: true` lets the app boot even when the asset
-  // bundle doesn't contain `.env` — e.g. a stale `flutter run`
-  // session started before the asset was registered in
-  // `pubspec.yaml`. [ApiConfig.apiBaseUrl] already falls back to
-  // `http://localhost:8080` when dotenv has no value for the key,
-  // so a missing file degrades to "use the local default" instead
-  // of crashing the whole app. A `flutter clean && flutter pub
-  // get` is still required to pick up the `.env` asset on the
-  // next cold start.
+  // bundle doesn't contain `.env` — e.g. a release Docker build
+  // that no longer ships the asset. [ApiConfig.apiBaseUrl]
+  // resolves to the compile-time `--dart-define` value when
+  // dotenv has nothing to read, so a missing `.env` is harmless
+  // as long as the build arg was passed.
+  //
+  // In release mode we SKIP the `dotenv.load()` call entirely:
+  // `rootBundle.loadString('.env')` always fires an HTTP request
+  // for `assets/.env` before reporting "not found" — even when
+  // the asset is absent — and that request manifests as a 404 in
+  // the browser console + an "Error while trying to load an
+  // asset" log line from the Flutter engine. There's no value in
+  // paying that cost in production where compile-time is the
+  // single source of truth. Dev builds still call `dotenv.load()`
+  // so a `flutter run` session picking up `.env` from the repo
+  // root keeps working.
   runZonedGuarded(() async {
     WidgetsFlutterBinding.ensureInitialized();
-    await dotenv.load(fileName: '.env', isOptional: true);
+    if (!kReleaseMode) {
+      await dotenv.load(fileName: '.env', isOptional: true);
+    }
     debugPrint('simshop: API_BASE_URL = ${ApiConfig.apiBaseUrl}');
 
     FlutterError.onError = (details) {
