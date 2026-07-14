@@ -27,7 +27,10 @@ import (
 // behind a reverse proxy must populate this from config.
 func New(productRepo *handler.ProductRepo, storeRepo *handler.StoreRepo, articleRepo *handler.ArticleRepo, eventRepo *handler.EventRepo, uploadCfg *handler.UploadConfig, stores *handler.SessionStore, adminPublicKeyHex string, allowedOrigin string, trustedCIDRs []string) *mux.Router {
 	r := mux.NewRouter()
-	// Global middleware – use configurable allowed origin.
+	// Global middleware – use configurable allowed origin. The
+	// string may be a single origin or a comma-separated allowlist
+	// (see [middleware.CORSMiddleware]); the middleware handles the
+	// split + per-request Origin echo internally.
 	r.Use(middleware.CORSMiddleware(allowedOrigin))
 
 	// Rate limit mutating endpoints: 10 req/s with burst of 20.
@@ -63,17 +66,17 @@ func New(productRepo *handler.ProductRepo, storeRepo *handler.StoreRepo, article
 	}
 	adminAuth := middleware.RequireAdminSession(stores, len(adminPub))
 
-	// Ensure preflight requests for API paths always return CORS headers.
-	// Some clients issue OPTIONS preflight to endpoints that are method-restricted;
-	// registering an explicit OPTIONS handler for the /api/ prefix guarantees
-	// we respond with the proper CORS headers.
-	// Preflight handler respects the configured allowed origin.
-	r.PathPrefix("/api/").Methods(http.MethodOptions).HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", allowedOrigin)
-		w.Header().Set("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type,Authorization")
-		w.WriteHeader(http.StatusOK)
-	})
+	// Preflight (OPTIONS) requests are short-circuited by the global
+	// [middleware.CORSMiddleware] — it writes the Allow-Origin /
+	// Allow-Methods / Allow-Headers headers and returns 200 before
+	// gorilla/mux tries to match the route. The middleware itself
+	// honours the comma-separated [allowedOrigin] allowlist, so we
+	// don't need a separate preflight handler here. (An earlier
+	// revision did register one, but it's dead code: gorilla/mux
+	// runs registered `Use` middleware before path matching, so the
+	// global middleware always wins for OPTIONS. Worse, that earlier
+	// preflight handler wrote the raw allowlist string verbatim,
+	// which is invalid as an Allow-Origin header.)
 
 	// Health
 	r.HandleFunc("/health", handler.HealthHandler).Methods(http.MethodGet)

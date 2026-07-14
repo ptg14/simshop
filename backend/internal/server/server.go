@@ -11,6 +11,7 @@ import (
 	"github.com/ptg14/simshop/backend/internal/config"
 	"github.com/ptg14/simshop/backend/internal/db"
 	"github.com/ptg14/simshop/backend/internal/handler"
+	"github.com/ptg14/simshop/backend/internal/middleware"
 	"github.com/ptg14/simshop/backend/internal/router"
 )
 
@@ -71,9 +72,27 @@ func Start(ctx context.Context) error {
 	r := router.New(productRepo, storeRepo, articleRepo, eventRepo, uploadCfg, stores, cfg.AdminPublicKey, cfg.AllowedOrigin, cfg.TrustedProxies)
 
 	addr := fmt.Sprintf(":%s", cfg.Port)
+
+	// Wrap the mux router in CORS middleware at the http.Server level
+	// instead of registering it via [mux.Router.Use]. gorilla/mux's
+	// `Use` only fires middleware for requests that match a route —
+	// OPTIONS preflight for paths the client doesn't know about
+	// (e.g. /api/upload, /api/store-info) hit a 404/405 *before*
+	// the CORS middleware runs, so the browser sees a preflight
+	// failure with no Allow-Origin header and refuses to send the
+	// real request. Wrapping at the Server level guarantees every
+	// request (including OPTIONS for unknown paths) passes through
+	// the middleware first.
+	//
+	// The router-internal `r.Use(CORSMiddleware(...))` call is
+	// preserved as a safety net — if a future refactor drops this
+	// outer wrapper, single-method routes still get the right
+	// Allow-Origin value on plain (non-preflight) requests.
+	handler := middleware.CORSMiddleware(cfg.AllowedOrigin)(r)
+
 	srv := &http.Server{
 		Addr:    addr,
-		Handler: r,
+		Handler: handler,
 	}
 
 	// Run server in background.
