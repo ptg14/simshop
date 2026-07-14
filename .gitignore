@@ -122,3 +122,20 @@ data/
 
 # Bind-mount leftovers if someone ever swaps named volume → bind-mount
 docker/uploads/
+
+# Compiled Go binaries. Sources live in `backend/cmd/<name>/main.go` and
+# are rebuilt via `go run ./cmd/<name>` (or `go build -o <name> ./cmd/<name>`
+# if a binary is actually needed). Keep the binaries out of git history:
+# they're large, un-reviewable ELF blobs and they leak Go toolchain
+# version skew between contributors.
+backend/keygen
+backend/admincurl
+backend/cmd/*/keygen
+backend/cmd/*/admincurl
+
+# Personal dev tooling / MCP config / Playwright artifacts. These come
+# from local Claude Code / Playwright runs and have no place in the
+# shared repo. The MCP config is a JSON file the user copies into their
+# home directory if they want the same MCP servers enabled.
+.mcp.json
+.playwright-mcp/
