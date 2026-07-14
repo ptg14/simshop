@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:simshop/models/article.dart';
 import 'package:simshop/models/banner.dart';
+import 'package:simshop/services/_http_with_admin_token.dart';
 import 'package:simshop/services/article_service.dart';
 import 'package:simshop/viewmodels/articles_viewmodel.dart';
 
@@ -18,6 +19,11 @@ class _FakeArticleService implements IArticleService {
   List<BannerSlide> banners;
   List<Article> articles;
   bool shouldFail = false;
+  /// When true, every write method throws
+  /// [AdminSessionExpiredException] (mirrors the real service
+  /// layer's behavior on a stale 401). Used to pin the viewmodel's
+  /// adminSessionExpired-flag flip without spinning up the network.
+  bool shouldThrowAdminSessionExpired = false;
   int getBannersCount = 0;
   int createBannerCount = 0;
 
@@ -47,6 +53,11 @@ class _FakeArticleService implements IArticleService {
     String? oldCoverURL,
     List<String>? removedImageUrls,
   }) async {
+    if (shouldThrowAdminSessionExpired) {
+      throw AdminSessionExpiredException(
+        'Phiên quản trị đã hết hạn, vui lòng đăng nhập lại.',
+      );
+    }
     if (shouldFail) throw Exception('boom');
     final saved = article.copyWith();
     articles = [saved, ...articles];
@@ -59,6 +70,11 @@ class _FakeArticleService implements IArticleService {
     String? oldCoverURL,
     List<String>? removedImageUrls,
   }) async {
+    if (shouldThrowAdminSessionExpired) {
+      throw AdminSessionExpiredException(
+        'Phiên quản trị đã hết hạn, vui lòng đăng nhập lại.',
+      );
+    }
     if (shouldFail) throw Exception('boom');
     articles = [
       for (final a in articles)
@@ -69,6 +85,11 @@ class _FakeArticleService implements IArticleService {
 
   @override
   Future<void> deleteArticle(String id) async {
+    if (shouldThrowAdminSessionExpired) {
+      throw AdminSessionExpiredException(
+        'Phiên quản trị đã hết hạn, vui lòng đăng nhập lại.',
+      );
+    }
     if (shouldFail) throw Exception('boom');
     articles = articles.where((a) => a.id != id).toList();
   }
@@ -80,6 +101,11 @@ class _FakeArticleService implements IArticleService {
     List<String>? removedImageUrls,
   }) async {
     createBannerCount++;
+    if (shouldThrowAdminSessionExpired) {
+      throw AdminSessionExpiredException(
+        'Phiên quản trị đã hết hạn, vui lòng đăng nhập lại.',
+      );
+    }
     if (shouldFail) throw Exception('boom');
     banners = [...banners, slide]..sort((a, b) => a.ord.compareTo(b.ord));
     return slide;
@@ -91,6 +117,11 @@ class _FakeArticleService implements IArticleService {
     String? oldImageURL,
     List<String>? removedImageUrls,
   }) async {
+    if (shouldThrowAdminSessionExpired) {
+      throw AdminSessionExpiredException(
+        'Phiên quản trị đã hết hạn, vui lòng đăng nhập lại.',
+      );
+    }
     if (shouldFail) throw Exception('boom');
     banners = [
       for (final b in banners)
@@ -101,6 +132,11 @@ class _FakeArticleService implements IArticleService {
 
   @override
   Future<void> deleteBanner(String id) async {
+    if (shouldThrowAdminSessionExpired) {
+      throw AdminSessionExpiredException(
+        'Phiên quản trị đã hết hạn, vui lòng đăng nhập lại.',
+      );
+    }
     if (shouldFail) throw Exception('boom');
     banners = banners.where((b) => b.id != id).toList();
   }
@@ -168,5 +204,46 @@ void main() {
       expect(ok, isFalse);
       expect(vm.error, isNotNull);
     });
+
+    test(
+      'createArticle flips adminSessionExpired when the service throws '
+      'AdminSessionExpiredException (cached token is dead)',
+      () async {
+        // The fix: when the article service surfaces a stale 401, the
+        // viewmodel must flip adminSessionExpired so AdminShell can
+        // route back to AdminAuthGate. Without this branch the user
+        // sees "Lỗi tạo bài viết: AdminSessionExpiredException: ..."
+        // — generic and unhelpful, with no path back to auth.
+        final fake = _FakeArticleService();
+        fake.shouldThrowAdminSessionExpired = true;
+        final vm = ArticlesViewModel(service: fake);
+
+        final ok = await vm.createArticle(
+          const Article(id: '', title: 'T', body: ''),
+        );
+
+        expect(ok, isFalse);
+        expect(vm.adminSessionExpired, isTrue,
+            reason: 'AdminShell watches this flag (alongside the other '
+                'three admin-write viewmodels) and pops the user back '
+                'to AdminAuthGate.');
+        expect(vm.error, contains('Phiên quản trị đã hết hạn'));
+      },
+    );
+
+    test(
+      'clearAdminSessionExpired() resets the flag without I/O',
+      () async {
+        final fake = _FakeArticleService();
+        fake.shouldThrowAdminSessionExpired = true;
+        final vm = ArticlesViewModel(service: fake);
+        await vm.createArticle(const Article(id: '', title: 'T', body: ''));
+        expect(vm.adminSessionExpired, isTrue);
+
+        // Called by AdminShell.initState on every fresh mount.
+        vm.clearAdminSessionExpired();
+        expect(vm.adminSessionExpired, isFalse);
+      },
+    );
   });
 }
