@@ -50,6 +50,25 @@ class AdminViewModel extends ChangeNotifier {
   /// longer valid server-side. The admin shell watches this and
   /// pops back to [AdminAuthGate] to let the user re-authenticate.
   bool get adminSessionExpired => _adminSessionExpired;
+
+  /// Force-clear the [adminSessionExpired] flag without performing
+  /// any I/O. Called by [AdminShell] in [State.initState] when a
+  /// fresh shell mounts after the user came back through the auth
+  /// gate — without this the flag stays sticky on the shared
+  /// root-level VM and the very first build redirects back to the
+  /// gate, producing an admin ↔ gate loop. Callers MUST NOT use
+  /// this to mask a real mid-session 401; the shell only invokes
+  /// it once per fresh [State].
+  ///
+  /// Does NOT call [notifyListeners]: at the moment this runs the
+  /// shell is still inside `initState`, so any listener rebuild
+  /// would be a "setState during build" violation. The shell's own
+  /// first build reads the now-cleared flag directly, which is
+  /// exactly what we want.
+  void clearAdminSessionExpired() {
+    _adminSessionExpired = false;
+  }
+
   String get selectedTab => _selectedTab;
 
   /// Initialize admin view model with products.
@@ -244,6 +263,17 @@ class AdminViewModel extends ChangeNotifier {
       {dynamic imageFile, List<String>? removedImageUrls}) async {
     _isLoading = true;
     _error = null;
+    // Clear any stale "session expired" flag from a prior failure so
+    // a successful retry isn't treated as session-expired by the
+    // shell. [updateProduct] below already does this on entry; mirror
+    // it here so the create/update twins behave identically. Without
+    // this reset, a 401 in one session leaves the flag stuck `true`
+    // on the shared [AdminViewModel] instance (it lives at the root
+    // MultiProvider, not on the AdminShell), and the very next
+    // successful createProduct pops the admin back to the auth gate
+    // — an admin ↔ gate loop that locks the user out of their own
+    // dashboard.
+    _adminSessionExpired = false;
     notifyListeners();
 
     try {
@@ -295,7 +325,21 @@ class AdminViewModel extends ChangeNotifier {
       _isLoading = false;
       notifyListeners();
     } catch (e) {
-      _error = 'Lỗi thêm sản phẩm: $e';
+      // Mirror [updateProduct] below: when the cached Bearer token is
+      // no longer valid (server restart, TTL elapsed, etc.) the
+      // service layer throws [AdminSessionExpiredException] via
+      // [detectAdminSessionExpiry] in `_http_with_admin_token.dart`.
+      // Without this branch the user gets stuck on a dead session —
+      // a generic "Lỗi thêm sản phẩm: ..." string — and the admin
+      // shell never pops them back to the auth gate. The shell
+      // watches [adminSessionExpired] (see [AdminShell.build]) and
+      // routes through `Navigator.pushAndRemoveUntil` when it's true.
+      if (e is AdminSessionExpiredException) {
+        _adminSessionExpired = true;
+        _error = e.message;
+      } else {
+        _error = 'Lỗi thêm sản phẩm: $e';
+      }
       _isLoading = false;
       notifyListeners();
     }

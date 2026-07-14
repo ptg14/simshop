@@ -170,36 +170,67 @@ class MyApp extends StatelessWidget {
         //
         // [ChangeNotifierProxyProvider] resolves `IProductService`
         // through the Provider chain and hands it to AdminViewModel
-        // so admin writes carry `Authorization: Bearer`. The
-        // fallback constructor (no-arg) is only used in tests.
+        // so admin writes carry `Authorization: Bearer`.
+        //
+        // `create` reads `IProductService` via `ctx.read` so the
+        // first instance is constructed WITH the wired service —
+        // critically, the service that has `IAdminAuthService`
+        // injected. The naïve pattern `create: (_) =>
+        // AdminViewModel()` looks tempting because AdminViewModel's
+        // own constructor accepts an optional service, but it falls
+        // back to `RealProductService()` (no auth) and the
+        // subsequent `update` callback's `prev ?? newInstance`
+        // traps that fallback instance forever. The result is admin
+        // writes going out with no Authorization header → backend
+        // 401 → user sees "phiên đã hết hạn". Regression test:
+        // test/admin_viewmodel_wiring_test.dart pins the wire
+        // shape after this provider chain.
         ChangeNotifierProxyProvider<IProductService, AdminViewModel>(
-          create: (_) => AdminViewModel(),
+          create: (ctx) =>
+              AdminViewModel(productService: ctx.read<IProductService>()),
           update: (_, productService, prev) =>
               prev ?? AdminViewModel(productService: productService),
           lazy: true,
         ),
-        // SiteConfigViewModel backs the home footer + browser title.
-        // We can't eagerly `..load()` here because that would force
-        // [IStoreService] to construct on cold start (defeating the
-        // purpose of lazy services). Instead [SiteConfigViewModel] is
-        // lazy and [_BrowserTitleSyncer] kicks off `..load()` after
-        // the first frame.
-        ChangeNotifierProvider(
-          create: (_) => SiteConfigViewModel(),
+        // SiteConfigViewModel backs the home footer + browser title
+        // AND the admin settings tab. The admin-side update goes
+        // through `PUT /api/store-info` which requires the Bearer
+        // token — so the proxy pattern (same one used for
+        // AdminViewModel above) threads the wired IStoreService
+        // (with IAdminAuthService already injected) into the VM.
+        // Without this, the no-arg constructor falls back to
+        // `RealStoreService()` (no auth) and PUT goes out with no
+        // `Authorization` header → backend 401. Same bug as the
+        // original AdminViewModel wiring — pinned by
+        // test/site_config_wiring_test.dart.
+        ChangeNotifierProxyProvider<IStoreService, SiteConfigViewModel>(
+          create: (ctx) =>
+              SiteConfigViewModel(service: ctx.read<IStoreService>()),
+          update: (_, service, prev) =>
+              prev ?? SiteConfigViewModel(service: service),
           lazy: true,
         ),
-        // ArticlesViewModel backs the home carousel. Same rationale
-        // as SiteConfigViewModel: lazy so the banners network call
-        // only fires when something actually reads it (the home
-        // screen's post-frame callback in [HomeScreen.initState]).
-        ChangeNotifierProvider(
-          create: (_) => ArticlesViewModel(),
+        // ArticlesViewModel backs the home carousel (read-only path)
+        // AND the admin "Bài viết" tab (writes articles + banners).
+        // Same proxy pattern — without the wired IArticleService,
+        // admin article/banner writes go out without `Authorization`.
+        // Pinned by test/site_config_wiring_test.dart.
+        ChangeNotifierProxyProvider<IArticleService, ArticlesViewModel>(
+          create: (ctx) =>
+              ArticlesViewModel(service: ctx.read<IArticleService>()),
+          update: (_, service, prev) =>
+              prev ?? ArticlesViewModel(service: service),
           lazy: true,
         ),
-        // Admin "Sự kiện" tab. Lazy so cold-start customers don't
-        // pay for the initial GET unless the admin dashboard opens.
-        ChangeNotifierProvider(
-          create: (_) => EventsViewModel(),
+        // Admin "Sự kiện" tab. Same proxy pattern. Without the
+        // wired IEventService, admin event writes go out without
+        // `Authorization` → backend 401.
+        // Pinned by test/site_config_wiring_test.dart.
+        ChangeNotifierProxyProvider<IEventService, EventsViewModel>(
+          create: (ctx) =>
+              EventsViewModel(service: ctx.read<IEventService>()),
+          update: (_, service, prev) =>
+              prev ?? EventsViewModel(service: service),
           lazy: true,
         ),
         // Admin auth: a [ChangeNotifier] so the gate UI can listen
