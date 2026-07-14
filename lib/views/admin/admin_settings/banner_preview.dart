@@ -42,7 +42,19 @@ class BannerPreview extends StatelessWidget {
             fit: BoxFit.cover, width: double.infinity);
       }
     } else if (url != null && url!.isNotEmpty) {
-      child = Image.network(url!, fit: BoxFit.cover, width: double.infinity);
+      // Surface a placeholder instead of crashing if the URL 404s
+      // (e.g. an upload was removed from disk). A 404 from
+      // [Image.network] would otherwise throw and break the preview
+      // tile.
+      child = Image.network(
+        url!,
+        fit: BoxFit.cover,
+        width: double.infinity,
+        errorBuilder: (_, __, ___) => Center(
+          child: Icon(Icons.image_not_supported_outlined,
+              size: 40, color: scheme.onSurfaceVariant),
+        ),
+      );
     } else {
       child = Center(
         child: Icon(Icons.image_outlined,

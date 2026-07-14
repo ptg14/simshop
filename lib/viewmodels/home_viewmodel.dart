@@ -27,15 +27,6 @@ class HomeViewModel extends ChangeNotifier {
   /// by [toggleSub] and [selectLarge].
   final Set<String> _selectedSubs = <String>{'All All'};
 
-  /// Optional callback fired from [loadProducts] once the freshly-
-  /// fetched list is in place. The home screen wires this to its
-  /// image-prefetch helper so the first row of hero images is
-  /// already decoded by the time the grid finishes its layout pass.
-  /// Notified synchronously after `_filteredProducts` is assigned so
-  /// the callback sees the same data the next [notifyListeners] tick
-  /// will publish.
-  void Function(List<Product> products)? _onProductsLoaded;
-
   bool _isLoading = false;
   String? _error;
 
@@ -59,18 +50,6 @@ class HomeViewModel extends ChangeNotifier {
   Set<String> get selectedSubs => Set.unmodifiable(_selectedSubs);
   bool get isLoading => _isLoading;
   String? get error => _error;
-
-  /// Install a hook that fires once [loadProducts] has populated
-  /// `_products` with a fresh list. The home screen uses it to
-  /// prefetch the hero images for the first few rows so the grid
-  /// doesn't show shimmer placeholders on scroll.
-  ///
-  /// Pass `null` to detach. Only the most recently installed hook
-  /// fires — replacement, not stacking — so re-mounting the home
-  /// screen doesn't double-fire the prefetch.
-  set onProductsLoaded(void Function(List<Product> products)? hook) {
-    _onProductsLoaded = hook;
-  }
 
   /// Sub-categories to display in the second chip row.
   ///
@@ -140,12 +119,6 @@ class HomeViewModel extends ChangeNotifier {
     try {
       _products = await _productService.getAllProducts();
       _filteredProducts = _products;
-      // Hand the freshly-loaded products back to whoever mounted us
-      // (typically the home screen) so it can prefetch the hero
-      // images. We use a callback rather than [notifyListeners]
-      // because image decoding is a side-effect of "products
-      // arrived", not a UI rebuild hint.
-      _onProductsLoaded?.call(_products);
     } catch (e) {
       _error = 'Failed to load products: $e';
       _products = [];
@@ -275,7 +248,7 @@ class HomeViewModel extends ChangeNotifier {
     _filteredProducts = filtered.toList();
   }
 
-  /// Returns true when [product] belongs to the given sub-category name,
+    /// Returns true when [product] belongs to the given sub-category name,
   /// either via its `categories` list or its primary `category` string.
   bool _productMatchesSub(Product product, String subName) {
     if (product.categories.contains(subName)) return true;

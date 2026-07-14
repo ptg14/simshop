@@ -19,6 +19,7 @@ class ImageCarousel extends StatefulWidget {
     this.heroTag,
     this.physics,
     this.showNavigationButtons = false,
+    this.useHorizontalPadding = true,
   });
 
   final List<String> imageUrls;
@@ -62,6 +63,22 @@ class ImageCarousel extends StatefulWidget {
   /// gesture arena immediately instead of competing with the
   /// vertical drag of the parent.
   final ScrollPhysics? physics;
+
+  /// Whether to wrap the carousel in [EdgeInsets.symmetric] using
+  /// `context.horizontalPadding` (12 / 24 / 48 dp on mobile / tablet /
+  /// desktop). Defaults to `true` so the home banner and product
+  /// card carousels keep their responsive gutter.
+  ///
+  /// Set to `false` when the caller has already placed the carousel
+  /// inside a full-width container with its own background — most
+  /// commonly the product detail screen, which puts the carousel
+  /// inside a `Container(width: double.infinity, color: surface)`
+  /// that doubles as the letterbox background for `BoxFit.contain`.
+  /// Adding a second horizontal padding on top of that container
+  /// leaves the caller's letterbox background visible as a white
+  /// stripe down both sides — the image looks "framed" instead of
+  /// filling the screen.
+  final bool useHorizontalPadding;
 
   @override
   State<ImageCarousel> createState() => _ImageCarouselState();
@@ -197,7 +214,9 @@ class _ImageCarouselState extends State<ImageCarousel>
     if (widget.imageUrls.isEmpty) return const SizedBox.shrink();
 
     return Padding(
-      padding: EdgeInsets.symmetric(horizontal: context.horizontalPadding),
+      padding: widget.useHorizontalPadding
+          ? EdgeInsets.symmetric(horizontal: context.horizontalPadding)
+          : EdgeInsets.zero,
       child: ClipRRect(
         borderRadius: BorderRadius.circular(16),
         child: Stack(

@@ -155,6 +155,18 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                           key: ValueKey(product.id),
                           imageUrls: galleryImages,
                           height: context.productDetailImageHeight,
+                          // Caller already wrapped the carousel in a
+                          // full-width container with a letterbox
+                          // background (see `color: surfaceContainerLowest`
+                          // above). Disable [ImageCarousel]'s own
+                          // horizontal padding so the image actually
+                          // fills that container — without this the
+                          // carousel adds 12/24/48 dp of inset on
+                          // each side and the letterbox background
+                          // shows up as a "white frame" around the
+                          // photo (visible on every product that
+                          // doesn't have a wide banner-style image).
+                          useHorizontalPadding: false,
                           // Zero duration disables auto-scroll. The
                           // product-detail carousel sits inside a
                           // vertical SingleChildScrollView, and the

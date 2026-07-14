@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../utils/responsive.dart';
 import 'shimmer_placeholder.dart';
+import 'site_info_footer.dart';
 
 /// Skeleton placeholder for [HomeScreen] used while the initial network
 /// loads are in flight.
@@ -28,112 +29,147 @@ class HomeSkeleton extends StatelessWidget {
   // would silently drop them.
   // ignore: prefer_expression_function_bodies
   Widget build(BuildContext context) {
-    return ShimmerPlaceholder(
-      // Wrap once around the whole skeleton so a single AnimationController
-      // pulses every box in lockstep. Wrapping each box in its own
-      // ShimmerPlaceholder would spin up dozens of controllers and
-      // make the shimmer feel out-of-sync across rows.
-      child: SingleChildScrollView(
-        physics: const AlwaysScrollableScrollPhysics(),
-        child: Center(
-          child: Container(
-            constraints: BoxConstraints(maxWidth: context.maxContentWidth),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                SizedBox(height: context.responsive<double>(
-                  mobile: 12,
-                  tablet: 20,
-                  desktop: 24,
-                )),
-                // Carousel band — same height as the real
-                // [ImageCarousel] so when the banners arrive the
-                // height doesn't jump.
-                Padding(
-                  padding: EdgeInsets.symmetric(
-                    horizontal: context.horizontalPadding,
-                  ),
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(16),
-                    child: ShimmerBox(
-                      height: context.carouselHeight,
-                      width: double.infinity,
+    return SingleChildScrollView(
+      physics: const AlwaysScrollableScrollPhysics(),
+      child: Center(
+        child: Container(
+          constraints: BoxConstraints(maxWidth: context.maxContentWidth),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              SizedBox(height: context.responsive<double>(
+                mobile: 12,
+                tablet: 20,
+                desktop: 24,
+              )),
+              // Shimmer zone — wrapped once around the loading-state
+              // placeholders so a single AnimationController pulses
+              // every box in lockstep. Wrapping each box in its own
+              // ShimmerPlaceholder would spin up dozens of
+              // controllers and make the shimmer feel out-of-sync
+              // across rows.
+              //
+              // The [SiteInfoFooter] below is deliberately NOT
+              // inside this shimmer: it's the actual footer (always
+              // shown) and on a freshly-initialized DB it renders a
+              // banner-only placeholder so the 7-tap hidden admin
+              // entry-point stays reachable during the loading
+              // state. Putting it under [ShimmerPlaceholder] would
+              // tint its placeholder with a moving gradient, which
+              // would falsely imply an in-flight network round-trip
+              // for the store info request — the skeleton already
+              // signals "loading" above, so the footer should read
+              // as a stable empty slot.
+              ShimmerPlaceholder(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // Carousel band — same height as the real
+                    // [ImageCarousel] so when the banners arrive
+                    // the height doesn't jump.
+                    Padding(
+                      padding: EdgeInsets.symmetric(
+                        horizontal: context.horizontalPadding,
+                      ),
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(16),
+                        child: ShimmerBox(
+                          height: context.carouselHeight,
+                          width: double.infinity,
+                        ),
+                      ),
                     ),
-                  ),
-                ),
-                // Category selector placeholder. Same horizontal
-                // padding as [CategorySelector] so the chip row
-                // doesn't jump sideways when the real categories
-                // arrive.
-                Container(
-                  margin: EdgeInsets.symmetric(
-                    vertical: context.responsive<double>(
-                      mobile: 8,
-                      tablet: 10,
-                      desktop: 12,
+                    // Category selector placeholder. Same horizontal
+                    // padding as [CategorySelector] so the chip row
+                    // doesn't jump sideways when the real categories
+                    // arrive.
+                    Container(
+                      margin: EdgeInsets.symmetric(
+                        vertical: context.responsive<double>(
+                          mobile: 8,
+                          tablet: 10,
+                          desktop: 12,
+                        ),
+                      ),
+                      padding: EdgeInsets.symmetric(
+                        horizontal: context.horizontalPadding,
+                      ),
+                      child: _ChipSkeletonRow(),
                     ),
-                  ),
-                  padding: EdgeInsets.symmetric(
-                    horizontal: context.horizontalPadding,
-                  ),
-                  child: _ChipSkeletonRow(),
+                    // Product grid placeholder. We render *all* the
+                    // boxes here (no viewport-aware lazy build)
+                    // because:
+                    //   • shrinking the grid would make the column
+                    //     get a scrollbar before data lands,
+                    //     causing another relayout when products
+                    //     resolve.
+                    //   • the box count (≈ gridColumns × 2 rows)
+                    //     is small enough that the layout cost is
+                    //     negligible — they're plain ShimmerBox
+                    //     widgets with no image decoding.
+                    Padding(
+                      padding: EdgeInsets.symmetric(
+                        horizontal: context.horizontalPadding,
+                      ),
+                      child: LayoutBuilder(
+                        builder: (context, constraints) {
+                          final crossAxisCount = context.gridColumns;
+                          final spacing = context.gridSpacing;
+                          final cellHeight =
+                              context.productCardHeight;
+                          // Two rows of placeholders is enough to
+                          // suggest the grid shape without painting
+                          // hundreds of shimmer boxes on the first
+                          // frame.
+                          const skeletonRows = 2;
+                          final totalCells =
+                              crossAxisCount * skeletonRows;
+                          return Wrap(
+                            spacing: spacing,
+                            runSpacing: spacing,
+                            children: [
+                              for (var i = 0; i < totalCells; i++)
+                                SizedBox(
+                                  // Width derived from the same
+                                  // math as
+                                  // SliverGridDelegateWithFixedCrossAxisCount
+                                  // (parent usable width / cross
+                                  // axis count, minus the
+                                  // inter-cell spacing) so the
+                                  // column count matches the real
+                                  // grid once data lands.
+                                  width: (constraints.maxWidth -
+                                          spacing *
+                                              (crossAxisCount - 1)) /
+                                      crossAxisCount,
+                                  height: cellHeight,
+                                  child: ShimmerBox(
+                                    width: double.infinity,
+                                    height: cellHeight,
+                                    radius: 12,
+                                  ),
+                                ),
+                            ],
+                          );
+                        },
+                      ),
+                    ),
+                    // Bottom padding matches the real grid so the
+                    // pull-to-refresh gesture doesn't shorten the
+                    // scrollable region mid-load.
+                    const SizedBox(height: 32),
+                  ],
                 ),
-                // Product grid placeholder. We render *all* the boxes
-                // here (no viewport-aware lazy build) because:
-                //   • shrinking the grid would make the column get a
-                //     scrollbar before data lands, causing another
-                //     relayout when products resolve.
-                //   • the box count (≈ gridColumns × 2 rows) is
-                //     small enough that the layout cost is
-                //     negligible — they're plain ShimmerBox widgets
-                //     with no image decoding.
-                Padding(
-                  padding: EdgeInsets.symmetric(
-                    horizontal: context.horizontalPadding,
-                  ),
-                  child: LayoutBuilder(
-                    builder: (context, constraints) {
-                      final crossAxisCount = context.gridColumns;
-                      final spacing = context.gridSpacing;
-                      final cellHeight = context.productCardHeight;
-                      // Two rows of placeholders is enough to suggest
-                      // the grid shape without painting hundreds of
-                      // shimmer boxes on the first frame.
-                      const skeletonRows = 2;
-                      final totalCells = crossAxisCount * skeletonRows;
-                      return Wrap(
-                        spacing: spacing,
-                        runSpacing: spacing,
-                        children: [
-                          for (var i = 0; i < totalCells; i++)
-                            SizedBox(
-                              // Width derived from the same math as
-                              // SliverGridDelegateWithFixedCrossAxisCount
-                              // (parent usable width / cross axis
-                              // count, minus the inter-cell spacing)
-                              // so the column count matches the real
-                              // grid once data lands.
-                              width: (constraints.maxWidth -
-                                      spacing * (crossAxisCount - 1)) /
-                                  crossAxisCount,
-                              height: cellHeight,
-                              child: ShimmerBox(
-                                width: double.infinity,
-                                height: cellHeight,
-                                radius: 12,
-                              ),
-                            ),
-                        ],
-                      );
-                    },
-                  ),
-                ),
-                // Bottom padding matches the real grid so the
-                // pull-to-refresh gesture doesn't shorten the
-                // scrollable region mid-load.
-                const SizedBox(height: 32),
-              ],
-            ),
+              ),
+              // Site info footer — kept outside the shimmer on
+              // purpose (see comment on the ShimmerPlaceholder
+              // block above). On a freshly-initialized DB this
+              // renders a banner-only placeholder card with the
+              // 7-tap hidden admin gesture, so the admin entry-point
+              // is reachable even while the rest of the page is
+              // still loading.
+              const SiteInfoFooter(),
+            ],
           ),
         ),
       ),

@@ -58,14 +58,6 @@ class _HomeScreenState extends State<HomeScreen> {
       // happened *before* this post-frame callback — already painted
       // the skeleton instead of waiting for the network.
       final vm = context.read<HomeViewModel>();
-      // Wire the prefetch hook *before* kicking off the load so the
-      // callback fires the moment [loadProducts] assigns the fresh
-      // list. Detach in [dispose] so we never call into a torn-down
-      // BuildContext if a hot-restart leaves us in mid-flight.
-      vm.onProductsLoaded = (products) {
-        if (!mounted) return;
-        _prefetchTopImages(products);
-      };
       vm.loadCriticalData();
 
       // Defer aux loads one more frame so the critical HTTP is in
@@ -82,15 +74,6 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   void dispose() {
-    // Detach the prefetch hook so a future hot-restart that keeps
-    // the same VM alive doesn't call back into a torn-down State.
-    // We try-catch the read because by [dispose] the provider may
-    // already be torn down — a missing hook is the same as no hook.
-    try {
-      context.read<HomeViewModel>().onProductsLoaded = null;
-    } catch (_) {
-      // Provider already gone, nothing to detach.
-    }
     super.dispose();
   }
 
@@ -98,26 +81,6 @@ class _HomeScreenState extends State<HomeScreen> {
     Navigator.of(context).push(
       fadeSlideRoute(ProductDetailScreen(product: product)),
     );
-  }
-
-  /// Push the first few hero images through the framework's image
-  /// cache so by the time the grid lays out and the user starts
-  /// scrolling, the underlying [CachedNetworkImage] doesn't have to
-  /// hit the network. Picks the top three *valid* URLs — invalid /
-  /// empty URLs would just throw inside [precacheImage] and the
-  /// grid handles those gracefully anyway, so we skip them to avoid
-  /// noise in the dev console.
-  void _prefetchTopImages(List<Product> products) {
-    // Only prefetch images whose URL we haven't already cached —
-    // [precacheImage] returns a Future that completes when the
-    // image is decoded; awaiting it isn't necessary here, the goal
-    // is to *start* the network fetch and disk-cache lookup ASAP.
-    const maxPrefetch = 3;
-    for (final p in products.take(maxPrefetch)) {
-      final url = p.imageUrl;
-      if (url.isEmpty) continue;
-      precacheImage(NetworkImage(url), context);
-    }
   }
 
   @override
@@ -317,31 +280,42 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Widget _buildEmpty(HomeViewModel viewModel) {
     final scheme = Theme.of(context).colorScheme;
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 64),
-        child: Column(
-          children: [
-            Icon(Icons.inventory_2_outlined,
-                size: 80, color: scheme.onSurfaceVariant),
-            const SizedBox(height: 16),
-            Text(
-              'Không tìm thấy sản phẩm nào',
-              style: TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.w600,
-                color: scheme.onSurface,
+    // The empty-products state keeps [SiteInfoFooter] at the
+    // bottom of the page (its actual footer position) so the
+    // 7-tap hidden admin entry-point stays reachable. The
+    // footer's [AdminBannerTrigger] mounts the gesture even
+    // when [StoreInfo] is empty — see site_info_footer.dart.
+    return ListView(
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
+      padding: const EdgeInsets.symmetric(vertical: 64),
+      children: [
+        Center(
+          child: Column(
+            children: [
+              Icon(Icons.inventory_2_outlined,
+                  size: 80, color: scheme.onSurfaceVariant),
+              const SizedBox(height: 16),
+              Text(
+                'Không tìm thấy sản phẩm nào',
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w600,
+                  color: scheme.onSurface,
+                ),
               ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'Hãy thử chọn danh mục khác',
-              style: TextStyle(color: scheme.onSurfaceVariant),
-              textAlign: TextAlign.center,
-            ),
-          ],
+              const SizedBox(height: 8),
+              Text(
+                'Hãy thử chọn danh mục khác',
+                style: TextStyle(color: scheme.onSurfaceVariant),
+                textAlign: TextAlign.center,
+              ),
+            ],
+          ),
         ),
-      ),
+        const SizedBox(height: 32),
+        const SiteInfoFooter(),
+      ],
     );
   }
 
