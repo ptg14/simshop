@@ -1,0 +1,83 @@
+# Dockerfile.backend — Production multi-stage build cho simshop backend (Go).
+#
+# Stage 1: golang:1.25-alpine build binary static + strip debug.
+# Stage 2: alpine chỉ chứa binary + ca-certificates, chạy non-root.
+#
+# Build context: thư mục root của repo (chứa backend/).
+# docker compose mount context ở đây:
+#   build:
+#     context: ..
+#     dockerfile: docker/Dockerfile.backend
+
+# =============================================================================
+# Stage 1: build
+# =============================================================================
+FROM golang:1.25-alpine AS build
+
+WORKDIR /src
+
+# Cache layer khi chỉ sửa .go (modules + deps download 1 lần)
+COPY backend/go.mod backend/go.sum ./
+RUN go mod download && go mod verify
+
+# Copy source tối thiểu cần cho compile
+COPY backend/ ./
+
+# Build static binary cho alpine:
+#   CGO_ENABLED=0       — không phụ thuộc libc (binary portable)
+#   -trimpath           — bỏ path tuyệt đối khỏi binary (kích thước nhỏ hơn,
+#                        reproducible build, không leak tên user / path repo)
+#   -ldflags="-s -w"    — strip symbol table + DWARF debug info
+#   -buildvcs=false     — không embed VCS info (commit hash)
+RUN CGO_ENABLED=0 GOOS=linux go build \
+        -trimpath \
+        -buildvcs=false \
+        -ldflags="-s -w" \
+        -o /out/server ./
+
+# =============================================================================
+# Stage 2: runtime (chỉ chứa binary + ca-certificates)
+# =============================================================================
+FROM alpine:3.20
+
+# ca-certificates: cần cho HTTPS outgoing + zero warnings với Go's
+# x509 cert pool.
+RUN apk add --no-cache ca-certificates \
+    && rm -rf /var/cache/apk/*
+
+# Tạo unprivileged user cho runtime. Dùng UID/GID 10001 (tránh xung
+# đột với `nobody` của alpine đã chiếm 65534). Tách nhóm riêng để file
+# trong /data/uploads có group ownership hợp lý.
+RUN addgroup -g 10001 -S app \
+    && adduser  -u 10001 -S -G app app
+
+# Workspace + uploads dir. Container CHỈ chứa:
+#   - /app/server  (binary)
+#   - /etc/ssl/certs (từ ca-certificates)
+#   - /data/uploads (mount volume)
+# KHÔNG có source code, Go toolchain, package cache.
+WORKDIR /app
+COPY --from=build --chown=app:app /out/server /app/server
+
+# Uploads directory — owned by app:app, mode 0755.
+# Sẽ được mount volume vào khi chạy compose.
+RUN mkdir -p /data/uploads \
+    && chown -R app:app /data
+
+USER app:app
+
+ENV PORT=8080 \
+    UPLOAD_DIR=/data/uploads \
+    # Production mode: nếu ADMIN_PUBLIC_KEY rỗng sẽ fail-fast ở boot
+    # (xem internal/config/config.go::Load).
+    ENV=production \
+    GIN_MODE=release
+
+EXPOSE 8080
+
+# Healthcheck inline — chạy được cả khi không qua compose.
+# (compose cũng khai healthcheck riêng để set "healthy" status.)
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 --start-period=15s \
+    CMD wget -qO- http://localhost:8080/health || exit 1
+
+CMD ["/app/server"]

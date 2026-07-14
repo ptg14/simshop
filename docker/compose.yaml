@@ -1,0 +1,203 @@
+# docker/compose.yaml — simshop PRODUCTION stack.
+#
+# 4 services:
+#   postgres    - PostgreSQL 16, data ở named volume (cross-OS)
+#   backend     - Go API, image build từ Dockerfile.backend (strip + non-root)
+#   web         - Flutter web + Nginx (image build từ Dockerfile.web, release)
+#   cloudflared - Cloudflare Tunnel, 1 token + 2 ingress (FE + BE)
+#
+# Tất cả service đều `restart: unless-stopped` để Docker tự khởi động
+# lại khi server reboot.
+#
+# ENV bắt buộc trong docker/.env (fail-fast nếu thiếu):
+#   - POSTGRES_PASSWORD
+#   - ADMIN_PUBLIC_KEY         (production: BE fail-fast nếu rỗng)
+#   - ALLOWED_ORIGIN
+#   - CF_TUNNEL_TOKEN
+#
+# Cách chạy:
+#   cp docker/.env.example docker/.env
+#   $EDITOR docker/.env                          # điền POSTGRES_PASSWORD + CF_TUNNEL_TOKEN + ADMIN_PUBLIC_KEY
+#   docker compose -f docker/compose.yaml --env-file docker/.env up -d --build
+#
+# Xem README trong docker/ để biết chi tiết về Cloudflare setup,
+# cache-bypass rules, và troubleshooting.
+
+name: simshop
+
+services:
+  # ---------------------------------------------------------------------------
+  # PostgreSQL — production
+  # ---------------------------------------------------------------------------
+  postgres:
+    image: postgres:16-alpine
+    container_name: simshop-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-simshop}
+      POSTGRES_USER: ${POSTGRES_USER:-simshop}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8"
+    volumes:
+      # Named volume — Docker tự chọn path (cross-OS: Windows / Linux khác nhau
+      # nhưng user không cần quan tâm). Xem `docker volume inspect
+      # simshop_postgres_data` để xem path thực.
+      - postgres_data:/var/lib/postgresql/data
+
+      # Schema SQL chạy 1 LẦN DUY NHẤT khi volume còn trống.
+      # Sau khi volume có data, restart server KHÔNG re-run → boot cực nhanh.
+      - ./initdb:/docker-entrypoint-initdb.d:ro
+    # Resource limits — tránh 1 process Postgres chiếm toàn bộ host.
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+        reservations:
+          memory: 128M
+    healthcheck:
+      # pg_isready trả 0 nếu accept connection.
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+    networks:
+      - simshop-net
+    # Không publish port ra host — chỉ BE trong Docker network mới
+    # kết nối được.
+
+  # ---------------------------------------------------------------------------
+  # Backend — production Go binary
+  # ---------------------------------------------------------------------------
+  backend:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.backend
+    image: simshop/backend:${IMAGE_TAG:-latest}
+    container_name: simshop-backend
+    restart: unless-stopped
+    environment:
+      # DATABASE_URL bắt buộc — pgx tự detect dialect từ scheme.
+      DATABASE_URL: postgres://${POSTGRES_USER:-simshop}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-simshop}?sslmode=disable
+      PORT: 8080
+      UPLOAD_DIR: /data/uploads
+      # Public key Ed25519 hex 64 chars — BẮT BUỘC trong production.
+      # Nếu rỗng sẽ fail-fast ở boot (xem internal/config/config.go).
+      ADMIN_PUBLIC_KEY: ${ADMIN_PUBLIC_KEY:?ADMIN_PUBLIC_KEY is required in production}
+      ALLOWED_ORIGIN: ${ALLOWED_ORIGIN:?ALLOWED_ORIGIN is required in production}
+      # BASE_URL: nếu set, BE trả absolute URL cho ảnh upload
+      # (vd: "https://api.example.com" → "/uploads/x.jpg" thành
+      #       "https://api.example.com/uploads/x.jpg").
+      BASE_URL: ${BE_PUBLIC_URL:-}
+      # Retry khi Postgres chưa ready (sau restart):
+      DB_RETRY_ATTEMPTS: ${DB_RETRY_ATTEMPTS:-10}
+      DB_RETRY_INTERVAL_MS: ${DB_RETRY_INTERVAL_MS:-1000}
+      # Logging tắt debug của Go std lib — production cần log sạch.
+      GODEBUG: ""
+    volumes:
+      # Uploads persist qua các lần rebuild image backend.
+      - backend_uploads:/data/uploads
+    depends_on:
+      postgres:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: "0.5"
+        reservations:
+          memory: 64M
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    networks:
+      - simshop-net
+
+  # ---------------------------------------------------------------------------
+  # Web — production Flutter build + Nginx
+  # ---------------------------------------------------------------------------
+  web:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.web
+      args:
+        # Truyền URL Cloudflare của BE vào Flutter build.
+        API_BASE_URL: ${API_BASE_URL:-${BE_PUBLIC_URL:-}}
+    image: simshop/web:${IMAGE_TAG:-latest}
+    container_name: simshop-web
+    restart: unless-stopped
+    # Nginx serve ở port 80 nội bộ. Cloudflared sẽ tự route
+    # <domain> → web:80.
+    # KHÔNG publish port 80 ra host vì đi qua Cloudflare (chỉ cần
+    # port nội bộ trong Docker network).
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+          cpus: "0.25"
+        reservations:
+          memory: 32M
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+    networks:
+      - simshop-net
+
+  # ---------------------------------------------------------------------------
+  # Cloudflared — Tunnel, 1 token + 2 ingress (FE + BE)
+  # ---------------------------------------------------------------------------
+  # Lưu ý quan trọng về ingress: cloudflared dùng TUNNEL_TOKEN để auth
+  # với Cloudflare, và FETCH ingress rules từ Dashboard (không phải
+  # từ file config). Nếu file `cloudflared-config.yml` không có
+  # credentials JSON file đúng tunnel, nó KHÔNG được dùng để override
+  # ingress — chỉ dùng để tham khảo.
+  #
+  # Hướng dẫn sửa lỗi "Unable to reach origin service: connection
+  # refused to localhost:3000": vào Cloudflare Zero Trust dashboard →
+  # Networks → Tunnels → <tunnel của bạn> → tab "Public Hostname",
+  # đặt 2 hostname trỏ về service URL bên dưới.
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: simshop-cloudflared
+    restart: unless-stopped
+    # Không truyền --config: để cloudflared tự dùng ingress từ dashboard.
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: ${CF_TUNNEL_TOKEN:?CF_TUNNEL_TOKEN is required}
+    # Mount file config để người vận hành có nơi tham khảo hostname
+    # + service URL cần đặt trên dashboard. Không bind vào runtime.
+    volumes:
+      - ./cloudflared-config.yml:/etc/cloudflared/config.yml:ro
+    depends_on:
+      backend:
+        condition: service_healthy
+      web:
+        condition: service_healthy
+    networks:
+      - simshop-net
+
+# ============================================================================
+# Top-level volumes (named volumes — cross-OS, Docker quản lý path)
+# ============================================================================
+volumes:
+  postgres_data:
+    name: simshop_postgres_data
+  backend_uploads:
+    name: simshop_backend_uploads
+
+# ============================================================================
+# Networks
+# ============================================================================
+networks:
+  simshop-net:
+    name: simshop-net
+    driver: bridge

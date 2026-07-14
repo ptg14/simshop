@@ -106,6 +106,19 @@ backend/*.db
 pubspec.lock
 # Admin auth keys are generated locally via `go run ./cmd/keygen`
 # and uploaded through the admin gate; never commit them.
-keygen
 *.key
 *.pub
+
+# ============================================================================
+# Docker stack runtime artifacts (docker/ in repo)
+# ============================================================================
+# Local env file for compose — contains secrets (POSTGRES_PASSWORD,
+# CF_TUNNEL_TOKEN, ADMIN_PUBLIC_KEY). Template lives at docker/.env.example.
+docker/.env
+
+# Local backups emitted by docker/backup.sh
+docker/data/
+data/
+
+# Bind-mount leftovers if someone ever swaps named volume → bind-mount
+docker/uploads/

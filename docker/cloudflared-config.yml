@@ -1,0 +1,56 @@
+# cloudflared-config.yml — THAM KHẢO cho Cloudflare Dashboard.
+#
+# File này KHÔNG được cloudflared đọc ở runtime khi dùng TUNNEL_TOKEN.
+# Cloudflare tunnel với token auth sẽ tự fetch ingress rules từ
+# Cloudflare Dashboard (Networks → Tunnels → <tunnel> → tab
+# "Configured" → Public Hostname).
+#
+# Tại sao file này tồn tại:
+#   - Tài liệu cho operator biết cần khai gì trên dashboard
+#   - Tránh sai lệch giữa hostname và service URL
+#   - Tránh leak hostname thật vào repo (file này là template generic)
+#
+# Nếu sau này muốn ingress từ file (không qua dashboard):
+#   1. Generate credentials JSON từ dashboard:
+#      `cloudflared tunnel login` rồi `cloudflared tunnel create <name>`
+#      → lấy file UUID.json
+#   2. Mount file JSON vào container: ./tunnel-credentials.json:/etc/cloudflared/<UUID>.json
+#   3. Thay token-based command:
+#        command: tunnel --no-autoupdate --config /etc/cloudflared/config.yml run
+#   4. Trong file này, thay <TUNNEL_ID> bằng UUID, bỏ comment dòng
+#      `credentials-file`.
+#
+# =============================================================================
+# CẤU HÌNH CẦN ĐẶT TRÊN CLOUDFLARE DASHBOARD:
+# =============================================================================
+# Vào https://one.dash.cloudflare.com/ → Networks → Tunnels →
+# <tunnel của bạn> → tab "Public Hostname" → "Add a public hostname"
+#
+# Hostname 1 (Frontend — Flutter web):
+#   Subdomain: testweb    (hoặc để trống nếu dùng root domain)
+#   Domain:    dvthang.qzz.io
+#   Service:   http://web:80
+#
+# Hostname 2 (Backend — Go API):
+#   Subdomain: api
+#   Domain:    dvthang.qzz.io
+#   Service:   http://backend:8080
+#
+# Nếu muốn catch-all cho mọi subdomain khác → Service: http_status:404.
+# =============================================================================
+
+# BỎ COMMENT 2 DÒNG DƯỚI KHI CHUYỂN SANG FILE-BASED INGRESS:
+# tunnel: <TUNNEL_ID>
+# credentials-file: /etc/cloudflared/<TUNNEL_ID>.json
+
+ingress:
+  # Backend API — qua internal Docker network (service name "backend")
+  - hostname: api.dvthang.qzz.io
+    service: http://backend:8080
+
+  # Frontend — qua internal Docker network (service name "web")
+  - hostname: testweb.dvthang.qzz.io
+    service: http://web:80
+
+  # Catch-all
+  - service: http_status:404

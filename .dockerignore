@@ -1,0 +1,92 @@
+# .dockerignore — loại bỏ khỏi Docker build context.
+#
+# Build context là root repo, dùng cho cả Dockerfile.backend (COPY backend/)
+# và Dockerfile.web (COPY . .). File HAR 441 MB trong working tree là lý do
+# chính phải có file này — nếu không, mỗi lần build web sẽ copy cả file đó.
+
+# ---- VCS / IDE ----
+.git
+.gitignore
+.idea
+.vscode
+.claude
+.github
+.continue
+
+# ---- Flutter build artifacts (lớn, không cần trong image) ----
+.dart_tool
+build
+.flutter-plugins
+.flutter-plugins-dependencies
+.metadata
+.packages
+.pub-cache
+.flutter-plugins-end
+
+# ---- Generated ----
+*.g.dart
+*.freezed.dart
+*.mocks.dart
+
+# ---- Local DB / data (KHÔNG commit) ----
+*.db
+*.sqlite
+*.sqlite3
+data
+uploads
+backend/simshop.db
+backend/test.db
+
+# ---- HAR files / dumps (rất lớn) ----
+*.har
+localhost_Archive*.har
+
+# ---- Environment (bảo mật) ----
+# KHÔNG ignore `.env` ở root — pubspec.yaml khai nó là asset bắt buộc
+# cho Flutter web build (`flutter_dotenv` đọc runtime). File này chỉ
+# dùng cho local dev (API_BASE_URL=http://localhost:8080) — khi build
+# cho production, truyền API_BASE_URL qua build arg sẽ override.
+#
+#   .env
+.env.*
+backend/.env
+docker/.env
+
+# ---- Local secrets ----
+*.key
+*.pub
+admin.key
+admin.key.pub
+
+# ---- OS junk ----
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+
+# ---- Editor backup ----
+*~
+*.bak
+
+# ---- Node (nếu có toolchain JS) ----
+node_modules
+
+# ---- Platform-specific build outputs (Flutter tự build khi cần) ----
+android
+ios
+linux
+macos
+windows
+
+# ---- Tests (chạy ngoài Docker) ----
+test
+
+# ---- Backend Go artifacts (compile trong container) ----
+backend/backend
+backend/keygen
+
+# ---- Docker runtime artifacts (giữ lại Dockerfile + config, bỏ .env + data) ----
+# KHÔNG ignore toàn bộ `docker/` — Dockerfile.web cần COPY nginx.conf.
+docker/.env
+docker/data/
+docker/uploads/
