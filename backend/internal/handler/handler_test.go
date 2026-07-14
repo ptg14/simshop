@@ -676,6 +676,90 @@ func TestProductUpdateDuplicateOptionIDs(t *testing.T) {
 	}
 }
 
+// TestProductCreateAcceptsNoImage asserts the regression: a product with
+// no image_url and no images list (admin leaves the gallery empty)
+// must still be accepted by POST /api/products. The old
+// `validateProduct` enforced "at least one image is required" which
+// locked admins out of creating text-only products and produced a
+// confusing 400 when the admin UI submitted a draft.
+//
+// Other fields stay required by design (name + price > 0); only the
+// image requirement was removed per the user request "image không bắt
+// buộc".
+func TestProductCreateAcceptsNoImage(t *testing.T) {
+	srv, _, cleanup := newTestServer(t)
+	defer cleanup()
+
+	body := strings.NewReader(`{
+		"id": "p-noimg",
+		"name": "Áo thun draft",
+		"description": "",
+		"price": 100000,
+		"image_url": "",
+		"images": [],
+		"category": "",
+		"categories": [],
+		"rating": 0,
+		"specs": []
+	}`)
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/api/products", body)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		respBody, _ := readAll(resp)
+		t.Fatalf("status = %d, want 201 (body=%s)", resp.StatusCode, string(respBody))
+	}
+}
+
+// TestProductCreateStillRequiresNameAndPrice locks the *other* half of
+// the contract so a future refactor can't accidentally widen the
+// relaxation to all fields. name + price > 0 stay required; only the
+// image requirement was removed.
+func TestProductCreateStillRequiresNameAndPrice(t *testing.T) {
+	srv, _, cleanup := newTestServer(t)
+	defer cleanup()
+
+	cases := []struct {
+		name string
+		body string
+		want string
+	}{
+		{
+			name: "missing name",
+			body: `{"price": 100000, "image_url": ""}`,
+			want: "name is required",
+		},
+		{
+			name: "zero price",
+			body: `{"name": "x", "price": 0, "image_url": ""}`,
+			want: "price must be greater than 0",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req, _ := http.NewRequest(http.MethodPost, srv.URL+"/api/products", strings.NewReader(tc.body))
+			req.Header.Set("Content-Type", "application/json")
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				t.Fatalf("create: %v", err)
+			}
+			defer resp.Body.Close()
+			if resp.StatusCode != http.StatusBadRequest {
+				respBody, _ := readAll(resp)
+				t.Fatalf("status = %d, want 400 (body=%s)", resp.StatusCode, string(respBody))
+			}
+			respBody, _ := readAll(resp)
+			if !bytes.Contains(respBody, []byte(tc.want)) {
+				t.Errorf("body = %s, want it to contain %q", string(respBody), tc.want)
+			}
+		})
+	}
+}
+
 // ---------- Pentest remediation tests ----------
 
 // TestCreateCategory_PersistsName is the regression test for the

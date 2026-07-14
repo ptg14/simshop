@@ -518,11 +518,20 @@ func validateProduct(p *models.Product) error {
 	if p.Name == "" {
 		errs = append(errs, "name is required")
 	}
-	// Description is optional now; do not require it.
-	// Require at least one image either in ImageURL or Images.
-	if p.ImageURL == "" && len(p.Images) == 0 {
-		errs = append(errs, "at least one image is required (image_url or images)")
-	}
+	// Description is optional — do not require it.
+	// Image is optional — do not require it. The previous
+	// "at least one image is required" check was a regression for
+	// admins creating text-only drafts: the admin UI would submit
+	// a product with an empty gallery, the server rejected it with
+	// 400, and the only recourse was to upload a placeholder image
+	// and edit it later. Letting the product persist without any
+	// image URL matches what the home grid already does when
+	// `image_url == ""` (it shows an "Sản phẩm chưa có ảnh"
+	// placeholder). Pinned by
+	// TestProductCreateAcceptsNoImage + the negative half
+	// TestProductCreateStillRequiresNameAndPrice (which locks the
+	// name + price checks so a future refactor can't accidentally
+	// widen the relaxation to *all* fields).
 	// Categories are optional. For backward compatibility, if a single
 	// `Category` string is provided but `Categories` slice is empty,
 	// populate the slice. Do not require a category.
