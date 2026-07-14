@@ -51,6 +51,14 @@ type Config struct {
 	// disables proxy-header trust: callers see r.RemoteAddr and the
 	// upload handler emits a relative URL.
 	TrustedProxies []string
+	// DBRetryAttempts is how many times db.New will ping the database
+	// before giving up. Defaults to 10. Useful for Docker startup
+	// where Postgres may not be ready by the time the backend boots.
+	DBRetryAttempts int
+	// DBRetryInterval is the delay between retry attempts. Defaults
+	// to 1 second. Combined with DBRetryAttempts, the maximum wait at
+	// boot is roughly Attempts × Interval.
+	DBRetryInterval time.Duration
 }
 
 // Load reads configuration from environment variables, providing sensible defaults.
@@ -115,6 +123,23 @@ func Load() *Config {
 
 	trustedProxies := parseTrustedProxies(os.Getenv("TRUSTED_PROXIES"))
 
+	// DB retry tuning (Docker-friendly). Defaults are intentionally
+	// conservative: 10 attempts × 1s = 10s window where backend will
+	// wait for Postgres to come up. Operators on slow CI can bump
+	// DB_RETRY_ATTEMPTS without recompiling.
+	dbRetryAttempts := 10
+	if v := os.Getenv("DB_RETRY_ATTEMPTS"); v != "" {
+		if i, err := strconv.Atoi(v); err == nil && i > 0 {
+			dbRetryAttempts = i
+		}
+	}
+	dbRetryInterval := time.Second
+	if v := os.Getenv("DB_RETRY_INTERVAL_MS"); v != "" {
+		if i, err := strconv.Atoi(v); err == nil && i > 0 {
+			dbRetryInterval = time.Duration(i) * time.Millisecond
+		}
+	}
+
 	return &Config{
 		Port:            port,
 		DatabaseURL:     dsn,
@@ -127,6 +152,8 @@ func Load() *Config {
 		AdminPublicKey:  adminPublicKey,
 		Env:             env,
 		TrustedProxies:  trustedProxies,
+		DBRetryAttempts: dbRetryAttempts,
+		DBRetryInterval: dbRetryInterval,
 	}
 }
 
