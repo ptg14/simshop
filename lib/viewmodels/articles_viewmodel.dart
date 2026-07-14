@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import '../models/article.dart';
 import '../models/banner.dart';
+import '../services/_http_with_admin_token.dart';
 import '../services/article_service.dart';
 
 /// ViewModel for the home carousel banners and the admin "Bài viết" tab.
@@ -20,6 +21,36 @@ class ArticlesViewModel extends ChangeNotifier {
   List<Article> _articles = const [];
   bool _isLoading = false;
   String? _error;
+
+  /// True after a write returned 401 "admin session required" (server
+  /// restart, TTL elapsed, etc.). The admin shell watches this flag
+  /// alongside [AdminViewModel.adminSessionExpired] and
+  /// [SiteConfigViewModel.adminSessionExpired] and pops back to the
+  /// auth gate so the user can re-authenticate. Mirrors the same
+  /// pattern as those viewmodels — without it the user stays on the
+  /// "Bài viết" tab, every retry keeps failing, and the only escape
+  /// is to clear app data.
+  ///
+  /// The service layer throws [AdminSessionExpiredException] via
+  /// [detectAdminSessionExpiry] in `_http_with_admin_token.dart` on
+  /// the canonical wire shape `401 {"error":"admin session required"}`.
+  /// We catch it explicitly so we can flip the flag *before* the
+  /// generic error string overwrites the user-facing message with
+  /// something unhelpful like
+  /// "Lỗi tạo bài viết: AdminSessionExpiredException: ...".
+  bool _adminSessionExpired = false;
+  bool get adminSessionExpired => _adminSessionExpired;
+
+  /// Force-clear the [adminSessionExpired] flag without performing
+  /// any I/O. Called by [AdminShell] in [State.initState] when a
+  /// fresh shell mounts after the user came back through the auth
+  /// gate — see [AdminViewModel.clearAdminSessionExpired] for the
+  /// full reasoning. Does NOT notify listeners for the same reason
+  /// as [AdminViewModel] (the shell is still inside initState, so a
+  /// listener rebuild would be a "setState during build" violation).
+  void clearAdminSessionExpired() {
+    _adminSessionExpired = false;
+  }
 
   /// True after [dispose] has run. The home-screen banner
   /// `load()` fires on app start; on web, hot-restart can tear
@@ -93,6 +124,16 @@ class ArticlesViewModel extends ChangeNotifier {
       _isLoading = false;
       _notifyIfAlive();
       return true;
+    } on AdminSessionExpiredException catch (e) {
+      // Cached Bearer token was rejected. Flip the flag so the
+      // admin shell pops back to [AdminAuthGate]; the service has
+      // already cleared the dead token from local storage.
+      // Same pattern as [SiteConfigViewModel.update] / [AdminViewModel].
+      _adminSessionExpired = true;
+      _error = e.message;
+      _isLoading = false;
+      _notifyIfAlive();
+      return false;
     } catch (e) {
       _error = 'Lỗi tạo bài viết: $e';
       _isLoading = false;
@@ -122,6 +163,12 @@ class ArticlesViewModel extends ChangeNotifier {
       _isLoading = false;
       _notifyIfAlive();
       return true;
+    } on AdminSessionExpiredException catch (e) {
+      _adminSessionExpired = true;
+      _error = e.message;
+      _isLoading = false;
+      _notifyIfAlive();
+      return false;
     } catch (e) {
       _error = 'Lỗi cập nhật bài viết: $e';
       _isLoading = false;
@@ -142,6 +189,12 @@ class ArticlesViewModel extends ChangeNotifier {
       _isLoading = false;
       _notifyIfAlive();
       return true;
+    } on AdminSessionExpiredException catch (e) {
+      _adminSessionExpired = true;
+      _error = e.message;
+      _isLoading = false;
+      _notifyIfAlive();
+      return false;
     } catch (e) {
       _error = 'Lỗi xóa bài viết: $e';
       _isLoading = false;
@@ -176,6 +229,12 @@ class ArticlesViewModel extends ChangeNotifier {
       _isLoading = false;
       _notifyIfAlive();
       return true;
+    } on AdminSessionExpiredException catch (e) {
+      _adminSessionExpired = true;
+      _error = e.message;
+      _isLoading = false;
+      _notifyIfAlive();
+      return false;
     } catch (e) {
       _error = 'Lỗi tạo banner: $e';
       _isLoading = false;
@@ -205,6 +264,12 @@ class ArticlesViewModel extends ChangeNotifier {
       _isLoading = false;
       _notifyIfAlive();
       return true;
+    } on AdminSessionExpiredException catch (e) {
+      _adminSessionExpired = true;
+      _error = e.message;
+      _isLoading = false;
+      _notifyIfAlive();
+      return false;
     } catch (e) {
       _error = 'Lỗi cập nhật banner: $e';
       _isLoading = false;
@@ -223,6 +288,12 @@ class ArticlesViewModel extends ChangeNotifier {
       _isLoading = false;
       _notifyIfAlive();
       return true;
+    } on AdminSessionExpiredException catch (e) {
+      _adminSessionExpired = true;
+      _error = e.message;
+      _isLoading = false;
+      _notifyIfAlive();
+      return false;
     } catch (e) {
       _error = 'Lỗi xóa banner: $e';
       _isLoading = false;

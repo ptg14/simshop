@@ -4,6 +4,8 @@ import 'package:provider/provider.dart';
 import '../../utils/page_transitions.dart';
 import '../../utils/responsive.dart';
 import '../../viewmodels/admin_viewmodel.dart';
+import '../../viewmodels/articles_viewmodel.dart';
+import '../../viewmodels/events_viewmodel.dart';
 import '../../viewmodels/site_config_viewmodel.dart';
 import 'admin_articles.dart';
 import 'admin_auth_gate.dart';
@@ -38,22 +40,69 @@ class _AdminShellState extends State<AdminShell> {
   bool _redirecting = false;
 
   @override
-  Widget build(BuildContext context) => Consumer2<AdminViewModel,
-          SiteConfigViewModel>(
-        builder: (context, viewModel, siteConfig, _) {
+  void initState() {
+    super.initState();
+    // Clear any sticky `adminSessionExpired` flag the moment the
+    // shell mounts. A fresh [State] implicitly proves the user just
+    // came through the auth gate — either via stored-token
+    // auto-redirect or a fresh re-auth → pushReplacement — so any
+    // prior flag is by definition stale. Without this reset, the
+    // shared root-level [AdminViewModel] keeps the flag stuck `true`
+    // across the redirect, and the very first [build] below sees
+    // it, schedules another redirect, and the user is trapped in
+    // an admin ↔ gate loop.
+    //
+    // Reset happens ONCE in [initState] — NOT in [build] — so a 401
+    // that fires mid-session (server restart while the admin is
+    // already inside the shell) still flips the flag and persists
+    // across subsequent rebuilds. [Counter-test in
+    // test/admin_shell_test.dart pins this contract.]
+    final admin = context.read<AdminViewModel>();
+    final site = context.read<SiteConfigViewModel>();
+    final articles = context.read<ArticlesViewModel>();
+    final events = context.read<EventsViewModel>();
+    // Idempotent: a no-op when the flag is already false, which is
+    // the common case (first-time admin open, no prior failure).
+    admin.clearAdminSessionExpired();
+    site.clearAdminSessionExpired();
+    articles.clearAdminSessionExpired();
+    events.clearAdminSessionExpired();
+  }
+
+  @override
+  Widget build(BuildContext context) => Consumer4<AdminViewModel,
+          SiteConfigViewModel, ArticlesViewModel, EventsViewModel>(
+        builder: (context, viewModel, siteConfig, articles, events, _) {
           // Route back to the auth gate when a write failed because
           // the cached token is no longer valid. Done in a post-frame
           // callback so the [Navigator] push happens outside the
           // build pass — calling `push` from inside `build` throws
           // "Navigator is currently locked".
           //
-          // We watch both [AdminViewModel.adminSessionExpired] (any
-          // product/category/event write that returned 401) AND
-          // [SiteConfigViewModel.adminSessionExpired] (the site-info
-          // PUT). Without the second check, saving the settings tab
-          // leaves the user stranded on a dead session.
+          // We watch all four admin-write viewmodels:
+          //   * [AdminViewModel.adminSessionExpired] — products +
+          //     categories + everything that goes through
+          //     `IProductService`.
+          //   * [SiteConfigViewModel.adminSessionExpired] — the
+          //     site-info PUT (settings tab). Without this the
+          //     settings tab leaves the user stranded on a dead
+          //     session.
+          //   * [ArticlesViewModel.adminSessionExpired] — articles +
+          //     banners (admin "Bài viết" tab). User-reported trace:
+          //     POST /api/upload 401 in the article dialog.
+          //   * [EventsViewModel.adminSessionExpired] — events
+          //     (admin "Sự kiện" tab).
+          //
+          // Without the latter three, the corresponding tab leaves
+          // the user on a dead session with no path back to the
+          // gate. The service layer's `detectAdminSessionExpiry`
+          // already cleared the dead token from SharedPreferences;
+          // the gate will reissue a fresh session once the user
+          // re-authenticates.
           if ((viewModel.adminSessionExpired ||
-                  siteConfig.adminSessionExpired) &&
+                  siteConfig.adminSessionExpired ||
+                  articles.adminSessionExpired ||
+                  events.adminSessionExpired) &&
               !_redirecting) {
             _redirecting = true;
             WidgetsBinding.instance.addPostFrameCallback((_) {

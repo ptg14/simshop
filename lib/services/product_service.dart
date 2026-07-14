@@ -310,6 +310,13 @@ class RealProductService implements IProductService {
 
     final streamedResponse = await request.send();
     final response = await http.Response.fromStream(streamedResponse);
+    // Detect a stale cached token (server restart, TTL elapsed, etc.)
+    // and surface a typed exception so the UI can route the user
+    // back to AdminAuthGate. Done before the generic status check
+    // so the message is unambiguous. Without this, the dead token
+    // stays in SharedPreferences and the user can't recover without
+    // manually clearing app data.
+    await detectAdminSessionExpiry(_auth, response);
     if (response.statusCode != 200) {
       throw Exception('Failed to upload image: ${response.statusCode}');
     }
@@ -355,6 +362,12 @@ class RealProductService implements IProductService {
 
     final streamedResponse = await request.send();
     final response = await http.Response.fromStream(streamedResponse);
+    // Mirror uploadImage: clear the dead token on a stale-session
+    // 401 so the admin can re-authenticate via AdminAuthGate.
+    // Without this, the second, third, ... uploads all hit the
+    // same dead credential and surface a generic "Failed to upload
+    // images: 401" with no path back to the auth gate.
+    await detectAdminSessionExpiry(_auth, response);
     if (response.statusCode != 200) {
       throw Exception('Failed to upload images: ${response.statusCode}');
     }

@@ -74,6 +74,11 @@ class RealEventService implements IEventService {
       headers: headers,
       body: json.encode(event.toJson()),
     );
+    // Detect stale session — see product_service.createProduct for
+    // the rationale (server restart / TTL elapsed → clear cached
+    // token + throw AdminSessionExpiredException so AdminShell
+    // can route the user back to AdminAuthGate).
+    await detectAdminSessionExpiry(_auth, response);
     final body = _decode(response);
     return Event.fromJson(body);
   }
@@ -89,6 +94,8 @@ class RealEventService implements IEventService {
       headers: headers,
       body: json.encode(event.toJson()),
     );
+    // Detect stale session — see createEvent above for context.
+    await detectAdminSessionExpiry(_auth, response);
     final body = _decode(response);
     return Event.fromJson(body);
   }
@@ -97,6 +104,8 @@ class RealEventService implements IEventService {
   Future<void> deleteEvent(String id) async {
     final response = await _client.delete(_itemUri(id),
         headers: await withAdminAuth(_auth, const {}));
+    // Detect stale session — see createEvent above for context.
+    await detectAdminSessionExpiry(_auth, response);
     if (response.statusCode != 204 && response.statusCode != 200) {
       throw Exception('Delete event failed (${response.statusCode})');
     }

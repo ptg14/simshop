@@ -182,6 +182,12 @@ class RealArticleService implements IArticleService {
         removedImageUrls: removedImageUrls,
       ),
     );
+    // Mirror product_service.createProduct: clear the dead token on
+    // a stale-session 401 so the admin can re-authenticate via
+    // AdminAuthGate. Without this the dead token stays in
+    // SharedPreferences and every subsequent write keeps failing
+    // with the same generic message and no path back to the gate.
+    await detectAdminSessionExpiry(_auth, response);
     if (response.statusCode != 201 && response.statusCode != 200) {
       throw Exception('Create article failed (${response.statusCode})');
     }
@@ -207,6 +213,8 @@ class RealArticleService implements IArticleService {
         removedImageUrls: removedImageUrls,
       ),
     );
+    // Detect stale session — see createArticle above for context.
+    await detectAdminSessionExpiry(_auth, response);
     if (response.statusCode != 200) {
       throw Exception('Update article failed (${response.statusCode})');
     }
@@ -235,6 +243,8 @@ class RealArticleService implements IArticleService {
   Future<void> deleteArticle(String id) async {
     final response = await _client.delete(_articleUri(id),
         headers: await withAdminAuth(_auth, const {}));
+    // Detect stale session — see createArticle above for context.
+    await detectAdminSessionExpiry(_auth, response);
     if (response.statusCode != 204 && response.statusCode != 200) {
       throw Exception('Delete article failed (${response.statusCode})');
     }
@@ -258,6 +268,8 @@ class RealArticleService implements IArticleService {
         removedImageUrls: removedImageUrls,
       ),
     );
+    // Detect stale session — see createArticle above for context.
+    await detectAdminSessionExpiry(_auth, response);
     if (response.statusCode != 201 && response.statusCode != 200) {
       throw Exception('Create banner failed (${response.statusCode})');
     }
@@ -283,6 +295,8 @@ class RealArticleService implements IArticleService {
         removedImageUrls: removedImageUrls,
       ),
     );
+    // Detect stale session — see createArticle above for context.
+    await detectAdminSessionExpiry(_auth, response);
     if (response.statusCode != 200) {
       throw Exception('Update banner failed (${response.statusCode})');
     }
@@ -311,6 +325,8 @@ class RealArticleService implements IArticleService {
   Future<void> deleteBanner(String id) async {
     final response = await _client.delete(_bannerUri(id),
         headers: await withAdminAuth(_auth, const {}));
+    // Detect stale session — see createArticle above for context.
+    await detectAdminSessionExpiry(_auth, response);
     if (response.statusCode != 204 && response.statusCode != 200) {
       throw Exception('Delete banner failed (${response.statusCode})');
     }

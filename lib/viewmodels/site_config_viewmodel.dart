@@ -37,6 +37,16 @@ class SiteConfigViewModel extends ChangeNotifier {
   bool _adminSessionExpired = false;
   bool get adminSessionExpired => _adminSessionExpired;
 
+  /// Force-clear the [adminSessionExpired] flag without performing
+  /// any I/O. Called by [AdminShell] in [State.initState] when a
+  /// fresh shell mounts after the user came back through the auth
+  /// gate — see [AdminViewModel.clearAdminSessionExpired] for the
+  /// full reasoning. Same lifetime, same fix. Does NOT notify
+  /// listeners for the same reason as [AdminViewModel].
+  void clearAdminSessionExpired() {
+    _adminSessionExpired = false;
+  }
+
   /// Current site config. Defaults to name='simshop' on first frame so
   /// the home page never has to special-case an empty model.
   StoreInfo get siteInfo => _info;
