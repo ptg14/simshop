@@ -74,6 +74,7 @@ class _CapturingAdminViewModel extends AdminViewModel {
   _CapturingAdminViewModel(IProductService svc) : super(productService: svc);
 
   Product? lastSubmitted;
+  List<String>? lastRemovedImageUrls;
 
   @override
   Future<void> updateProduct(
@@ -83,6 +84,7 @@ class _CapturingAdminViewModel extends AdminViewModel {
     List<String>? removedImageUrls,
   }) async {
     lastSubmitted = product;
+    lastRemovedImageUrls = removedImageUrls;
   }
 }
 
@@ -314,5 +316,91 @@ void main() {
         .evaluate();
     expect(memImages, isNotEmpty,
         reason: 'newly picked bytes should be visible as Image.memory in the option row');
+  });
+
+  // Regression: when the admin deletes a product-gallery image whose
+  // URL is also referenced by an option's `imageUrls`, the option's
+  // gallery would still show the deleted image on the detail page
+  // because the URL was never pruned from `option.imageUrls` on
+  // submit. The backend deletes the file from /uploads/, so the option
+  // ended up holding a broken URL. Fix: strip removed URLs from each
+  // option's `imageUrls` before submit.
+  testWidgets(
+      'Edit dialog: deleting a gallery image also strips that URL from every option',
+      (tester) async {
+    useWideSurface(tester);
+    const redUrl = 'https://example.test/red.jpg';
+    const blueUrl = 'https://example.test/blue.jpg';
+    // Two product images. Both are referenced by the "Red" option
+    // (so the bug had two URLs to leak through). The "Blue" option
+    // references only the blue image so we can prove the strip is
+    // targeted, not a blanket wipe.
+    final product = Product(
+      id: 'p-1',
+      name: 'Áo thun',
+      description: '',
+      price: 100,
+      imageUrl: redUrl,
+      images: [redUrl, blueUrl],
+      category: 'All',
+      categories: ['All'],
+      rating: 0,
+      reviews: 0,
+      stock: 0,
+      specs: [],
+      options: [
+        Option(id: 'o1', name: 'Red', imageUrls: const [redUrl, blueUrl]),
+        Option(id: 'o2', name: 'Blue', imageUrls: const [blueUrl]),
+      ],
+    );
+    final vm = _CapturingAdminViewModel(_FakeProductService());
+
+    await tester.pumpWidget(MaterialApp(
+      home: MultiProvider(
+        providers: [
+          ChangeNotifierProvider<AdminViewModel>.value(value: vm),
+          ChangeNotifierProvider<HomeViewModel>(create: (_) => HomeViewModel()),
+        ],
+        child: Scaffold(
+          body: Center(
+            child: EditProductDialog(viewModel: vm, product: product),
+          ),
+        ),
+      ),
+    ));
+    await tester.pumpAndSettle();
+
+    // Find the gallery's existing-image tiles by their "Xóa ảnh"
+    // Semantics button and tap the FIRST one (the redUrl). The X
+    // button sits in a Stack on top of each existing image, and the
+    // Wrap orders them red then blue (matching `existingImages`).
+    final removeButtons = find.bySemanticsLabel('Xóa ảnh');
+    expect(removeButtons, findsNWidgets(2),
+        reason: 'one X button per existing image');
+    await tester.tap(removeButtons.first);
+    await tester.pump();
+
+    // Submit the dialog.
+    await tester.tap(find.text('Cập nhật'));
+    await tester.pumpAndSettle();
+
+    // The dialog forwarded the removed URL to the VM.
+    expect(vm.lastRemovedImageUrls, [redUrl]);
+
+    // The submitted product has only blueUrl in the gallery.
+    expect(vm.lastSubmitted, isNotNull);
+    expect(vm.lastSubmitted!.images, [blueUrl]);
+
+    // The "Red" option used to contain both URLs. redUrl must be
+    // pruned; blueUrl stays because the admin only removed the red
+    // one.
+    expect(vm.lastSubmitted!.options, hasLength(2));
+    expect(vm.lastSubmitted!.options[0].id, 'o1');
+    expect(vm.lastSubmitted!.options[0].imageUrls, [blueUrl],
+        reason: 'redUrl must be stripped from the Red option');
+    // The "Blue" option only ever had blueUrl; sanity-check it
+    // survives the prune untouched.
+    expect(vm.lastSubmitted!.options[1].id, 'o2');
+    expect(vm.lastSubmitted!.options[1].imageUrls, [blueUrl]);
   });
 }

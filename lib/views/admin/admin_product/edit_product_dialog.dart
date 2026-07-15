@@ -157,11 +157,34 @@ class _EditProductDialogState extends State<EditProductDialog> {
           : _selectedImages.map((e) => File(e.path)).toList();
     }
 
+    // The admin can drop an image from [_existingImages] (which adds
+    // the URL to [_removedImageUrls] for backend cleanup) without
+    // explicitly un-toggling that URL inside every option that
+    // references it — the option's row loses the thumb, so the toggle
+    // UI disappears, but the URL is still inside `option.imageUrls`.
+    // If we forwarded [_options] as-is, the backend would still write
+    // those URLs into `product_options.image_urls` while the file is
+    // deleted from /uploads/, leaving the option's gallery showing a
+    // broken image. Strip every removed URL from each option's
+    // `imageUrls` before submit so the option tracks the cleaned-up
+    // gallery.
+    final prunedOptions = _removedImageUrls.isEmpty
+        ? _options
+        : _options
+            .map((o) => Option(
+                  id: o.id,
+                  name: o.name,
+                  imageUrls: o.imageUrls
+                      .where((u) => !_removedImageUrls.contains(u))
+                      .toList(),
+                ))
+            .toList();
+
     final productWithImages = updated.copyWith(
       images: _existingImages,
       imageUrl:
           _existingImages.isNotEmpty ? _existingImages.first : updated.imageUrl,
-      options: _options,
+      options: prunedOptions,
     );
 
     await widget.viewModel.updateProduct(
