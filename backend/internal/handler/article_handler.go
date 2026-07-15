@@ -329,13 +329,17 @@ func fetchProductStubs(productRepo *ProductRepo, ids []string) []map[string]any 
 
 // validateArticle trims strings, enforces length caps, and rejects
 // empty titles. When [requireID] is true (update flow) the article id
-// must also be present.
+// must also be present. The id is also required on create — without
+// it the article row lands in the DB with PRIMARY KEY "" and the
+// admin UI then POSTs DELETE /api/articles/ (trailing slash, empty
+// id) which 404s. Always require id; legacy callers without a UUID
+// generator would have hit the same wall at /api/articles/{id} PATCH.
 func validateArticle(a *models.Article, requireID bool) error {
 	a.Title = strings.TrimSpace(a.Title)
 	// BodyMarkdown is preserved verbatim — no normalization (no
 	// trim/HTML-escape) so the author controls formatting.
 	a.CoverImageURL = strings.TrimSpace(a.CoverImageURL)
-	if requireID && a.ID == "" {
+	if a.ID == "" {
 		return fmt.Errorf("id is required")
 	}
 	if a.Title == "" {
