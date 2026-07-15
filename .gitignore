@@ -101,6 +101,7 @@ backend/uploads/
 # Keep it out of history: binary diffs aren't reviewable and they
 # risk leaking test data into the repo.
 backend/*.db
+simshop.db
 .metadata
 pubspec.lock
 # Admin auth keys are generated locally via `go run ./cmd/keygen`
