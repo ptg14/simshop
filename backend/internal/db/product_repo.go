@@ -49,6 +49,106 @@ func (r *ProductRepo) deleteUploadURLs(urls []string) {
 	}
 }
 
+// removeProductIDFromJSONArrayColumn scans [tableName] for rows whose
+// [jsonColumn] (a JSON array stored as TEXT on SQLite / JSONB on
+// Postgres) contains [productID], rewrites the array without that
+// entry, and writes the row back. Returns the number of rows touched.
+//
+// Both `articles.product_ids` and `events.product_ids` are junction-
+// by-JSON columns (no FK to products). When a product is deleted
+// those rows keep a stale id, and the admin UI on the article/event
+// card silently references an absent product — the catalog now
+// looks smaller than the count of references suggests. This helper
+// keeps the two surfaces in sync.
+//
+// The implementation does SELECT → JSON-decode → filter → JSON-encode
+// → UPDATE per affected row. That's portable across the two dialects
+// (no JSONB-specific operators) and cheap because the only rows hit
+// are the ones already containing the deleted id. A row whose
+// product_ids does not contain the id short-circuits on the LIKE
+// probe and stays untouched.
+//
+// [jsonColumn] is interpolated into the SQL — the caller MUST pass
+// a known column name (not user input). The function trusts the
+// table name the same way: only the two junction tables ever call
+// this.
+func (r *ProductRepo) removeProductIDFromJSONArrayColumn(tableName, jsonColumn, productID string) (int, error) {
+	// Locate every row whose JSON array mentions the id. On both
+	// dialects the LIKE substring trick works because product IDs
+	// are short alphanumeric strings the admin UI mints; defense-
+	// in-depth below re-parses the JSON to confirm containment so
+	// a LIKE false-positive never gets a write.
+	probe := r.dialect.ProductIDsContains("?")
+	productLiteral := r.dialect.ProductIDsJSONArrayLiteral(productID)
+	rows, err := r.query(
+		"SELECT id, "+jsonColumn+" FROM "+tableName+" WHERE "+probe,
+		productLiteral,
+	)
+	if err != nil {
+		return 0, fmt.Errorf("scan %s for stale product %s: %w", tableName, productID, err)
+	}
+	defer rows.Close()
+
+	type update struct {
+		rowID  string
+		rewritten []string
+	}
+	var updates []update
+	for rows.Next() {
+		var rowID string
+		var rawJSON string
+		if err := rows.Scan(&rowID, &rawJSON); err != nil {
+			return 0, fmt.Errorf("scan row in %s: %w", tableName, err)
+		}
+		if rawJSON == "" {
+			rawJSON = "[]"
+		}
+		var ids []string
+		if err := json.Unmarshal([]byte(rawJSON), &ids); err != nil {
+			// Skip rows whose JSON can't be parsed — better than
+			// 500-ing the whole delete. The row stays as-is and
+			// will surface as a separate issue elsewhere.
+			log.Printf("delete product %s: skip %s row %s with undecodable product_ids: %v", productID, tableName, rowID, err)
+			continue
+		}
+		// Fresh slice — sharing ids[:0] would alias the underlying
+		// array and any later mutation of `ids` would silently
+		// leak into `filtered`. The decoded array is tiny (≤200
+		// entries on events, ≤50 on articles) so the alloc is
+		// free in practice.
+		filtered := make([]string, 0, len(ids))
+		for _, id := range ids {
+			if id != productID {
+				filtered = append(filtered, id)
+			}
+		}
+		// Defense in depth: only write rows where the id was actually
+		// present. LIKE can false-positive on JSON-quoted substrings;
+		// we don't want to re-write every row in the table.
+		if len(filtered) == len(ids) {
+			continue
+		}
+		updates = append(updates, update{rowID: rowID, rewritten: filtered})
+	}
+	if err := rows.Err(); err != nil {
+		return 0, fmt.Errorf("iterate %s: %w", tableName, err)
+	}
+
+	for _, u := range updates {
+		rewrittenJSON, err := json.Marshal(u.rewritten)
+		if err != nil {
+			return 0, fmt.Errorf("encode rewritten product_ids for %s row %s: %w", tableName, u.rowID, err)
+		}
+		if _, err := r.exec(
+			"UPDATE "+tableName+" SET "+jsonColumn+" = ? WHERE id = ?",
+			string(rewrittenJSON), u.rowID,
+		); err != nil {
+			return 0, fmt.Errorf("update %s row %s: %w", tableName, u.rowID, err)
+		}
+	}
+	return len(updates), nil
+}
+
 // exec is a thin wrapper over r.db.Exec that rewrites placeholders
 // for the Postgres dialect. SQLite callers see no change.
 func (r *ProductRepo) exec(query string, args ...any) (sql.Result, error) {
@@ -427,8 +527,44 @@ func (r *ProductRepo) UpdateStock(id string, stock *int32) error {
 // of misleadingly claiming success.
 func (r *ProductRepo) Delete(id string) error {
 	urls, _ := r.getImageURLsForProduct(id)
+	// Drop every child row before the parent so this code does not
+	// silently depend on ON DELETE CASCADE being present in the
+	// schema. The initdb and runtime schemas both declare CASCADE
+	// on product_images and product_options, but legacy Postgres
+	// volumes created before that migration landed only have a
+	// plain FOREIGN KEY (no cascade action) — those DELETE
+	// statements then fail with a constraint-violation 500.
+	// Issuing the child DELETEs here makes the function safe on
+	// every Postgres volume regardless of how it was originally
+	// provisioned. The CASCADE clauses in the schema stay in place
+	// as a belt-and-braces fallback (and remain necessary so admin
+	// tooling that hits the DB directly still cleans up).
 	if _, err := r.exec(`DELETE FROM product_images WHERE product_id=?`, id); err != nil {
 		return err
+	}
+	if _, err := r.exec(`DELETE FROM product_options WHERE product_id=?`, id); err != nil {
+		return err
+	}
+	// Clean up junction-by-JSON columns. `articles.product_ids`
+	// and `events.product_ids` aren't foreign keys (a product is
+	// referenced by id, not by row), so CASCADE never fires on
+	// them. Before this step, deleting a product left every
+	// article/event that referenced it pointing at a missing id —
+	// the admin UI then showed an event card whose "product_ids"
+	// count was higher than the number of products actually
+	// attached, and a GET on the article's product stubs silently
+	// dropped the dead id while the column still carried it. Run
+	// these before the parent DELETE so the catalog and the
+	// references stay in sync.
+	if n, err := r.removeProductIDFromJSONArrayColumn("articles", "product_ids", id); err != nil {
+		return fmt.Errorf("remove deleted product %s from articles.product_ids: %w", id, err)
+	} else if n > 0 {
+		log.Printf("delete product %s: scrubbed id from %d article row(s)", id, n)
+	}
+	if n, err := r.removeProductIDFromJSONArrayColumn("events", "product_ids", id); err != nil {
+		return fmt.Errorf("remove deleted product %s from events.product_ids: %w", id, err)
+	} else if n > 0 {
+		log.Printf("delete product %s: scrubbed id from %d event row(s)", id, n)
 	}
 	res, err := r.exec(`DELETE FROM products WHERE id=?`, id)
 	if err != nil {

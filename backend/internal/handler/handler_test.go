@@ -1018,6 +1018,214 @@ func TestDeleteProduct_Returns404OnMissing(t *testing.T) {
 	}
 }
 
+// TestDeleteProduct_WithOptions pins the contract that DELETE
+// /api/products/{id} succeeds when the product has option rows on
+// the modern schema (FK ON DELETE CASCADE). The repo's Delete()
+// emits explicit DELETE FROM product_options / product_images
+// statements before the parent row goes; on the CASCADE schema
+// those are no-ops, but the test still proves the handler doesn't
+// 500 on the join tables.
+func TestDeleteProduct_WithOptions(t *testing.T) {
+	srv, database, cleanup := newTestServer(t)
+	defer cleanup()
+
+	if _, err := database.Exec(
+		`INSERT INTO products (id, name, description, price, image_url, category, rating, specs)
+		 VALUES (?, 'Áo thun', 'Cotton', 99000.0, '', 'Thời trang', 4.5, '[]')`,
+		"p-1",
+	); err != nil {
+		t.Fatalf("seed product: %v", err)
+	}
+	if _, err := database.Exec(
+		`INSERT INTO product_options (id, product_id, name, image_urls)
+		 VALUES (?, ?, 'Đỏ', '["http://localhost:8080/uploads/red.png"]')`,
+		"o-1", "p-1",
+	); err != nil {
+		t.Fatalf("seed option: %v", err)
+	}
+
+	req, _ := http.NewRequest(http.MethodDelete, srv.URL+"/api/products/p-1", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("DELETE: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusOK {
+		body, _ := readAll(resp)
+		t.Fatalf("DELETE status=%d body=%s", resp.StatusCode, string(body))
+	}
+
+	var optionCount int
+	if err := database.QueryRow(`SELECT COUNT(*) FROM product_options WHERE product_id='p-1'`).Scan(&optionCount); err != nil {
+		t.Fatalf("count options: %v", err)
+	}
+	if optionCount != 0 {
+		t.Fatalf("product_options rows left over after delete: %d", optionCount)
+	}
+}
+
+// TestDeleteProduct_LegacyPostgresNoCascade pins the contract that
+// the explicit DELETE FROM product_options / product_images statements
+// in repo.Delete() work even when the schema lacks ON DELETE CASCADE.
+// We build a hand-rolled schema (no FK) and seed the same shape; the
+// test would have returned 500 before the fix because the implicit
+// cleanup failed.
+func TestDeleteProduct_LegacyPostgresNoCascade(t *testing.T) {
+	srv, database, cleanup := newTestServer(t)
+	defer cleanup()
+
+	// Override the default product_options table to drop the FK so
+	// we exercise the "no CASCADE" path. SchemaFor already created
+	// the table with a FK; drop and recreate without it.
+	if _, err := database.Exec(`DROP TABLE product_options`); err != nil {
+		t.Fatalf("drop product_options: %v", err)
+	}
+	if _, err := database.Exec(`CREATE TABLE product_options (
+		id TEXT PRIMARY KEY,
+		product_id TEXT NOT NULL,
+		name TEXT NOT NULL,
+		image_urls TEXT NOT NULL DEFAULT '[]'
+	)`); err != nil {
+		t.Fatalf("recreate product_options: %v", err)
+	}
+	if _, err := database.Exec(
+		`INSERT INTO products (id, name, description, price, image_url, category, rating, specs)
+		 VALUES (?, 'Áo thun', 'Cotton', 99000.0, '', 'Thời trang', 4.5, '[]')`,
+		"p-legacy",
+	); err != nil {
+		t.Fatalf("seed product: %v", err)
+	}
+	if _, err := database.Exec(
+		`INSERT INTO product_options (id, product_id, name, image_urls)
+		 VALUES ('o-legacy', 'p-legacy', 'Đỏ', '[]')`,
+	); err != nil {
+		t.Fatalf("seed option: %v", err)
+	}
+
+	req, _ := http.NewRequest(http.MethodDelete, srv.URL+"/api/products/p-legacy", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("DELETE: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusOK {
+		body, _ := readAll(resp)
+		t.Fatalf("DELETE status=%d body=%s", resp.StatusCode, string(body))
+	}
+
+	var optionCount int
+	if err := database.QueryRow(`SELECT COUNT(*) FROM product_options WHERE product_id='p-legacy'`).Scan(&optionCount); err != nil {
+		t.Fatalf("count options: %v", err)
+	}
+	if optionCount != 0 {
+		t.Fatalf("orphan product_options rows after delete: %d", optionCount)
+	}
+}
+
+// TestDeleteProduct_ScrubsArticleAndEventReferences pins the
+// junction-by-JSON scrub: deleting a product must remove its id from
+// articles.product_ids and events.product_ids even though those
+// columns have no FK to products. The helper short-circuits rows
+// whose JSON doesn't actually contain the deleted id, so untouched
+// rows stay byte-identical.
+func TestDeleteProduct_ScrubsArticleAndEventReferences(t *testing.T) {
+	srv, database, cleanup := newTestServer(t)
+	defer cleanup()
+
+	const liveProductID = "11111111-1111-1111-1111-111111111111"
+	const deadProductID = "22222222-2222-2222-2222-222222222222"
+
+	if _, err := database.Exec(
+		`INSERT INTO products (id, name, description, price, image_url, category, rating, specs)
+		 VALUES (?, 'Áo', '', 0, '', '', 0, '[]')`,
+		liveProductID,
+	); err != nil {
+		t.Fatalf("seed live product: %v", err)
+	}
+	if _, err := database.Exec(
+		`INSERT INTO products (id, name, description, price, image_url, category, rating, specs)
+		 VALUES (?, 'Quần', '', 0, '', '', 0, '[]')`,
+		deadProductID,
+	); err != nil {
+		t.Fatalf("seed dead product: %v", err)
+	}
+
+	// Article that referenced both ids — only the dead one must go.
+	if _, err := database.Exec(
+		`INSERT INTO articles (id, title, body_markdown, product_ids, created_at, is_draft)
+		 VALUES ('a-1', 'Bài viết', '', ?, 1, 0)`,
+		`["`+liveProductID+`","`+deadProductID+`"]`,
+	); err != nil {
+		t.Fatalf("seed article: %v", err)
+	}
+
+	// Event that referenced the dead id twice plus live once — duplicates
+	// of the dead id must collapse to a single removal; live stays.
+	if _, err := database.Exec(
+		`INSERT INTO events (id, name, discount_type, discount_value, product_ids, created_at)
+		 VALUES ('e-1', 'Sự kiện', 'percent', 10, ?, 1)`,
+		`["`+liveProductID+`","`+deadProductID+`","`+deadProductID+`"]`,
+	); err != nil {
+		t.Fatalf("seed event e-1: %v", err)
+	}
+
+	// Event that doesn't reference the dead id — must stay untouched.
+	if _, err := database.Exec(
+		`INSERT INTO events (id, name, discount_type, discount_value, product_ids, created_at)
+		 VALUES ('e-2', 'Khác', 'percent', 5, ?, 1)`,
+		`["`+liveProductID+`"]`,
+	); err != nil {
+		t.Fatalf("seed event e-2: %v", err)
+	}
+
+	req, _ := http.NewRequest(http.MethodDelete, srv.URL+"/api/products/"+deadProductID, nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("DELETE: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusOK {
+		body, _ := readAll(resp)
+		t.Fatalf("DELETE status=%d body=%s", resp.StatusCode, string(body))
+	}
+
+	// Article row: dead id gone, live id preserved.
+	var articleIDs string
+	if err := database.QueryRow(`SELECT product_ids FROM articles WHERE id='a-1'`).Scan(&articleIDs); err != nil {
+		t.Fatalf("re-read article: %v", err)
+	}
+	var parsedArticle []string
+	if err := json.Unmarshal([]byte(articleIDs), &parsedArticle); err != nil {
+		t.Fatalf("decode article product_ids = %q: %v", articleIDs, err)
+	}
+	if len(parsedArticle) != 1 || parsedArticle[0] != liveProductID {
+		t.Fatalf("articles.product_ids = %v after delete, want [%q]", parsedArticle, liveProductID)
+	}
+
+	// Event row that referenced the dead id (twice) — both
+	// occurrences must be gone, live id preserved, no duplicates.
+	var eventIDs string
+	if err := database.QueryRow(`SELECT product_ids FROM events WHERE id='e-1'`).Scan(&eventIDs); err != nil {
+		t.Fatalf("re-read event e-1: %v", err)
+	}
+	var parsedEvent []string
+	if err := json.Unmarshal([]byte(eventIDs), &parsedEvent); err != nil {
+		t.Fatalf("decode event e-1 product_ids = %q: %v", eventIDs, err)
+	}
+	if len(parsedEvent) != 1 || parsedEvent[0] != liveProductID {
+		t.Fatalf("events[id=e-1].product_ids = %v after delete, want [%q]", parsedEvent, liveProductID)
+	}
+
+	// Untouched event row — must NOT have been rewritten.
+	var untouchedIDs string
+	if err := database.QueryRow(`SELECT product_ids FROM events WHERE id='e-2'`).Scan(&untouchedIDs); err != nil {
+		t.Fatalf("re-read event e-2: %v", err)
+	}
+	if untouchedIDs != `["`+liveProductID+`"]` {
+		t.Fatalf("events[id=e-2].product_ids = %q after delete, want [\"%s\"] (row must stay untouched)", untouchedIDs, liveProductID)
+	}
+}
+
 // TestGetCategoriesWithParent_HandlesNULL covers the MEDIUM-001 fix:
 // the read path now scans c.name via sql.NullString instead of a bare
 // string. The production schema declares c.name NOT NULL, so we can't

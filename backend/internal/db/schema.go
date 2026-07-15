@@ -145,11 +145,12 @@ func SchemaFor(dialect Dialect) []string {
 		// Backfill: legacy rows from a buggy AddCategory stored NULL in
 		// categories.name. Stamp them with a synthetic name so the
 		// handler's Scan doesn't choke on a NULL and the row stays
-		// addressable. Uses rowid rather than the named `id` column
-		// because some pre-existing databases (created before the
-		// `id INTEGER PRIMARY KEY` was added) don't have it. Idempotent:
-		// WHERE name IS NULL is a no-op on clean databases.
-		`UPDATE categories SET name = 'legacy-' || rowid WHERE name IS NULL`,
+		// addressable. SQLite uses rowid (a hidden pseudo-column) because
+		// pre-existing databases created before `id INTEGER PRIMARY KEY`
+		// was added don't have it; Postgres always has the named `id`
+		// column (initdb/01-schema.sql declares it as SERIAL PRIMARY KEY).
+		// Idempotent on both: WHERE name IS NULL is a no-op on clean DBs.
+		backfillLegacyCategoryNames(dialect),
 
 		// ----- banner_slides -----
 		`CREATE TABLE IF NOT EXISTS banner_slides (
@@ -195,4 +196,23 @@ func eventProductIDsIndex(dialect Dialect) string {
 		return "CREATE INDEX IF NOT EXISTS idx_events_product_ids_gin ON events USING GIN (product_ids)"
 	}
 	return ""
+}
+
+// backfillLegacyCategoryNames stamps a synthetic name on any row
+// where categories.name is NULL. This guards against an old buggy
+// AddCategory that let NULLs through; the handler's Scan would
+// choke on a NULL, so the row stays addressable with a name like
+// `legacy-42`.
+//
+// Per-dialect: SQLite uses rowid (a hidden pseudo-column present
+// even on databases created before `id INTEGER PRIMARY KEY` was
+// added); Postgres has no rowid pseudo-column but always has the
+// named `id` (initdb/01-schema.sql declares it as SERIAL PRIMARY
+// KEY). Idempotent on a clean DB — WHERE name IS NULL matches
+// nothing.
+func backfillLegacyCategoryNames(dialect Dialect) string {
+	if dialect == DialectPostgres {
+		return `UPDATE categories SET name = 'legacy-' || id WHERE name IS NULL`
+	}
+	return `UPDATE categories SET name = 'legacy-' || rowid WHERE name IS NULL`
 }
