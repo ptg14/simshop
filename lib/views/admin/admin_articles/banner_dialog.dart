@@ -157,6 +157,37 @@ class _BannerDialogState extends State<BannerDialog> {
     });
   }
 
+  /// Resolve [_articleId] against [articles] so the dropdown's
+  /// `initialValue` is guaranteed to appear in its items list
+  /// exactly once. Returns [_articleId] when the id is present,
+  /// `null` otherwise. The user keeps the rest of the form
+  /// editable — they can re-pick the article from the dropdown if
+  /// the original one is still around, or leave it as "— Không
+  /// liên kết —" if the link has been severed (draft hidden,
+  /// article deleted, etc.).
+  String? _resolveArticleId(List<Article> articles, String? id) {
+    if (id == null) return null;
+    final seen = <String>{};
+    for (final a in articles) {
+      if (a.id == id && seen.add(id)) return id;
+    }
+    return null;
+  }
+
+  /// Drop duplicate article rows by id while preserving the first
+  /// occurrence's order. A duplicate id in [articles] would make
+  /// the dropdown emit two `DropdownMenuItem`s with the same
+  /// value, which trips the "exactly one item" assertion. The
+  /// backend never produces dupes today; this is defense in depth
+  /// against a future migration / seed that would.
+  List<Article> _dedupeById(List<Article> articles) {
+    final seen = <String>{};
+    return [
+      for (final a in articles)
+        if (seen.add(a.id)) a,
+    ];
+  }
+
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
@@ -235,7 +266,22 @@ class _BannerDialogState extends State<BannerDialog> {
               const SizedBox(height: 12),
               if (widget.articles.isNotEmpty)
                 DropdownButtonFormField<String?>(
-                  initialValue: _articleId,
+                  // Resolve [_articleId] against the dropdown items so
+                  // we always hand the widget an initialValue that
+                  // exists in `items` exactly once. Without this the
+                  // DropdownButton asserts at build time with
+                  //   "There should be exactly one item with
+                  //    [DropdownButton]'s value: <id>"
+                  // whenever the banner's stored article_id no
+                  // longer maps to an article in [widget.articles]
+                  // (e.g. the linked article is a draft and the
+                  // caller fetched the public list by accident, or
+                  // the article was deleted out from under the
+                  // banner). The defensive drop here keeps the dialog
+                  // usable; the article id is unrecoverable without
+                  // the admin re-picking the link, but the banner
+                  // stays editable.
+                  initialValue: _resolveArticleId(widget.articles, _articleId),
                   decoration: const InputDecoration(
                       labelText: 'Bài viết liên kết (tuỳ chọn)'),
                   items: [
@@ -243,7 +289,11 @@ class _BannerDialogState extends State<BannerDialog> {
                       value: null,
                       child: Text('— Không liên kết —'),
                     ),
-                    for (final a in widget.articles)
+                    // Dedup by id — a duplicate article id from a
+                    // malformed payload would make the dropdown
+                    // build fail too. Keep the first occurrence so
+                    // the chip surface stays stable for the admin.
+                    for (final a in _dedupeById(widget.articles))
                       DropdownMenuItem<String?>(
                         value: a.id,
                         child: Text(

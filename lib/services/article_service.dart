@@ -334,7 +334,18 @@ class RealArticleService implements IArticleService {
 
   @override
   Future<List<Article>> listArticles() async {
-    final response = await _client.get(_articlesUri());
+    // Attach the bearer token so the backend serves the admin view
+    // (drafts included). Without it the request lands as anonymous
+    // and the handler routes to ListArticlesPublic, which hides
+    // any is_draft=true row. The BannerDialog bug surfaced here:
+    // a banner linked to a draft article sends the article id to
+    // the dropdown as initialValue, but the dropdown's items
+    // come from this filtered list, so the lookup misses by
+    // exactly one id and Flutter asserts with
+    //   "There should be exactly one item with [DropdownButton]'s
+    //    value: <draft article id>".
+    final headers = await withAdminAuth(_auth, const {});
+    final response = await _client.get(_articlesUri(), headers: headers);
     return _decodeList(response, 'articles', Article.fromJson);
   }
 }
