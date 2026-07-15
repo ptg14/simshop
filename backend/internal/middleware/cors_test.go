@@ -128,3 +128,50 @@ func TestCORS_PreflightOptions(t *testing.T) {
 		t.Errorf("OPTIONS preflight: Allow-Methods = %q, missing POST", got)
 	}
 }
+
+// TestCORS_AllowMethodsIncludesPATCH pins the regression that bit the
+// admin quick-adjust stock stepper: the Allow-Methods header omitted
+// PATCH, so the browser preflight for `PATCH /api/products/{id}/stock`
+// failed with "method not allowed by Access-Control-Allow-Methods"
+// and the +/- buttons silently no-op'd in the dev browser (the Go
+// server itself was fine — it was only the preflight that blocked).
+//
+// The header is shipped as a single comma-separated string. We assert
+// on each verb individually so a future refactor that uses
+// `strings.Split` instead of substring search keeps the test useful,
+// and a missing verb (the regression we just fixed) fails loudly.
+func TestCORS_AllowMethodsIncludesPATCH(t *testing.T) {
+	h := middleware.CORSMiddleware("http://localhost:9090")(noopHandler())
+
+	// A non-OPTIONS request so we hit the path that just sets
+	// headers and calls next (no preflight short-circuit). That
+	// also exercises the same code path that real (non-PATCH)
+	// admin mutations hit, so the assertion is meaningful for the
+	// preflight response too.
+	req := httptest.NewRequest(http.MethodGet, "/api/products", nil)
+	req.Header.Set("Origin", "http://localhost:9090")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	got := rec.Header().Get("Access-Control-Allow-Methods")
+	wantVerbs := []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"}
+	parts := strings.Split(got, ",")
+	// Trim spaces (the spec allows optional whitespace after the
+	// comma; the middleware ships none, but a future reader
+	// shouldn't break on whitespace if they ever format it).
+	for i, p := range parts {
+		parts[i] = strings.TrimSpace(p)
+	}
+	for _, want := range wantVerbs {
+		var found bool
+		for _, p := range parts {
+			if p == want {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("Allow-Methods %q missing verb %q (browser preflight will reject requests using it)", got, want)
+		}
+	}
+}

@@ -480,6 +480,124 @@ void main() {
     });
   });
 
+  group('Category write paths clear dead token + throw', () {
+    test('createLargeCategory → 401 clears token + throws', () async {
+      await seedToken('lc-c-tok');
+
+      final recorder = _RecordingClient();
+      recorder.nextStatus = 401;
+      recorder.nextBody = '{"error":"admin session required"}';
+
+      final auth = RealAdminAuthService(baseUrl: 'http://localhost:8080');
+      final svc = RealProductService(
+        baseUrl: 'http://localhost:8080',
+        authService: auth,
+      );
+
+      await expectLater(
+        http.runWithClient(
+          () => svc.createLargeCategory('Ao'),
+          () => recorder,
+        ),
+        throwsA(isA<AdminSessionExpiredException>()),
+      );
+
+      expect(await currentStoredToken(), isNull);
+      expect(recorder.requests, hasLength(1));
+      final req = recorder.requests.single;
+      expect(req.method, 'POST');
+      expect(req.uri.path, '/api/large-categories');
+      expect(req.headers['Authorization'], 'Bearer lc-c-tok');
+    });
+
+    test('deleteLargeCategory → 401 clears token + throws', () async {
+      await seedToken('lc-d-tok');
+
+      final recorder = _RecordingClient();
+      recorder.nextStatus = 401;
+      recorder.nextBody = '{"error":"admin session required"}';
+
+      final auth = RealAdminAuthService(baseUrl: 'http://localhost:8080');
+      final svc = RealProductService(
+        baseUrl: 'http://localhost:8080',
+        authService: auth,
+      );
+
+      await expectLater(
+        http.runWithClient(
+          () => svc.deleteLargeCategory('Ao'),
+          () => recorder,
+        ),
+        throwsA(isA<AdminSessionExpiredException>()),
+      );
+
+      expect(await currentStoredToken(), isNull);
+      expect(recorder.requests, hasLength(1));
+      final req = recorder.requests.single;
+      expect(req.method, 'DELETE');
+      expect(req.uri.path, '/api/large-categories/Ao');
+      expect(req.headers['Authorization'], 'Bearer lc-d-tok');
+    });
+
+    test('createCategoryWithParent → 401 clears token + throws', () async {
+      await seedToken('cat-c-tok');
+
+      final recorder = _RecordingClient();
+      recorder.nextStatus = 401;
+      recorder.nextBody = '{"error":"admin session required"}';
+
+      final auth = RealAdminAuthService(baseUrl: 'http://localhost:8080');
+      final svc = RealProductService(
+        baseUrl: 'http://localhost:8080',
+        authService: auth,
+      );
+
+      await expectLater(
+        http.runWithClient(
+          () => svc.createCategoryWithParent('Ao', 'ThoiTrang'),
+          () => recorder,
+        ),
+        throwsA(isA<AdminSessionExpiredException>()),
+      );
+
+      expect(await currentStoredToken(), isNull);
+      expect(recorder.requests, hasLength(1));
+      final req = recorder.requests.single;
+      expect(req.method, 'POST');
+      expect(req.uri.path, '/api/categories');
+      expect(req.headers['Authorization'], 'Bearer cat-c-tok');
+    });
+
+    test('deleteCategory → 401 clears token + throws', () async {
+      await seedToken('cat-d-tok');
+
+      final recorder = _RecordingClient();
+      recorder.nextStatus = 401;
+      recorder.nextBody = '{"error":"admin session required"}';
+
+      final auth = RealAdminAuthService(baseUrl: 'http://localhost:8080');
+      final svc = RealProductService(
+        baseUrl: 'http://localhost:8080',
+        authService: auth,
+      );
+
+      await expectLater(
+        http.runWithClient(
+          () => svc.deleteCategory('Ao'),
+          () => recorder,
+        ),
+        throwsA(isA<AdminSessionExpiredException>()),
+      );
+
+      expect(await currentStoredToken(), isNull);
+      expect(recorder.requests, hasLength(1));
+      final req = recorder.requests.single;
+      expect(req.method, 'DELETE');
+      expect(req.uri.path, '/api/categories/Ao');
+      expect(req.headers['Authorization'], 'Bearer cat-d-tok');
+    });
+  });
+
   group('End-to-end: cleared token means no Authorization on next write', () {
     test(
       'after a 401, the second createProduct call does NOT carry '

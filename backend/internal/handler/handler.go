@@ -362,6 +362,62 @@ func UpdateProductHandler(repo *ProductRepo) http.HandlerFunc {
 	}
 }
 
+// UpdateProductStockHandler rewrites ONLY the stock column for the
+// product with the given id. The admin quick-adjust stepper on the
+// product list calls this to nudge inventory by ±1 without having
+// to PUT the entire product back to the backend (which would be a
+// bandwidth / concurrency footgun for a single-field change).
+//
+// Body shape: {"stock": <int|null>}. Pass null (or omit the field
+// entirely) to clear the column (= unknown stock, rendered as "?"
+// on the client). Negative integers are rejected at the repo layer.
+//
+// 200 OK on success, with the freshly-fetched product as the body
+// so the client doesn't need a second GET. 400 on a malformed body
+// or negative stock (the repo surfaces db.ErrInvalidStock in that
+// case). 404 if no product with the given id exists. 500 on any DB
+// error.
+//
+// The handler is registered on the `productsWrite` subrouter (see
+// router.go), so it inherits the same `adminAuth` middleware that
+// guards the rest of the admin write paths — clients must present a
+// valid Bearer token issued by `/api/admin/challenge` →
+// `/api/admin/verify`.
+func UpdateProductStockHandler(repo *ProductRepo) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := mux.Vars(r)["id"]
+		var body struct {
+			Stock *int32 `json:"stock"`
+		}
+		if err := readJSONBody(r, &body); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if err := repo.UpdateStock(id, body.Stock); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				writeError(w, http.StatusNotFound, "product not found")
+				return
+			}
+			if errors.Is(err, db.ErrInvalidStock) {
+				writeError(w, http.StatusBadRequest, "stock must be >= 0")
+				return
+			}
+			writeError(w, http.StatusInternalServerError, "Failed to update product stock")
+			return
+		}
+		// Refetch the row so the response carries the authoritative
+		// server-side view (other fields might have changed since
+		// the caller last saw them).
+		updated, err := repo.GetByID(id)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "Product stock updated but failed to fetch")
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(updated)
+	}
+}
+
 // DeleteProductHandler deletes a product. Returns 404 when no product
 // with the given id exists (mirrors DeleteBanner/DeleteArticle so an
 // admin can tell a successful delete from a no-op).

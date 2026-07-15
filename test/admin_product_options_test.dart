@@ -51,6 +51,10 @@ class _FakeProductService implements IProductService {
     List<String>? removedImageUrls,
   }) async =>
       product;
+
+  @override
+  Future<Product> updateStock(String id, int? stock) async =>
+      throw UnimplementedError();
   @override
   Future<void> deleteProduct(String id) async {}
   @override

@@ -42,6 +42,22 @@ abstract class IProductService {
   /// orphans. Pass `null` or an empty list to keep current behavior.
   Future<Product> updateProduct(String id, Product product, {List<String>? removedImageUrls});
 
+  /// Rewrite ONLY the stock column for [id]. The quick-adjust
+  /// stepper on the admin product list uses this so a ±1 nudge
+  /// doesn't have to PUT the entire product back to the backend
+  /// (which would risk a clobber if another admin tab edited the
+  /// same row in the meantime).
+  ///
+  /// [stock] is nullable: pass `null` to clear (= unknown, the
+  /// frontend renders as "?"). Negative integers are rejected at
+  /// the backend (400).
+  ///
+  /// Returns the freshly-refetched product so the caller doesn't
+  /// need a follow-up GET. Throws if the product id doesn't exist
+  /// (the service surfaces 404 → `StateError`-like exception; the
+  /// VM maps it to `AdminSessionExpiredException` for 401s).
+  Future<Product> updateStock(String id, int? stock);
+
   /// Delete a product by its identifier.
   Future<void> deleteProduct(String id);
 

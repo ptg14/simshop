@@ -122,6 +122,7 @@ class RealProductService implements IProductService {
         Uri.parse('$_baseUrl/api/categories/${Uri.encodeComponent(name)}');
     final response = await http.delete(uri,
         headers: await withAdminAuth(_auth, const {}));
+    await detectAdminSessionExpiry(_auth, response);
     if (response.statusCode != 204 && response.statusCode != 200) {
       throw Exception('Failed to delete category: ${response.statusCode}');
     }
@@ -167,6 +168,7 @@ class RealProductService implements IProductService {
     final response = await http.post(uri,
         headers: headers,
         body: json.encode({'name': name}));
+    await detectAdminSessionExpiry(_auth, response);
     if (response.statusCode != 201 && response.statusCode != 200) {
       throw Exception('Failed to create large category: ${response.statusCode}');
     }
@@ -178,6 +180,7 @@ class RealProductService implements IProductService {
         '$_baseUrl/api/large-categories/${Uri.encodeComponent(name)}');
     final response = await http.delete(uri,
         headers: await withAdminAuth(_auth, const {}));
+    await detectAdminSessionExpiry(_auth, response);
     if (response.statusCode != 204 && response.statusCode != 200) {
       throw Exception('Failed to delete large category: ${response.statusCode}');
     }
@@ -197,6 +200,7 @@ class RealProductService implements IProductService {
           'name': name,
           'large_category': largeCategoryName,
         }));
+    await detectAdminSessionExpiry(_auth, response);
     if (response.statusCode != 201 && response.statusCode != 200) {
       throw Exception(
           'Failed to create category with parent: ${response.statusCode}');
@@ -266,6 +270,43 @@ class RealProductService implements IProductService {
       Product.fromJson(json.decode(response.body) as Map<String, dynamic>),
     );
   }
+
+  @override
+  Future<Product> updateStock(String id, int? stock) async {
+    final headers = await withAdminAuth(
+      _auth,
+      const {'Content-Type': 'application/json'},
+    );
+    // null → JSON null on the wire, which the backend translates to
+    // SQL NULL (= "unknown stock", rendered as "?" in the UI).
+    final response = await http.patch(
+      _productStockUri(id),
+      headers: headers,
+      body: json.encode({'stock': stock}),
+    );
+    // Mirror updateProduct: stale cached tokens must surface as a
+    // typed exception so the admin shell can route the user back
+    // to AdminAuthGate instead of leaving them stuck with a dead
+    // credential in SharedPreferences.
+    await detectAdminSessionExpiry(_auth, response);
+    if (response.statusCode != 200) {
+      // 404 surfaces as "product not found" via the response body
+      // (writeError emits {"error":"..."}); preserve that detail so
+      // the VM can show a meaningful message rather than "404".
+      final detail = response.body.isNotEmpty ? response.body : 'Unknown error';
+      throw Exception('Failed to update stock for $id: $detail');
+    }
+    return _resolveProductImages(
+      Product.fromJson(json.decode(response.body) as Map<String, dynamic>),
+    );
+  }
+
+  /// PATCH /api/products/{id}/stock — the admin quick-adjust stepper
+  /// hits this so a ±1 nudge doesn't have to round-trip the whole
+  /// product through PUT (which risks clobbering concurrent edits
+  /// from another admin tab).
+  Uri _productStockUri(String id) =>
+      Uri.parse('$_baseUrl/api/products/$id/stock');
 
   /// Serialize a product for the create/update endpoints, optionally
   /// attaching the [removed_image_urls] field the admin dialog uses to

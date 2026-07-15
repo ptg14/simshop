@@ -371,6 +371,48 @@ func (r *ProductRepo) Update(id string, p *models.Product, removedImageUrls []st
 	return nil
 }
 
+// ErrInvalidStock is returned by [ProductRepo.UpdateStock] when the
+// caller passes a negative integer. Wrapping a sentinel rather than
+// a formatted string lets the HTTP layer dispatch on errors.Is and
+// return a clean 400 without sniffing error messages.
+var ErrInvalidStock = errors.New("stock must be >= 0")
+
+// UpdateStock rewrites ONLY the stock column for the product with
+// [id]. Used by the admin quick-adjust stepper, which would
+// otherwise have to PUT the entire product back to the backend
+// just to nudge the inventory by ±1 (the existing [Update] method
+// unconditionally rewrites every column).
+//
+// [stock] is a pointer so the caller can clear it: passing nil
+// stores SQL NULL (= unknown stock, which the frontend renders as
+// "?" rather than "0"). Passing a non-negative int sets the column
+// to that value; passing a negative int is rejected here so a
+// caller that forgot to clamp can't poison the column.
+//
+// Returns sql.ErrNoRows when no product with [id] exists, mirroring
+// [Delete] so the handler can return 404 instead of a confusing
+// 200-with-no-effect.
+func (r *ProductRepo) UpdateStock(id string, stock *int32) error {
+	if stock != nil && *stock < 0 {
+		return fmt.Errorf("%w (got %d)", ErrInvalidStock, *stock)
+	}
+	res, err := r.exec(
+		r.dialect.Rebind(`UPDATE products SET stock=? WHERE id=?`),
+		stock, id,
+	)
+	if err != nil {
+		return fmt.Errorf("update stock for product %s: %w", id, err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("rows affected for product %s: %w", id, err)
+	}
+	if n == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
 // Delete removes a product and best-effort deletes its image files
 // from /uploads/. Image URLs are snapshotted *before* the rows
 // disappear so the cleanup loop has something to act on.

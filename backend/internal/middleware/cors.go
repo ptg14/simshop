@@ -45,7 +45,13 @@ func CORSMiddleware(allowedOrigin string) func(http.Handler) http.Handler {
 			echo := pickAllowedOrigin(origin, allowed)
 
 			w.Header().Set("Access-Control-Allow-Origin", echo)
-			w.Header().Set("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,OPTIONS")
+			// PATCH was added when the admin quick-adjust stock
+			// stepper landed (`PATCH /api/products/{id}/stock`).
+			// Without it the browser's preflight fails with
+			// "method not allowed by Access-Control-Allow-Methods"
+			// and the +/- button silently no-ops in dev. Keep this
+			// in sync with the verbs registered in router.go.
+			w.Header().Set("Access-Control-Allow-Methods", "GET,POST,PUT,PATCH,DELETE,OPTIONS")
 			w.Header().Set("Access-Control-Allow-Headers", "Content-Type,Authorization")
 
 			// Handle preflight requests.

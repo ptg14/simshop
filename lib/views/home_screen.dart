@@ -98,10 +98,13 @@ class _HomeScreenState extends State<HomeScreen> {
       // which keeps the first paint off of any provider listener.
       body: Consumer<HomeViewModel>(
         builder: (context, viewModel, _) {
-          // Show skeleton until at least one product card can mount.
-          // If the products endpoint fails entirely (server down)
-          // the skeleton stays and the user can pull-to-refresh.
-          if (viewModel.products.isEmpty) {
+          // Show skeleton only while the raw product list hasn't
+          // been populated yet. We must NOT use `products.isEmpty`
+          // here — that getter returns the *filtered* list, so
+          // picking a Large/sub with zero matching products would
+          // flash the skeleton back on screen. `hasLoadedProducts`
+          // is the correct "loading finished at least once" signal.
+          if (!viewModel.hasLoadedProducts) {
             return _buildFirstPaint(viewModel);
           }
           return _buildLoaded(viewModel);
@@ -280,42 +283,38 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Widget _buildEmpty(HomeViewModel viewModel) {
     final scheme = Theme.of(context).colorScheme;
-    // The empty-products state keeps [SiteInfoFooter] at the
-    // bottom of the page (its actual footer position) so the
-    // 7-tap hidden admin entry-point stays reachable. The
-    // footer's [AdminBannerTrigger] mounts the gesture even
-    // when [StoreInfo] is empty — see site_info_footer.dart.
-    return ListView(
-      shrinkWrap: true,
-      physics: const NeverScrollableScrollPhysics(),
-      padding: const EdgeInsets.symmetric(vertical: 64),
-      children: [
-        Center(
-          child: Column(
-            children: [
-              Icon(Icons.inventory_2_outlined,
-                  size: 80, color: scheme.onSurfaceVariant),
-              const SizedBox(height: 16),
-              Text(
-                'Không tìm thấy sản phẩm nào',
-                style: TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.w600,
-                  color: scheme.onSurface,
-                ),
+    // Empty state shown when the active Large/sub filter happens
+    // to match zero products. This is rendered inside [_buildLoaded]'s
+    // outer Column, which already appends a [SiteInfoFooter] at the
+    // end — so we deliberately do NOT include the footer here, or it
+    // would render twice (banner + store info stacked on top of the
+    // real footer). The footer's 7-tap admin entry-point stays
+    // reachable via the outer Column's footer.
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 64, horizontal: 24),
+      child: Center(
+        child: Column(
+          children: [
+            Icon(Icons.inventory_2_outlined,
+                size: 80, color: scheme.onSurfaceVariant),
+            const SizedBox(height: 16),
+            Text(
+              'Không tìm thấy sản phẩm nào',
+              style: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.w600,
+                color: scheme.onSurface,
               ),
-              const SizedBox(height: 8),
-              Text(
-                'Hãy thử chọn danh mục khác',
-                style: TextStyle(color: scheme.onSurfaceVariant),
-                textAlign: TextAlign.center,
-              ),
-            ],
-          ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Hãy thử chọn danh mục khác',
+              style: TextStyle(color: scheme.onSurfaceVariant),
+              textAlign: TextAlign.center,
+            ),
+          ],
         ),
-        const SizedBox(height: 32),
-        const SiteInfoFooter(),
-      ],
+      ),
     );
   }
 

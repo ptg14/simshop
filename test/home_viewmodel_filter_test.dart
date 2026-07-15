@@ -66,6 +66,10 @@ class _FakeProductService implements IProductService {
     List<String>? removedImageUrls,
   }) async =>
       throw UnimplementedError('not used in these tests');
+
+  @override
+  Future<Product> updateStock(String id, int? stock) async =>
+      throw UnimplementedError('not used in these tests');
   @override
   Future<void> deleteProduct(String id) async =>
       throw UnimplementedError('not used in these tests');
@@ -265,6 +269,39 @@ void main() {
       vm.toggleSub('Laptop'); // removes Laptop → re-adds All
 
       expect(vm.selectedSubs, isNotEmpty);
+    });
+
+    test(
+        'hasLoadedProducts stays true after filtering down to zero — '
+        'picks a tag with no products without flashing the skeleton',
+        () async {
+      // Regression for the home-screen skeleton flash bug:
+      // `products` is the *filtered* list, so when the user picks
+      // a Large that has no products, `products.isEmpty` is true
+      // and the screen used to swap back to HomeSkeleton. The
+      // home screen now reads `hasLoadedProducts` (raw product
+      // count) instead.
+      final vm = HomeViewModel(productService: buildService());
+      await vm.initialize();
+      // Sanity: at least one product is loaded.
+      expect(vm.hasLoadedProducts, isTrue);
+      expect(vm.products, isNotEmpty);
+
+      // Filter down to zero by selecting Clothing + AND of two
+      // incompatible subs (p-shirt-1 doesn't have Pants, p-pants-1
+      // doesn't have Shirt — only products tagged with BOTH
+      // would survive, and none exist).
+      vm.selectLarge('Clothing');
+      vm.toggleSub('Shirt');
+      vm.toggleSub('Pants');
+
+      // Filter collapses — but raw products are still loaded.
+      expect(vm.products, isEmpty);
+      expect(vm.hasLoadedProducts, isTrue,
+          reason:
+              'hasLoadedProducts must stay true so the home screen '
+              'keeps rendering the loaded layout (and its empty-state) '
+              'instead of flashing back to the loading skeleton.');
     });
   });
 }

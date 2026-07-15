@@ -114,6 +114,9 @@ class _FakeProductService implements IProductService {
   @override
   Future<void> deleteProduct(String id) async {}
   @override
+  Future<Product> updateStock(String id, int? stock) async =>
+      throw UnimplementedError();
+  @override
   Future<String?> uploadImage(dynamic file,
           {String? productName, String? productId, int startIndex = 1}) async =>
       null;

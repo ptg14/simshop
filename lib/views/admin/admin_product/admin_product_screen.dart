@@ -4,6 +4,7 @@ import '../../../utils/responsive.dart';
 import '../../../viewmodels/admin_viewmodel.dart';
 import 'add_product_dialog.dart';
 import 'product_list_tile.dart';
+import 'widgets/admin_product_filter.dart';
 
 /// Admin products management screen.
 class AdminProductsScreen extends StatefulWidget {
@@ -64,6 +65,11 @@ class _AdminProductsScreenState extends State<AdminProductsScreen> {
             ),
           ),
 
+          // Category + sub-category filter. Renders as zero-height
+          // when no Larges and no orphans exist yet, so first-run
+          // admins see no empty band.
+          AdminProductFilter(viewModel: viewModel),
+
           // Loading progress.
           if (viewModel.isLoading) const LinearProgressIndicator(),
 
@@ -114,6 +120,7 @@ class _AdminProductsScreenState extends State<AdminProductsScreen> {
     }
 
     if (viewModel.products.isEmpty) {
+      final filterActive = viewModel.filterLarge != null;
       return Center(
         child: Padding(
           padding: const EdgeInsets.symmetric(vertical: 64),
@@ -124,7 +131,9 @@ class _AdminProductsScreenState extends State<AdminProductsScreen> {
                   size: 80, color: scheme.onSurfaceVariant),
               const SizedBox(height: 16),
               Text(
-                'Chưa có sản phẩm nào',
+                filterActive
+                    ? 'Không có sản phẩm nào khớp với bộ lọc'
+                    : 'Chưa có sản phẩm nào',
                 style: TextStyle(
                   fontSize: 16,
                   fontWeight: FontWeight.w600,
@@ -133,16 +142,25 @@ class _AdminProductsScreenState extends State<AdminProductsScreen> {
               ),
               const SizedBox(height: 8),
               Text(
-                'Bắt đầu bằng cách thêm sản phẩm đầu tiên',
+                filterActive
+                    ? 'Hãy thử bỏ bớt tag đang chọn hoặc nhấn "Xoá lọc"'
+                    : 'Bắt đầu bằng cách thêm sản phẩm đầu tiên',
                 style: TextStyle(color: scheme.onSurfaceVariant),
                 textAlign: TextAlign.center,
               ),
               const SizedBox(height: 24),
-              FilledButton.icon(
-                onPressed: () => _openAddDialog(context, viewModel),
-                icon: const Icon(Icons.add),
-                label: const Text('Thêm sản phẩm đầu tiên'),
-              ),
+              if (filterActive)
+                FilledButton.tonalIcon(
+                  onPressed: viewModel.clearFilter,
+                  icon: const Icon(Icons.clear),
+                  label: const Text('Xoá lọc'),
+                )
+              else
+                FilledButton.icon(
+                  onPressed: () => _openAddDialog(context, viewModel),
+                  icon: const Icon(Icons.add),
+                  label: const Text('Thêm sản phẩm đầu tiên'),
+                ),
             ],
           ),
         ),

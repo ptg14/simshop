@@ -875,6 +875,131 @@ func TestCreateCategory_RejectsInvalidName(t *testing.T) {
 	}
 }
 
+// TestCreateCategory_WithNewLargeCategory covers the
+// {name, large_category} POST path where large_category does NOT
+// exist yet — AddCategoryWithParent is expected to upsert the
+// large category first and then insert the category row with the
+// resolved FK. Regression for the 500 the admin UI hits when
+// creating a sub-category whose parent Large is brand-new.
+func TestCreateCategory_WithNewLargeCategory(t *testing.T) {
+	srv, database, cleanup := newTestServer(t)
+	defer cleanup()
+
+	body := strings.NewReader(`{"name":"Ao","large_category":"ThoiTrang"}`)
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/api/categories", body)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("POST: %v", err)
+	}
+	defer resp.Body.Close()
+	respBody, _ := readAll(resp)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("POST status = %d, body=%s", resp.StatusCode, string(respBody))
+	}
+
+	// Verify both rows landed. The Large should exist with the
+	// supplied name, and the sub-category should reference it
+	// through large_category_id (joined to its name).
+	var (
+		largeName  string
+		subName    string
+		joinedName string
+	)
+	if err := database.QueryRow(
+		`SELECT name FROM large_categories WHERE name = ?`, "ThoiTrang",
+	).Scan(&largeName); err != nil {
+		t.Fatalf("large_categories row missing: %v", err)
+	}
+	if largeName != "ThoiTrang" {
+		t.Errorf("large name = %q, want %q", largeName, "ThoiTrang")
+	}
+	if err := database.QueryRow(
+		`SELECT c.name, lc.name
+		   FROM categories c
+		   LEFT JOIN large_categories lc ON lc.id = c.large_category_id
+		  WHERE c.name = ?`, "Ao",
+	).Scan(&subName, &joinedName); err != nil {
+		t.Fatalf("categories row missing: %v", err)
+	}
+	if subName != "Ao" {
+		t.Errorf("category name = %q, want %q", subName, "Ao")
+	}
+	if joinedName != "ThoiTrang" {
+		t.Errorf("category.large_category_id → %q, want %q",
+			joinedName, "ThoiTrang")
+	}
+}
+
+// TestCreateCategory_WithExistingLargeCategory mirrors the above
+// but the Large already exists, so AddCategoryWithParent must reuse
+// its id rather than insert a duplicate row.
+func TestCreateCategory_WithExistingLargeCategory(t *testing.T) {
+	srv, database, cleanup := newTestServer(t)
+	defer cleanup()
+
+	// Seed the Large first via the public endpoint.
+	seed := strings.NewReader(`{"name":"ThoiTrang"}`)
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/api/large-categories", seed)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("seed large: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("seed large status = %d", resp.StatusCode)
+	}
+
+	// Then create a sub-category under it.
+	body := strings.NewReader(`{"name":"Ao","large_category":"ThoiTrang"}`)
+	req, _ = http.NewRequest(http.MethodPost, srv.URL+"/api/categories", body)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("POST: %v", err)
+	}
+	defer resp.Body.Close()
+	respBody, _ := readAll(resp)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("POST status = %d, body=%s", resp.StatusCode, string(respBody))
+	}
+
+	// Exactly one Large row, exactly one sub-category, joined.
+	var (
+		largeCount int
+		subCount   int
+		joinedName string
+	)
+	if err := database.QueryRow(
+		`SELECT COUNT(*) FROM large_categories WHERE name = ?`, "ThoiTrang",
+	).Scan(&largeCount); err != nil {
+		t.Fatalf("count large: %v", err)
+	}
+	if largeCount != 1 {
+		t.Errorf("large count = %d, want 1", largeCount)
+	}
+	if err := database.QueryRow(
+		`SELECT COUNT(*) FROM categories WHERE name = ?`, "Ao",
+	).Scan(&subCount); err != nil {
+		t.Fatalf("count sub: %v", err)
+	}
+	if subCount != 1 {
+		t.Errorf("sub count = %d, want 1", subCount)
+	}
+	if err := database.QueryRow(
+		`SELECT lc.name
+		   FROM categories c
+		   JOIN large_categories lc ON lc.id = c.large_category_id
+		  WHERE c.name = ?`, "Ao",
+	).Scan(&joinedName); err != nil {
+		t.Fatalf("join: %v", err)
+	}
+	if joinedName != "ThoiTrang" {
+		t.Errorf("joined large = %q, want %q", joinedName, "ThoiTrang")
+	}
+}
+
 // TestDeleteProduct_Returns404OnMissing is the regression test for
 // HIGH-001: the handler used to return 204 unconditionally, hiding
 // from admins whether their delete attempt hit a row.
@@ -1003,3 +1128,262 @@ func TestArticleDraftHidesFromAnonymous(t *testing.T) {
 		t.Errorf("IsDraft = false, want true (admin view)")
 	}
 }
+
+// -----------------------------------------------------------------------------
+// PATCH /api/products/{id}/stock — admin quick-adjust endpoint
+// -----------------------------------------------------------------------------
+//
+// These tests exercise the new stock-only endpoint added for the
+// admin product list's +/- stepper. The full-stack seed (admin auth,
+// DB, router) is reused from newTestServer; the harness's default
+// `adminPublicKeyHex=""` disables adminAuth so we can hit the
+// admin-only PATCH route from a plain http.Client without
+// performing the Ed25519 challenge/verify dance.
+//
+// Each test seeds its own row by direct INSERT so the assertions
+// stay focused on the handler contract (200/400/404 + payload) and
+// not on CreateProduct's validation rules.
+
+func insertTestProduct(t *testing.T, database *sql.DB, id string, stock *int) {
+	t.Helper()
+	// stock column is nullable; pass nil to mean "unknown" so the
+	// handler's pointer-vs-nil dispatch is also exercised.
+	var stockArg interface{}
+	if stock != nil {
+		stockArg = *stock
+	}
+	_, err := database.Exec(`
+		INSERT INTO products
+			(id, name, description, price, image_url, category, rating, stock, specs, categories)
+		VALUES
+			(?, ?, '', 100000, '', 'Áo thun', 0, ?, '[]', '[]')`,
+		id, "Áo thun "+id, stockArg)
+	if err != nil {
+		t.Fatalf("seed product %s: %v", id, err)
+	}
+}
+
+// TestUpdateProductStock_HappyPath asserts that a valid PATCH
+// rewrites ONLY the stock column and returns the refreshed product.
+// This is the regression guard for the bug that motivated the
+// endpoint: the old path PUT'd the entire product back, which could
+// clobber a concurrent edit from another admin tab.
+func TestUpdateProductStock_HappyPath(t *testing.T) {
+	srv, database, cleanup := newTestServer(t)
+	defer cleanup()
+
+	insertTestProduct(t, database, "stock-1", intPtr(7))
+
+	body := strings.NewReader(`{"stock": 12}`)
+	req, _ := http.NewRequest(http.MethodPatch, srv.URL+"/api/products/stock-1/stock", body)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("PATCH: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := readAll(resp)
+		t.Fatalf("status = %d, want 200 (body=%s)", resp.StatusCode, string(respBody))
+	}
+
+	var got map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got["id"] != "stock-1" {
+		t.Errorf("response id = %v, want stock-1", got["id"])
+	}
+	// JSON numbers decode as float64.
+	if s, ok := got["stock"].(float64); !ok || s != 12 {
+		t.Errorf("response stock = %v (%T), want 12", got["stock"], got["stock"])
+	}
+
+	// Re-read via the public GET so we know the value actually
+	// landed on disk (not just in the response echo).
+	req2, _ := http.NewRequest(http.MethodGet, srv.URL+"/api/products/stock-1", nil)
+	resp2, err := http.DefaultClient.Do(req2)
+	if err != nil {
+		t.Fatalf("GET: %v", err)
+	}
+	defer resp2.Body.Close()
+	if resp2.StatusCode != http.StatusOK {
+		t.Fatalf("GET status = %d, want 200", resp2.StatusCode)
+	}
+	var persisted map[string]interface{}
+	if err := json.NewDecoder(resp2.Body).Decode(&persisted); err != nil {
+		t.Fatalf("decode GET: %v", err)
+	}
+	if s, ok := persisted["stock"].(float64); !ok || s != 12 {
+		t.Errorf("persisted stock = %v (%T), want 12", persisted["stock"], persisted["stock"])
+	}
+}
+
+// TestUpdateProductStock_RejectsUnknownFields pins the contract
+// that the body schema is strict — only {"stock": <int|null>} is
+// accepted. An attacker (or a buggy client) cannot smuggle a
+// rename/reprice through this endpoint by piggybacking extra keys;
+// the handler must 400 before the write hits disk.
+//
+// This is the security-oriented counterpart to the happy path:
+// readJSONBody uses DisallowUnknownFields so the rejection happens
+// at parse time, before the repo is touched.
+func TestUpdateProductStock_RejectsUnknownFields(t *testing.T) {
+	srv, database, cleanup := newTestServer(t)
+	defer cleanup()
+
+	insertTestProduct(t, database, "stock-2", intPtr(3))
+
+	// Try to rewrite the name + price via the stock endpoint.
+	// They MUST be rejected with 400, not silently dropped.
+	body := strings.NewReader(`{"stock": 9, "name": "HACKED", "price": 1}`)
+	req, _ := http.NewRequest(http.MethodPatch, srv.URL+"/api/products/stock-2/stock", body)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("PATCH: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400 — extra body fields must not be accepted", resp.StatusCode)
+	}
+
+	// Confirm the row's other fields were NOT touched even by a
+	// malicious request (defense-in-depth: even if the strict
+	// parser were ever loosened, the repo only writes `stock`).
+	var name string
+	var price float64
+	if err := database.QueryRow(
+		`SELECT name, price FROM products WHERE id=?`, "stock-2",
+	).Scan(&name, &price); err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	if name == "HACKED" {
+		t.Errorf("name was overwritten to HACKED despite 400 response")
+	}
+	if price != 100000 {
+		t.Errorf("price = %v, want 100000 (untouched seed value)", price)
+	}
+
+	// And stock must also be untouched — the parse error must
+	// happen BEFORE any DB write.
+	var stock sql.NullFloat64
+	if err := database.QueryRow(
+		`SELECT stock FROM products WHERE id=?`, "stock-2",
+	).Scan(&stock); err != nil {
+		t.Fatalf("scan stock: %v", err)
+	}
+	if !stock.Valid || stock.Float64 != 3 {
+		t.Errorf("stock on disk = %+v, want 3 (unchanged after 400)", stock)
+	}
+}
+
+// TestUpdateProductStock_RejectsNegative guards the 400 path. The
+// repo surfaces db.ErrInvalidStock which the handler maps to
+// BadRequest rather than letting it bubble up as a 500.
+func TestUpdateProductStock_RejectsNegative(t *testing.T) {
+	srv, database, cleanup := newTestServer(t)
+	defer cleanup()
+
+	insertTestProduct(t, database, "stock-3", intPtr(5))
+
+	body := strings.NewReader(`{"stock": -1}`)
+	req, _ := http.NewRequest(http.MethodPatch, srv.URL+"/api/products/stock-3/stock", body)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("PATCH: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", resp.StatusCode)
+	}
+	// Stock must NOT have been changed.
+	var row struct {
+		Stock sql.NullFloat64
+	}
+	if err := database.QueryRow(`SELECT stock FROM products WHERE id=?`, "stock-3").Scan(&row.Stock); err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	if !row.Stock.Valid || row.Stock.Float64 != 5 {
+		t.Errorf("stock on disk = %+v, want 5 (unchanged)", row.Stock)
+	}
+}
+
+// TestUpdateProductStock_RejectsMalformedBody locks the
+// "garbage in → 400 out" contract so future refactors can't
+// silently fall back to "set stock to NULL" on a broken payload.
+func TestUpdateProductStock_RejectsMalformedBody(t *testing.T) {
+	srv, database, cleanup := newTestServer(t)
+	defer cleanup()
+
+	insertTestProduct(t, database, "stock-4", intPtr(2))
+
+	body := strings.NewReader(`not-json-at-all`)
+	req, _ := http.NewRequest(http.MethodPatch, srv.URL+"/api/products/stock-4/stock", body)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("PATCH: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", resp.StatusCode)
+	}
+}
+
+// TestUpdateProductStock_Returns404OnMissing — the quick-adjust
+// stepper must surface "product gone" as a clean 404 so the VM
+// can show the user a clear error rather than a stale-spinner
+// silence.
+func TestUpdateProductStock_Returns404OnMissing(t *testing.T) {
+	srv, _, cleanup := newTestServer(t)
+	defer cleanup()
+
+	body := strings.NewReader(`{"stock": 4}`)
+	req, _ := http.NewRequest(http.MethodPatch, srv.URL+"/api/products/does-not-exist/stock", body)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("PATCH: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", resp.StatusCode)
+	}
+}
+
+// TestUpdateProductStock_NullClearsColumn — passing the JSON
+// literal `null` for `stock` should store SQL NULL (= unknown),
+// not 0. The frontend distinguishes the two: NULL renders as "?"
+// (we don't know), 0 renders as "0" (out of stock).
+func TestUpdateProductStock_NullClearsColumn(t *testing.T) {
+	srv, database, cleanup := newTestServer(t)
+	defer cleanup()
+
+	insertTestProduct(t, database, "stock-5", intPtr(11))
+
+	body := strings.NewReader(`{"stock": null}`)
+	req, _ := http.NewRequest(http.MethodPatch, srv.URL+"/api/products/stock-5/stock", body)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("PATCH: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := readAll(resp)
+		t.Fatalf("status = %d, want 200 (body=%s)", resp.StatusCode, string(respBody))
+	}
+	var row struct {
+		Stock sql.NullFloat64
+	}
+	if err := database.QueryRow(`SELECT stock FROM products WHERE id=?`, "stock-5").Scan(&row.Stock); err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	if row.Stock.Valid {
+		t.Errorf("stock on disk = %+v, want NULL after null-clearing PATCH", row.Stock)
+	}
+}
+
+func intPtr(v int) *int { return &v }

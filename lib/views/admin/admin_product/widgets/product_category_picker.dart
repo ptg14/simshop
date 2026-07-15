@@ -73,6 +73,11 @@ class _ProductCategoryPickerState extends State<ProductCategoryPicker> {
         }
       }
     }
+    // If we got here, every selected sub is either unknown or an
+    // orphan (largeCategory == null). Either way, leaving
+    // [_selectedLarge] null lets [_buildSubRow] surface the orphan
+    // chips — the "-- Chọn danh mục lớn --" bucket. Done as one
+    // shot so we don't re-run on every rebuild.
     _prefilled = true;
   }
 
@@ -100,8 +105,22 @@ class _ProductCategoryPickerState extends State<ProductCategoryPicker> {
   void _onLargeChanged(String? newLarge) {
     setState(() => _selectedLarge = newLarge);
     if (newLarge == null) {
-      // No Large selected — drop every sub-category from the selection.
-      widget.onChanged(const []);
+      // "-- Chọn danh mục lớn --" selected. Keep orphan subs in the
+      // selection (largeCategory == null) — they live under the
+      // same UI bucket the dropdown now represents — and drop the
+      // ones that belonged to a real Large. Previously this branch
+      // wiped the entire selection, which meant switching to
+      // "Chọn..." always cleared the picker.
+      final orphanNames = widget.viewModel.subCategories
+          .where((c) => c.largeCategory == null)
+          .map((c) => c.name)
+          .toSet();
+      final kept = widget.selectedCategories
+          .where(orphanNames.contains)
+          .toList(growable: false);
+      if (kept.length != widget.selectedCategories.length) {
+        widget.onChanged(kept);
+      }
       return;
     }
     // Drop subs that don't belong to the new Large.
@@ -139,9 +158,12 @@ class _ProductCategoryPickerState extends State<ProductCategoryPicker> {
 
   Future<void> _confirmAddSub() async {
     final name = _newSubController.text.trim();
-    if (name.isEmpty || _selectedLarge == null) return;
-    final ok =
-        await widget.viewModel.addCategoryWithParent(name, _selectedLarge!);
+    if (name.isEmpty) return;
+    // Empty parent string creates an orphan sub on the backend;
+    // _selectedLarge == null corresponds to the "-- Chọn danh mục
+    // lớn --" bucket the picker now exposes.
+    final ok = await widget.viewModel.addCategoryWithParent(name,
+        _selectedLarge ?? '');
     if (!mounted) return;
     if (ok) {
       final updated = List<String>.from(widget.selectedCategories)..add(name);
@@ -255,14 +277,19 @@ class _ProductCategoryPickerState extends State<ProductCategoryPicker> {
       );
 
   Widget _buildSubRow() {
-    if (_selectedLarge == null) {
-      return Text(
-        'Vui lòng chọn danh mục lớn trước',
-        style: TextStyle(color: Colors.grey[600], fontSize: 13),
-      );
-    }
-    final List<Category> visibleSubs = widget.viewModel.subCategories
-        .where((c) => c.largeCategory == _selectedLarge)
+    // "_selectedLarge == null" now means the user picked the
+    // "-- Chọn danh mục lớn --" option, which is the UI bucket for
+    // orphan subs (largeCategory == null). Render those as
+    // ChoiceChips so admins can tag a product with an unparented
+    // sub. Previously the same null value produced a "please pick
+    // a large" hint, which forced every product into a parent
+    // before any sub could be chosen.
+    final bool isOrphanBucket = _selectedLarge == null;
+    final List<Category> visibleSubs = (isOrphanBucket
+            ? widget.viewModel.subCategories
+                .where((c) => c.largeCategory == null)
+            : widget.viewModel.subCategories
+                .where((c) => c.largeCategory == _selectedLarge))
         .toList()
       ..sort((a, b) => a.name.compareTo(b.name));
 
@@ -271,7 +298,9 @@ class _ProductCategoryPickerState extends State<ProductCategoryPicker> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            'Chưa có danh mục con nào thuộc "$_selectedLarge"',
+            isOrphanBucket
+                ? 'Chưa có danh mục con mồ côi nào'
+                : 'Chưa có danh mục con nào thuộc "$_selectedLarge"',
             style: TextStyle(color: Colors.grey[600], fontSize: 13),
           ),
           const SizedBox(height: 6),

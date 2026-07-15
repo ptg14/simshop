@@ -44,6 +44,15 @@ class HomeViewModel extends ChangeNotifier {
   List<String> get largeCategories => ['All', ..._largeCategories];
   String get selectedLarge => _selectedLarge;
 
+  /// Whether the raw product list has been populated by [loadProducts]
+  /// at least once. Independent of the active Large/sub filter —
+  /// used by the home screen to decide between the loading skeleton
+  /// and the loaded layout. Reading `products.isEmpty` would conflate
+  /// "still loading" with "filter matched nothing", and the screen
+  /// would flash back to the skeleton whenever the user picked a
+  /// tag with no matching products.
+  bool get hasLoadedProducts => _products.isNotEmpty;
+
   /// The sub-categories currently selected. Always non-empty: when
   /// the user has not picked anything specific, this set contains
   /// only the "All <Large>" pseudo-sub for the active Large.

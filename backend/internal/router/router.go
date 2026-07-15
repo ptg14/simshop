@@ -113,6 +113,7 @@ if stores != nil && len(adminPub) > 0 {
 	productsWrite.Use(adminAuth)
 	productsWrite.HandleFunc("", handler.CreateProductHandler(productRepo)).Methods(http.MethodPost)
 	productsWrite.HandleFunc("/{id}", handler.UpdateProductHandler(productRepo)).Methods(http.MethodPut)
+	productsWrite.HandleFunc("/{id}/stock", handler.UpdateProductStockHandler(productRepo)).Methods(http.MethodPatch)
 	productsWrite.HandleFunc("/{id}", handler.DeleteProductHandler(productRepo)).Methods(http.MethodDelete)
 
 	// Structured categories with their large-category parent (for frontend hierarchy).
