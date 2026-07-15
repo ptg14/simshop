@@ -114,7 +114,12 @@ func SafeDelete(filename string, cfg *UploadConfig) error {
 // Rules:
 //   - If [imageURL] is empty or fails to parse → "" (no-op for caller).
 //   - If [imageURL] has a host that differs from [cfg.BaseURL]'s host → ""
-//     (external URL — not our file, leave it alone).
+//     (external URL — not our file, leave it alone). When [cfg.BaseURL]
+//     is empty (dev mode — BE serves uploads on its own port without a
+//     configured public origin), any absolute URL with a "/uploads/"
+//     marker is accepted: dev shells only upload through the same BE
+//     so we can trust the host. Production behind a proxy MUST set
+//     cfg.BaseURL to lock the allowed host down.
 //   - Otherwise strip the "/uploads/" prefix and return the basename.
 //   - Empty tail (just "/uploads/") or nested paths after /uploads/ → ""
 //     because uploads live flat on disk.
@@ -130,11 +135,13 @@ func FilenameFromURL(imageURL string, cfg *UploadConfig) string {
 		return ""
 	}
 
-	// External (different host) URL: reject unless cfg.BaseURL matches.
-	if u.Host != "" {
-		if cfg.BaseURL == "" {
-			return ""
-		}
+	// External (different host) URL: when BaseURL is configured,
+	// lock the allowed host down to it. When BaseURL is empty (dev
+	// mode), accept any host — the BE emits absolute URLs derived
+	// from its own request host in that mode, so the URL we see on
+	// cleanup is guaranteed to point at our own uploads dir. Production
+	// operators who want strict isolation MUST set cfg.BaseURL.
+	if u.Host != "" && cfg.BaseURL != "" {
 		base, err := url.Parse(cfg.BaseURL)
 		if err != nil || base.Host != u.Host {
 			return ""
