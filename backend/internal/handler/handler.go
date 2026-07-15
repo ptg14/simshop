@@ -756,23 +756,31 @@ func UploadImageHandler(cfg *UploadConfig) http.HandlerFunc {
 			// Construct the public URL for the uploaded file.
 			// Priority:
 			//   1. cfg.BaseURL (configured public origin).
-			//   2. Emitted relative URL — safer than honoring the
-			//      spoofable Host / X-Forwarded-Host headers when the
-			//      deployment isn't behind a TRUSTED_PROXIES-allow-listed
-			//      proxy. Browsers resolve the relative URL against the
-			//      current page origin.
-			//
-			// The host-header fallback is preserved for backward compat
-			// because the rate-limiter proxy gating (TRUSTED_PROXIES) is
-			// not yet threaded through to this handler. Operators who
-			// set cfg.BaseURL get the absolute URL; everyone else gets a
-			// relative URL plus a one-shot warning.
+			//   2. Fall back to the request's Host header (with scheme
+			//      derived from TLS state). Without this dev sessions
+			//      (flutter run -d chrome on :9090 hitting the BE on
+			//      :8080) get a relative URL like `/uploads/x.jpg`,
+			//      which the browser resolves against the FE origin
+			//      (:9090) → 404. The Host header is only as spoofable
+			//      as the rate-limiter proxy gating (TRUSTED_PROXIES),
+			//      so when an operator fronts the BE with a trusted
+			//      proxy they MUST set cfg.BaseURL to override this
+			//      fallback.
 			var imageURL string
 			if cfg.BaseURL != "" {
 				imageURL = fmt.Sprintf("%s/uploads/%s", strings.TrimRight(cfg.BaseURL, "/"), filename)
 			} else {
-				log.Printf("upload: BASE_URL not configured; emitting relative URL for %q. Set BASE_URL (or TRUSTED_PROXIES for the rate limiter) to control absolute URLs.", filename)
-				imageURL = "/uploads/" + filename
+				scheme := "http"
+				if r.TLS != nil {
+					scheme = "https"
+				}
+				host := r.Host
+				if host == "" {
+					log.Printf("upload: neither BASE_URL nor Host header set; emitting relative URL for %q", filename)
+					imageURL = "/uploads/" + filename
+				} else {
+					imageURL = fmt.Sprintf("%s://%s/uploads/%s", scheme, host, filename)
+				}
 			}
 			return imageURL, filename, nil
 		}
