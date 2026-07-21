@@ -169,17 +169,42 @@ class AdminViewModel extends ChangeNotifier {
   String get selectedTab => _selectedTab;
 
   /// Initialize admin view model with products.
+  ///
+  /// Called from the admin product screen on first mount (see
+  /// [AdminProductsScreen.initState]) and from the "Thử lại" (retry)
+  /// button in the error view (see
+  /// `lib/views/admin/admin_product/admin_product_screen.dart:112`).
+  ///
+  /// On entry we reset [_error] so a stale message from a prior
+  /// failed write doesn't keep the error view painted after a
+  /// successful retry — without this reset the retry button has no
+  /// visible effect, because `_buildBody` checks `viewModel.error !=
+  /// null` to decide between the error screen and the loaded grid.
+  /// Mirrors the `_error = null` reset that
+  /// [HomeViewModel.loadProducts] performs for the same reason (the
+  /// home "Thử lại" button already worked; admin was the broken one).
   Future<void> initialize() async {
-    // Load products from the backend.
+    // Clear any stale error before the load so a successful retry
+    // actually un-sticks the error view.
+    _error = null;
+
+    // Load products from the backend. Capture the failure into
+    // [_error] (instead of silently swallowing it with `catch (_)`)
+    // so the admin screen surfaces a "Không thể tải sản phẩm" view
+    // with a retry button — matching the HomeViewModel behaviour and
+    // matching what the user expects when the load fails.
     try {
       final loaded = await _productService.getAllProducts();
       _products.clear();
       _products.addAll(loaded);
-    } catch (_) {
-      // If backend unavailable, keep empty list.
+    } catch (e) {
+      _error = 'Lỗi tải sản phẩm: $e';
     }
 
     // Load structured category hierarchy (Large + subs with parent).
+    // Both helpers keep their previous values on failure and never
+    // overwrite [_error] — they're nice-to-have polish for the
+    // filter row, not the load that gates the admin grid.
     await loadLargeCategories();
     await loadSubCategories();
 
