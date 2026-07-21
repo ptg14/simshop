@@ -17,7 +17,6 @@ class ImageCarousel extends StatefulWidget {
     this.onTap,
     this.fit = BoxFit.cover,
     this.heroTag,
-    this.physics,
     this.showNavigationButtons = false,
     this.useHorizontalPadding = true,
   });
@@ -57,13 +56,6 @@ class ImageCarousel extends StatefulWidget {
   /// via the carousel's own PageView motion.
   final Object? heroTag;
 
-  /// Scroll physics for the underlying [PageView]. Override when the
-  /// carousel sits inside another scrollable (e.g. product detail's
-  /// [SingleChildScrollView]) so the horizontal swipe wins the
-  /// gesture arena immediately instead of competing with the
-  /// vertical drag of the parent.
-  final ScrollPhysics? physics;
-
   /// Whether to wrap the carousel in [EdgeInsets.symmetric] using
   /// `context.horizontalPadding` (12 / 24 / 48 dp on mobile / tablet /
   /// desktop). Defaults to `true` so the home banner and product
@@ -90,33 +82,54 @@ class _ImageCarouselState extends State<ImageCarousel>
   int _current = 0;
   Timer? _timer;
 
+  /// Track ongoing manual drag. When the user starts a horizontal
+  /// drag on the carousel we disable the [PageView]'s built-in
+  /// horizontal drag detector (via [PageView.physics] -> never
+  /// scrollable) and instead drive the [PageController] ourselves
+  /// from the surrounding [GestureDetector]. This bypasses the
+  /// gesture arena entirely: the carousel always wins the
+  /// horizontal swipe, even when it's nested inside a vertical
+  /// [SingleChildScrollView] whose content is short enough to be
+  /// sitting at the top of its scroll bounds (which is exactly
+  /// when a vanilla [PageView] appears "stuck" on mobile).
+  ///
+  /// `_dragStartControllerOffset` is captured at the start of each
+  /// drag so the delta we feed the controller is always measured
+  /// from the same origin — using `controller.offset` directly is
+  /// racy because the controller may have been auto-scrolled since
+  /// the last frame.
+  double? _dragStartControllerOffset;
+  double _dragTotal = 0;
+
   /// True while the pointer (mouse / trackpad) is hovering over
   /// the carousel. The nav buttons fade in on hover and out when
   /// the cursor leaves, so the photos stay clean by default and
   /// controls only appear when the customer has actually pointed
-  /// at the image. Touch devices never fire `onEnter`, so we
-  /// default [_isHovered] to `true` on platforms without mouse
-  /// support (mobile) — without that fallback the buttons would
-  /// be permanently invisible there.
-  // ignore: prefer_final_fields
-  bool _isHovered = _defaultHovered();
+  /// at the image.
+  ///
+  /// Always `false` initially: the nav-button row is gated on
+  /// [_hasMousePointer] further down, so this state is only ever
+  /// meaningful on desktop. The flag is final because the
+  /// desktop-only toggle in [_MouseRegion]'s callbacks never needs
+  /// to mutate the storage location, only the field's value.
+  bool _isHovered = false;
 
-  static bool _defaultHovered() {
-    // Desktop targets always have a mouse (or trackpad); mobile
-    // targets are touch-first. The user requested "chỉ khi nào
-    // để chuột vào hình ảnh mới hiện 2 nút" — that gate is the
-    // mouse hover on desktop. On touch devices we keep the
-    // buttons always visible because there's no other way to
-    // discover them.
+  /// Whether the current platform exposes a real pointer (mouse /
+  /// trackpad). When false the carousel drops the nav buttons
+  /// entirely so [PageView] keeps full ownership of horizontal
+  /// swipes — touch platforms have no hover affordance and no
+  /// use for the buttons, and rendering them silently breaks
+  /// manual navigation. See [_isHovered] for the full story.
+  static bool get _hasMousePointer {
     switch (defaultTargetPlatform) {
       case TargetPlatform.android:
       case TargetPlatform.iOS:
       case TargetPlatform.fuchsia:
-        return true;
+        return false;
       case TargetPlatform.macOS:
       case TargetPlatform.windows:
       case TargetPlatform.linux:
-        return false;
+        return true;
     }
   }
 
@@ -223,81 +236,182 @@ class _ImageCarouselState extends State<ImageCarousel>
           children: [
             SizedBox(
               height: widget.height ?? context.carouselHeight,
-              child: Listener(
-                // Desktop mice + trackpads send `PointerScrollEvent`s
-                // rather than the touch drags that `PageView`
-                // consumes natively. Without an explicit handler
-                // the carousel appears frozen on desktop — and on
-                // the product detail screen the parent vertical
-                // `SingleChildScrollView` also swallows the wheel
-                // event before it reaches the `PageView`. We
-                // translate each scroll tick into a single page
-                // advance so wheel/trackpad input "just works".
+              child: GestureDetector(
+                // Drive the [PageController] manually from this
+                // GestureDetector instead of letting [PageView]'s
+                // built-in horizontal drag detector compete for
+                // the gesture arena.
                 //
-                // `Listener.onPointerSignal` only fires for
-                // `PointerSignalEvent`s — touch drags on mobile are
-                // unaffected, so this is a no-op there.
-                onPointerSignal: (signal) {
-                  if (signal is! PointerScrollEvent) return;
+                // Why: when this carousel sits inside a vertical
+                // [SingleChildScrollView] (the product detail
+                // page), the parent and the [PageView] both want
+                // pan gestures, and on mobile the parent often
+                // wins — every horizontal swipe gets mis-classified
+                // as a vertical drag and the carousel appears
+                // stuck. By wrapping the [PageView] in a
+                // [GestureDetector] that explicitly handles
+                // `onHorizontalDragUpdate`, the carousel claims
+                // the horizontal gesture immediately, before the
+                // parent gets a chance to. The [PageView] is given
+                // [NeverScrollableScrollPhysics] so its own drag
+                // detector stays out of the way; we manually call
+                // `controller.jumpTo` while the finger is down
+                // and `controller.animateToPage` when it lifts.
+                //
+                // `behavior: opaque` is required so the
+                // GestureDetector's hit-test doesn't fall through
+                // to widgets behind it (the discount ribbon
+                // overlay, the page background, etc.) when the
+                // carousel sits inside a [Stack].
+                behavior: HitTestBehavior.opaque,
+                onHorizontalDragStart: (details) {
                   if (widget.imageUrls.length < 2) return;
-                  if (!mounted || !_controller.hasClients) return;
-                  final dx = signal.scrollDelta.dx;
-                  final dy = signal.scrollDelta.dy;
-                  // Use whichever axis is dominant — most mice
-                  // only emit `dy`, but two-finger trackpad swipes
-                  // can be either. A tiny dead-zone (|primary|<1)
-                  // filters out jittery sub-pixel events from some
-                  // trackpads.
-                  final primary = dx.abs() > dy.abs() ? dx : dy;
-                  if (primary.abs() < 1) return;
-                  if (primary > 0) {
-                    _controller.nextPage(
-                      duration: const Duration(milliseconds: 300),
-                      curve: Curves.easeOut,
-                    );
+                  if (!_controller.hasClients) return;
+                  _dragStartControllerOffset = _controller.offset;
+                  _dragTotal = 0;
+                  // Cancel any in-flight auto-scroll animation
+                  // triggered by [Timer.periodic] so the user's
+                  // drag is the only thing driving the carousel.
+                  _controller.jumpTo(_controller.offset);
+                },
+                onHorizontalDragUpdate: (details) {
+                  if (widget.imageUrls.length < 2) return;
+                  if (_dragStartControllerOffset == null) return;
+                  if (!_controller.hasClients) return;
+                  // Finger moved right (positive deltaX) →
+                  // carousel should reveal the page on the LEFT
+                  // (i.e. previous page), so we DECREASE the
+                  // controller's offset. This matches the natural
+                  // mapping of touch → scroll: drag right ⇒ see
+                  // what was on the left.
+                  _dragTotal += details.primaryDelta ?? 0;
+                  final newOffset =
+                      _dragStartControllerOffset! - _dragTotal;
+                  // Clamp to the valid scroll range so the user
+                  // can't drag the carousel past the first/last
+                  // page; without this a fast flick can briefly
+                  // set the offset outside [_controller.position.min
+                  // ..max] and the [PageView] throws.
+                  final pos = _controller.position;
+                  final clamped = newOffset
+                      .clamp(pos.minScrollExtent, pos.maxScrollExtent)
+                      .toDouble();
+                  _controller.jumpTo(clamped);
+                },
+                onHorizontalDragEnd: (details) {
+                  if (widget.imageUrls.length < 2) return;
+                  if (_dragStartControllerOffset == null) return;
+                  if (!_controller.hasClients) return;
+                  // Snap to the nearest page based on (a) the
+                  // current fractional page and (b) the flick
+                  // velocity. Both PageView's standard behaviour
+                  // and a hard cutoff at half a page width.
+                  final pageSize =
+                      _controller.position.viewportDimension;
+                  final currentPage = _controller.page ?? _current.toDouble();
+                  // Flick in either direction: if the user
+                  // released with enough horizontal velocity,
+                  // jump one page in that direction regardless
+                  // of the current offset; otherwise snap to the
+                  // nearest whole page.
+                  final velocity = details.primaryVelocity ?? 0;
+                  double targetPage;
+                  if (velocity.abs() > 300) {
+                    // Flick threshold (px/s). Matches the
+                    // PageView default of 1 logical pixel per
+                    // millisecond.
+                    targetPage = velocity > 0
+                        ? currentPage.floorToDouble()
+                        : currentPage.ceilToDouble();
                   } else {
-                    _controller.previousPage(
-                      duration: const Duration(milliseconds: 300),
+                    targetPage = currentPage.roundToDouble();
+                  }
+                  targetPage = targetPage
+                      .clamp(0, (widget.imageUrls.length - 1).toDouble())
+                      .toDouble();
+                  // pageSize > 0 guard: when the carousel hasn't
+                  // laid out yet, animateToPage would divide by
+                  // zero. Bail out and let the next frame handle
+                  // it.
+                  if (pageSize > 0) {
+                    _controller.animateToPage(
+                      targetPage.toInt(),
+                      duration: const Duration(milliseconds: 250),
                       curve: Curves.easeOut,
                     );
                   }
+                  _dragStartControllerOffset = null;
+                  _dragTotal = 0;
                 },
-                child: PageView.builder(
-                  controller: _controller,
-                  physics: widget.physics,
-                  onPageChanged: (i) => setState(() => _current = i),
-                  itemCount: widget.imageUrls.length,
-                  itemBuilder: (context, index) {
-                    Widget child = AppNetworkImage(
-                      url: widget.imageUrls[index],
-                      fit: widget.fit,
-                      // Explicit dimensions let the browser decode at
-                      // the actual display size instead of first
-                      // downloading the full-resolution image and
-                      // resizing it in CSS — meaningful for first-paint
-                      // when banners are large product shots.
-                      height: widget.height ?? context.carouselHeight,
-                      width: double.infinity,
-                    );
-                    if (widget.onTap != null) {
-                      child = InkWell(
-                        onTap: () => widget.onTap!(index),
-                        child: child,
+                child: Listener(
+                  // Wheel/trackpad input still flows through here
+                  // (PointerScrollEvent). Touch drags are handled
+                  // by the surrounding [GestureDetector] above, so
+                  // there's no overlap.
+                  onPointerSignal: (signal) {
+                    if (signal is! PointerScrollEvent) return;
+                    if (widget.imageUrls.length < 2) return;
+                    if (!mounted || !_controller.hasClients) return;
+                    final dx = signal.scrollDelta.dx;
+                    final dy = signal.scrollDelta.dy;
+                    final primary = dx.abs() > dy.abs() ? dx : dy;
+                    if (primary.abs() < 1) return;
+                    if (primary > 0) {
+                      _controller.nextPage(
+                        duration: const Duration(milliseconds: 300),
+                        curve: Curves.easeOut,
+                      );
+                    } else {
+                      _controller.previousPage(
+                        duration: const Duration(milliseconds: 300),
+                        curve: Curves.easeOut,
                       );
                     }
-                    // Wrap only the first slide in a Hero. The home
-                    // grid (ProductCard) uses a tag shaped like
-                    // `'product-image-<id>'`; the detail screen
-                    // passes the same tag in via [heroTag] so the
-                    // fly-in animation matches. The shuttle builder
-                    // renders the destination widget during flight
-                    // so we don't briefly show the source's
-                    // cover-fit image (with cropped edges) on its
-                    // way to a contain-fit frame — the user would
-                    // see a visible snap at the start of the
-                    // animation.
-                    if (widget.heroTag != null && index == 0) {
-                      child = Hero(
+                  },
+                  child: PageView.builder(
+                    // `NeverScrollableScrollPhysics` disables the
+                    // PageView's own horizontal drag detector so
+                    // the surrounding [GestureDetector] can drive
+                    // the controller without competition. Wheel
+                    // events (handled by the inner [Listener])
+                    // call [PageController.nextPage] / .previousPage
+                    // directly and don't go through physics, so
+                    // they're unaffected.
+                    physics: const NeverScrollableScrollPhysics(),
+                    controller: _controller,
+                    onPageChanged: (i) => setState(() => _current = i),
+                    itemCount: widget.imageUrls.length,
+                    itemBuilder: (context, index) {
+                      Widget child = AppNetworkImage(
+                        url: widget.imageUrls[index],
+                        fit: widget.fit,
+                        // Explicit dimensions let the browser decode at
+                        // the actual display size instead of first
+                        // downloading the full-resolution image and
+                        // resizing it in CSS — meaningful for first-paint
+                        // when banners are large product shots.
+                        height: widget.height ?? context.carouselHeight,
+                        width: double.infinity,
+                      );
+                      if (widget.onTap != null) {
+                        child = InkWell(
+                          onTap: () => widget.onTap!(index),
+                          child: child,
+                        );
+                      }
+                      // Wrap only the first slide in a Hero. The home
+                      // grid (ProductCard) uses a tag shaped like
+                      // `'product-image-<id>'`; the detail screen
+                      // passes the same tag in via [heroTag] so the
+                      // fly-in animation matches. The shuttle builder
+                      // renders the destination widget during flight
+                      // so we don't briefly show the source's
+                      // cover-fit image (with cropped edges) on its
+                      // way to a contain-fit frame — the user would
+                      // see a visible snap at the start of the
+                      // animation.
+                      if (widget.heroTag != null && index == 0) {
+                        child = Hero(
                         tag: widget.heroTag!,
                         flightShuttleBuilder: (
                           flightContext,
@@ -315,8 +429,18 @@ class _ImageCarouselState extends State<ImageCarousel>
                 ),
               ),
             ),
+          ),
             if (widget.imageUrls.length > 1) ...[
-              if (widget.showNavigationButtons)
+              // The nav-button row is desktop-only. On touch
+              // platforms the two Expanded 48dp-wide pill buttons
+              // fill the left and right halves of the carousel and
+              // physically block [PageView]'s horizontal drag
+              // detector — there is no hover affordance on mobile,
+              // so we can't make them disappear on demand. Instead
+              // we don't render them at all; touch users get the
+              // native swipe gesture, which is what they expect
+              // from every other gallery UI on the platform.
+              if (widget.showNavigationButtons && _hasMousePointer)
                 // A single MouseRegion wraps the whole carousel so
                 // hovering *anywhere* over the image reveals the
                 // buttons — much friendlier than forcing the user
@@ -328,9 +452,8 @@ class _ImageCarouselState extends State<ImageCarousel>
                 // [IgnorePointer] when not hovered so the
                 // underlying [PageView] keeps catching horizontal
                 // drags — without that, the buttons would steal
-                // every touch on desktop once visible, and on
-                // touch devices (where hover defaults to "always
-                // visible") would permanently block swipes.
+                // every mouse hit on the carousel even before the
+                // user hovers them.
                 Positioned.fill(
                   child: MouseRegion(
                     onEnter: (_) => setState(() => _isHovered = true),

@@ -111,6 +111,18 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
         centerTitle: true,
       ),
       body: SingleChildScrollView(
+        // Wrap the underlying scroll physics in
+        // [AlwaysScrollableScrollPhysics] so the carousel's
+        // horizontal drag detector always wins the gesture arena,
+        // even when the page is short enough that the vertical
+        // scroll view is sitting at the top or bottom (and would
+        // otherwise eat the first horizontal swipe). Without this
+        // the carousel appeared "stuck" on mobile — the customer
+        // could see all images in the dot indicator but couldn't
+        // flip between them.
+        physics: const ClampingScrollPhysics(
+          parent: AlwaysScrollableScrollPhysics(),
+        ),
         child: Center(
           child: Container(
             constraints: BoxConstraints(maxWidth: context.maxContentWidth),
@@ -178,14 +190,6 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                           autoScrollDuration: Duration.zero,
                           fit: BoxFit.contain,
                           heroTag: 'product-image-${product.id}',
-                          // [PageScrollPhysics] lets horizontal
-                          // swipes win the gesture arena immediately
-                          // instead of competing with the parent
-                          // scroll view's vertical drag — that's
-                          // why flicking between product photos used
-                          // to feel sticky.
-                          physics: const PageScrollPhysics()
-                              .applyTo(const ClampingScrollPhysics()),
                           // Floating prev/next buttons because the
                           // product-detail carousel has no auto-advance
                           // — without explicit controls the only way

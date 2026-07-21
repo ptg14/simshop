@@ -261,4 +261,97 @@ void main() {
     // The address appears as the button label.
     expect(find.text('12 Nguyễn Huệ'), findsWidgets);
   });
+
+// User-reported regression: on mobile (Android / iOS) horizontal
+  // swipes across the product gallery did nothing — the customer
+  // could see all the dot indicators but couldn't flip between
+  // them, both for the default gallery and for the variant
+  // gallery after picking an option.
+  //
+  // Three pieces, all pinned here:
+  //
+  // 1. The vertical scroll view hosting the carousel must use
+  //    `ClampingScrollPhysics(parent: AlwaysScrollableScrollPhysics())`,
+  //    otherwise the parent claims every drag when its content is
+  //    short enough to sit at the top of its scroll bounds, leaving
+  //    the [PageView] no surface to detect a horizontal swipe.
+  //    The default `ClampingScrollPhysics()` (no parent) is what
+  //    caused the original "stuck carousel" symptom.
+  //
+  // 2. The [ImageCarousel] wraps its [PageView] in a
+  //    [GestureDetector] that owns horizontal drags manually (calls
+  //    `_controller.jumpTo` / `animateToPage` directly) and gives
+  //    the [PageView] [NeverScrollableScrollPhysics] so its own
+  //    drag detector stays out of the gesture arena entirely.
+  //    This is the definitive fix: it bypasses the arena between
+  //    the carousel and its parent scroll view, so the carousel
+  //    always wins the horizontal swipe on mobile.
+  //
+  // 3. As a residual defense, the [PageView] must still NOT use
+  //    [PageScrollPhysics] — that variant competes with the parent
+  //    vertical drag and mis-classifies horizontal swipes as
+  //    vertical ones, which is exactly the symptom we're fixing.
+  testWidgets(
+      'ProductDetailScreen: vertical scroll uses AlwaysScrollable parent so nested carousel keeps its swipes',
+      (tester) async {
+    final product = _buildProduct();
+    await tester.pumpWidget(_wrap(ProductDetailScreen(product: product)));
+    // We use `pump()` (not `pumpAndSettle`) because the carousel
+    // mounts `AppNetworkImage` widgets that retry forever when
+    // given an empty URL in test — `pumpAndSettle` would never
+    // return. We're only inspecting widget configs here, not
+    // waiting for the page to fully paint.
+    await tester.pump();
+
+    final scrollView = tester.widget<SingleChildScrollView>(
+      find.byType(SingleChildScrollView),
+    );
+    final physics = scrollView.physics;
+    expect(physics, isNotNull,
+        reason:
+            'a non-null physics is required so the carousel can claim '
+            'horizontal drags instead of the parent swallowing them');
+    expect(physics, isA<ClampingScrollPhysics>(),
+        reason:
+            'the parent should still clamp (so the page does not '
+            'overscroll past the bottom)');
+    expect(physics!.parent, isA<AlwaysScrollableScrollPhysics>(),
+        reason:
+            'the clamping parent MUST be wrapped in '
+            'AlwaysScrollableScrollPhysics — without it, the vertical '
+            'scroll view eats the first horizontal swipe when content '
+            'fits the viewport, leaving the carousel "stuck"');
+  });
+
+  testWidgets(
+      'ProductDetailScreen: carousel PageView uses NeverScrollableScrollPhysics so the surrounding GestureDetector owns the drag',
+      (tester) async {
+    final product = _buildProduct();
+    await tester.pumpWidget(_wrap(ProductDetailScreen(product: product)));
+    await tester.pump();
+
+    final pageView = tester.widget<PageView>(find.byType(PageView));
+    final physics = pageView.physics;
+    // The carousel now drives its [PageController] from a
+    // surrounding [GestureDetector] (`onHorizontalDragUpdate` +
+    // `onHorizontalDragEnd`) so it can claim horizontal drags
+    // even when the parent vertical [SingleChildScrollView] is
+    // sitting at its scroll bounds. The [PageView] itself is
+    // given [NeverScrollableScrollPhysics] so its own horizontal
+    // drag detector stays out of the gesture arena entirely —
+    // if we left any other physics in place here, both the
+    // [GestureDetector] and the [PageView] would race for the
+    // same drag, and on mobile the wrong one would still win
+    // some of the time.
+    expect(physics, isA<NeverScrollableScrollPhysics>(),
+        reason:
+            'the carousel must not have its own horizontal drag detector — '
+            'NeverScrollableScrollPhysics lets the surrounding GestureDetector '
+            'be the sole owner of horizontal drags, so they can\'t get '
+            'swallowed by the parent SingleChildScrollView');
+    expect(physics, isNot(isA<PageScrollPhysics>()),
+        reason:
+            'PageScrollPhysics would compete with the parent scroll view '
+            'on mobile and the carousel would appear stuck again');
+  });
 }
