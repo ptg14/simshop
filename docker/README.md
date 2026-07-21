@@ -1,54 +1,91 @@
-# simshop Docker Stack (Production)
+# Docker stack (production)
 
-Postgres + Go backend + Flutter web (release) + Cloudflare Tunnel — chạy
-trên cả **Windows** lẫn **Linux** mà không cần chỉnh sửa. Stack này
-là **production build**: binary Go đã strip debug + non-root, Flutter
-build `--release`, Nginx có security headers.
+Postgres + Go backend + Flutter web (release) + Cloudflare Tunnel —
+chạy trên cả **Windows** lẫn **Linux** mà không cần chỉnh sửa. Stack
+này là **production build**: binary Go đã strip debug + non-root,
+Flutter build `--release`, Nginx có security headers.
 
-## Luồng kết nối
+For the overall system design see
+[README.md](../README.md).
+For the backend API surface see
+[backend/README.md](../backend/README.md).
+
+---
+
+## Table of contents
+
+1. [Connection flow](#connection-flow)
+2. [Requirements](#requirements)
+3. [Quick start](#quick-start)
+4. [File structure](#file-structure)
+5. [Services](#services)
+6. [Environment variables](#environment-variables)
+7. [Data persistence](#data-persistence)
+8. [Cloudflare setup](#cloudflare-setup-one-time)
+9. [Common test scenarios](#common-test-scenarios)
+10. [Cross-OS notes](#cross-os-notes)
+11. [When to rebuild](#when-to-rebuild)
+12. [Troubleshooting](#troubleshooting)
+13. [Production rollout checklist](#production-rollout-checklist)
+14. [Rolling update & rollback](#rolling-update--rollback)
+15. [Backup & restore](#backup--restore)
+
+---
+
+## Connection flow
 
 ```
 Internet → Cloudflare Tunnel (1 tunnel, 2 ingress)
-              ├── api.simshop.example.com  →  backend:8080  (Go API)
-              └──     simshop.example.com  →  web:80       (Flutter)
-                                                  │
-                            postgres:5432  ◄──────┘
-                            (named volume, cross-OS)
+              ├── api.<yourdomain>  →  backend:8080  (Go API)
+              └──     <yourdomain>  →  web:80       (Flutter)
+                                            │
+                          postgres:5432  ◄──┘
+                          (named volume, cross-OS)
 ```
 
+Key invariants:
+
 - **FE gọi BE qua URL Cloudflare của BE** — không qua Nginx nội bộ.
+  Nginx chỉ serve static Flutter assets.
 - **BE chỉ kết nối Postgres nội bộ Docker** — không cần tunnel.
 - **Schema init 1 lần** khi volume Postgres còn trống; restart không
   re-init → boot nhanh.
 - **Tất cả service có `restart: unless-stopped`** → Docker tự khởi
-  động lại cùng server.
+  động lại cùng server (reboot host → containers trở lại).
+- **No host port publishing** — Cloudflare Tunnel là entrypoint duy
+  nhất. Postgres / backend / web chỉ mở trong Docker network
+  `simshop-net`.
 
-## Yêu cầu
+---
+
+## Requirements
 
 - **Docker** ≥ 20.10 với Compose v2 (`docker compose version`)
 - **PostgreSQL client** (chỉ cần cho debug: `docker compose exec postgres psql`)
+- **Cloudflare account** with a domain added (so you can create a tunnel)
 
-### Quyền truy cập Docker socket
+### Docker socket permissions
 
-Nếu gặp `permission denied while trying to connect to the docker
-API at unix:///var/run/docker.sock`, có 2 cách fix:
+If you hit `permission denied while trying to connect to the docker
+API at unix:///var/run/docker.sock`:
 
-**Cách 1 (khuyến nghị)**: thêm user vào group `docker` — không cần
-`sudo` cho mỗi lệnh:
+**Option 1 (recommended)** — add your user to the `docker` group:
 
 ```bash
 sudo usermod -aG docker $USER
-# Đăng xuất rồi đăng nhập lại (hoặc `newgrp docker`) để áp dụng
+# Log out and back in (or `newgrp docker`)
 ```
 
-**Cách 2**: chạy với `sudo` khi cần:
+**Option 2** — prefix every command with `sudo`:
 
 ```bash
 sudo docker compose -f docker/compose.yaml --env-file docker/.env up -d --build
 ```
 
-Trên Windows + WSL2, group `docker` đã được Docker Desktop tự cấu hình;
-nếu vẫn lỗi thì khởi động lại Docker Desktop.
+On Windows + WSL2, Docker Desktop configures the `docker` group
+automatically; if you still see errors, restart Docker Desktop.
+
+---
 
 ## Quick start
 
@@ -76,7 +113,42 @@ docker compose -f docker/compose.yaml ps
 # → tất cả services Up (healthy)
 ```
 
-## Cấu trúc file
+Verify end-to-end:
+
+```bash
+# Postgres
+docker compose -f docker/compose.yaml exec postgres \
+  pg_isready -U simshop -d simshop
+# → "accepting connections"
+
+# Backend (nội bộ Docker network)
+docker compose -f docker/compose.yaml exec backend \
+  wget -qO- http://localhost:8080/health
+# → {"status":"ok"}
+
+# Web (nội bộ Docker network)
+docker compose -f docker/compose.yaml exec web \
+  wget -qO- http://localhost/healthz
+# → ok
+
+# Cloudflare Tunnel
+docker compose -f docker/compose.yaml logs cloudflared | tail
+# → "Registered tunnel connection" + 2 hostname
+```
+
+External test (từ trình duyệt hoặc curl):
+
+```bash
+curl https://api.<yourdomain>/health
+# → {"status":"ok"}
+
+open https://<yourdomain>
+# → Flutter web load
+```
+
+---
+
+## File structure
 
 ```
 docker/
@@ -84,22 +156,126 @@ docker/
 ├── Dockerfile.backend        # Go multi-stage + strip + non-root (prod)
 ├── Dockerfile.web            # Flutter --release + Nginx (prod)
 ├── nginx.conf                # SPA fallback + security headers (prod)
-├── cloudflared-config.yml    # 1 tunnel, 2 ingress
+├── cloudflared-config.yml    # Reference only — Cloudflare fetches
+│                             # ingress from dashboard, not this file
 ├── initdb/
-│   └── 01-schema.sql         # Schema Postgres (chạy 1 lần)
-├── backup.sh                 # pg_dump/pg_restore
+│   └── 01-schema.sql         # Schema Postgres (chạy 1 lần khi volume trống)
+├── backup.sh                 # pg_dump / pg_restore helpers
+├── seed.sh                   # Idempotent placeholder seeder
 ├── .env.example              # Template environment (required-env checklist)
-└── README.md                 # File này
+└── README.md                 # This file
 ```
 
-## Các service
+### `initdb/01-schema.sql`
 
-| Service       | Port nội bộ | Vai trò                           |
-| ------------- | ----------- | --------------------------------- |
-| `postgres`    | 5432        | PostgreSQL 16                     |
-| `backend`     | 8080        | Go HTTP API                       |
-| `web`         | 80          | Nginx serve Flutter static        |
-| `cloudflared` | -           | Cloudflare Tunnel                 |
+Mounted at `/docker-entrypoint-initdb.d` in the Postgres container.
+Postgres runs every `*.sql` file there exactly once, **the first time
+the data directory is empty**. After that, restart never re-runs the
+script. This is what makes the stack boot fast on restarts.
+
+### `cloudflared-config.yml`
+
+Reference only. Cloudflare's `cloudflared` reads its ingress rules
+from the Cloudflare Zero Trust dashboard, not from this file. We
+mount it for operators to see the expected Service URLs at a glance.
+
+### `nginx.conf`
+
+Production config — SPA fallback, security headers (`X-Frame-Options`,
+`X-Content-Type-Options`, `Referrer-Policy`, `Strict-Transport-Security`),
+gzip on, and a tuned cache policy:
+
+| Path | Cache-Control | Why |
+| ---- | ------------- | --- |
+| `*.woff2 / *.ttf / *.otf / *.svg / *.png / *.jpg / *.webp / *.ico` | `public, immutable` (1y) | Asset filenames are content-hashed by Flutter |
+| `/main.dart.js` `/main.dart.wasm` `/flutter_bootstrap.js` | `no-cache, must-revalidate` | No hash in filename → CDN would otherwise cache stale code forever |
+| Other `*.js / *.css` | `no-cache, must-revalidate` | Same reasoning (asset bundles re-shuffle per build) |
+| `/index.html` | `no-cache, no-store, must-revalidate` | Rollout must take effect immediately |
+| `/healthz` | n/a (returns 200 `ok`) | For Docker healthcheck + Cloudflare monitor |
+| everything else | SPA fallback to `/index.html` | Flutter `go_router` handles routing |
+
+---
+
+## Services
+
+| Service | Port nội bộ | Resource limits | Image | Role |
+| ------- | ----------- | --------------- | ----- | ---- |
+| `postgres` | 5432 | mem 512M / 128M res | `postgres:16-alpine` | PostgreSQL 16, named volume, initdb hook |
+| `backend` | 8080 | mem 256M / 64M res, 0.5 CPU | `simshop/backend:${IMAGE_TAG}` | Go HTTP API (static, non-root) |
+| `web` | 80 | mem 128M / 32M res, 0.25 CPU | `simshop/web:${IMAGE_TAG}` | Nginx serve Flutter static |
+| `cloudflared` | — | none | `cloudflare/cloudflared:latest` | Tunnel → 2 ingress from dashboard |
+
+All services have `restart: unless-stopped` so they survive Docker
+daemon / host reboots.
+
+### `depends_on` chain
+
+```
+postgres (healthy)
+   └── backend (healthy)
+            ├── web (healthy)
+            └── cloudflared
+```
+
+Cloudflared starts after both backend + web are healthy so the tunnel
+doesn't connect to a half-up stack.
+
+### Healthchecks
+
+Each service defines one. Compose marks the service `healthy` only
+after the check passes, which gates `depends_on: condition:
+service_healthy`:
+
+| Service | Check |
+| ------- | ----- |
+| postgres | `pg_isready -U $POSTGRES_USER -d $POSTGRES_DB` every 10s, 10 retries, 10s start period |
+| backend | `wget -qO- http://localhost:8080/health` every 30s, 3 retries, 15s start period |
+| web | `wget -qO- http://localhost/healthz` every 30s, 3 retries, 5s start period |
+| cloudflared | (no healthcheck — cloudflared exits if the token is wrong; watch logs) |
+
+---
+
+## Environment variables
+
+`docker/.env.example` is the canonical template. Required (compose
+fails fast if missing):
+
+| Variable | Why required | How to fill |
+| -------- | ------------ | ----------- |
+| `POSTGRES_PASSWORD` | Postgres user creation | `openssl rand -hex 24` or password manager |
+| `ADMIN_PUBLIC_KEY` | Backend admin auth | `cd backend && go run ./cmd/keygen` (paste public hex) |
+| `ALLOWED_ORIGIN` | CORS allowlist | `https://<your-fe-domain>` |
+| `CF_TUNNEL_TOKEN` | Tunnel auth | Cloudflare Zero Trust → Tunnels → your tunnel → "Install cloudflared" |
+
+Recommended (production):
+
+| Variable | Why | Example |
+| -------- | --- | ------- |
+| `IMAGE_TAG` | Image traceability, enables rollback | `<git-sha>` or `<build-number>` |
+| `BE_PUBLIC_URL` | Absolute upload URLs, embedded into Flutter build | `https://api.<your-domain>` |
+| `API_BASE_URL` | Explicit Flutter API base (defaults to `BE_PUBLIC_URL`) | same as `BE_PUBLIC_URL` |
+| `POSTGRES_DB` | DB name (defaults `simshop`) | `simshop` |
+| `POSTGRES_USER` | DB user (defaults `simshop`) | `simshop` |
+
+Optional (defaults work fine):
+
+| Variable | Default | Notes |
+| -------- | ------- | ----- |
+| `DB_RETRY_ATTEMPTS` | `10` | Backend ping retries on boot |
+| `DB_RETRY_INTERVAL_MS` | `1000` | Delay between retries (10s total window) |
+
+### What gets baked into each image
+
+| Image | Build arg | Effect |
+| ----- | --------- | ------ |
+| `simshop/web` | `API_BASE_URL` | Compiled into Flutter JS bundle via `--dart-define`; also injected into `web/index.html` for `<link rel="preconnect">` |
+| `simshop/backend` | _(none)_ | All config via env at runtime; the image is config-agnostic |
+
+So changing `BE_PUBLIC_URL` requires rebuilding the `web` image (the
+value is baked at build time). Changing `ADMIN_PUBLIC_KEY` only needs
+a backend container restart.
+
+---
 
 ## Data persistence
 
@@ -112,30 +288,57 @@ docker volume inspect simshop_postgres_data
 docker volume inspect simshop_backend_uploads
 ```
 
-**Backup data ra file SQL** (hữu ích trước khi reset volume hoặc
-chuyển máy):
+| Volume | Mount point in container | Contents |
+| ------ | ------------------------ | -------- |
+| `simshop_postgres_data` | `/var/lib/postgresql/data` | Postgres data dir |
+| `simshop_backend_uploads` | `/data/uploads` | Multipart uploads |
+
+### Schema init lifecycle
+
+- **First boot** (volume trống): Postgres runs `/docker-entrypoint-initdb.d/*.sql`
+  once, then boots.
+- **Every subsequent boot** (volume có data): Postgres skips init,
+  boots in ~1 second.
+- **If you change `initdb/01-schema.sql` after the first boot**:
+  schema is **NOT** re-applied. To force re-init:
+
+  ```bash
+  docker compose -f docker/compose.yaml down
+  docker volume rm simshop_postgres_data
+  docker compose -f docker/compose.yaml up -d
+  # → schema re-init from scratch
+  ```
+
+### Backup & restore
 
 ```bash
-./docker/backup.sh backup                       # → ./data/simshop-YYYYMMDD-HHMMSS.sql
-./docker/backup.sh backup ./my-backup.sql       # custom path
-```
+# Backup (writes to ./data/simshop-YYYYMMDD-HHMMSS.sql)
+./docker/backup.sh backup
 
-**Restore**:
+# Backup to custom path
+./docker/backup.sh backup ./my-backup.sql
 
-```bash
+# Restore (uses --clean --if-exists, drops + recreates)
 ./docker/backup.sh restore ./my-backup.sql
+
+# Uploads volume — manual
+docker run --rm -v simshop_backend_uploads:/data -v $(pwd):/backup \
+    alpine tar czf /backup/uploads-$(date +%Y%m%d-%H%M%S).tar.gz -C /data .
 ```
 
-**Reset toàn bộ data** (XÓA HẾT, dùng cẩn thận):
+### Reset toàn bộ data (XÓA HẾT, dùng cẩn thận)
 
 ```bash
-docker compose -f docker/compose.yaml down       # dừng containers
-docker volume rm simshop_postgres_data           # xóa data Postgres
-docker volume rm simshop_backend_uploads         # xóa data uploads
-docker compose -f docker/compose.yaml up -d      # khởi động lại (schema tự re-init)
+docker compose -f docker/compose.yaml down
+docker volume rm simshop_postgres_data
+docker volume rm simshop_backend_uploads
+docker compose -f docker/compose.yaml up -d
+# → schema tự re-init, uploads empty
 ```
 
-## Cloudflare setup (1 lần)
+---
+
+## Cloudflare setup (one-time)
 
 Trước khi chạy `docker compose up`, cần chuẩn bị tunnel trên
 Cloudflare:
@@ -167,17 +370,18 @@ Kiểm tra:
 
 ```bash
 # Xem IP thực của web/backend trong Docker network
-sudo docker inspect simshop-web -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}'
-sudo docker inspect simshop-backend -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}'
+docker inspect simshop-web -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}'
+docker inspect simshop-backend -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}'
 ```
 
 Sửa trên dashboard:
+
 - Vào tunnel → tab **Configured** → click hostname → đổi **Service**
   thành `http://backend:8080` (BE) hoặc `http://web:80` (FE).
 
 Cloudflare tunnel auto-reload config, không cần restart container.
 
-### Nếu FE vẫn gọi `localhost:8080` sau khi rebuild
+### Nếu FE vẫn load code cũ sau khi rebuild
 
 Đây là vấn đề **Cloudflare cache file cũ**. Container `web` đã serve
 file mới nhưng Cloudflare CDN cache theo `max-age=1y` của Flutter
@@ -186,7 +390,7 @@ asset, ignore `Cache-Control: no-cache` từ nginx.
 **Cách fix nhanh** (mỗi lần update FE):
 
 1. Vào Cloudflare dashboard → Caching → **Purge Cache** →
-   "Custom Purge" → nhập URL `https://testweb.dvthang.qzz.io/main.dart.js`
+   "Custom Purge" → nhập URL `https://<your-fe-domain>/main.dart.js`
    → Purge.
 
 **Cách fix vĩnh viễn** (khuyến nghị cho production):
@@ -203,7 +407,9 @@ asset, ignore `Cache-Control: no-cache` từ nginx.
 Sau khi rule active, mọi `docker compose build web` mới sẽ được user
 nhận ngay (không cần purge thủ công).
 
-## Test thường gặp
+---
+
+## Common test scenarios
 
 ### Health check toàn stack
 
@@ -256,10 +462,20 @@ docker compose -f docker/compose.yaml exec postgres \
   psql -U $POSTGRES_USER -d $POSTGRES_DB -c "SELECT count(*) FROM products;"
 ```
 
+### Test admin auth end-to-end (qua Cloudflare URL)
+
+```bash
+cd backend
+# Update admincurl's baseURL temporarily, or run from a machine that
+# can resolve the Cloudflare hostname. Then:
+go run ./cmd/admincurl
+# → walks challenge / verify / create product qua https://api.<domain>
+```
+
 ### Rebuild sau khi sửa code
 
 ```bash
-# Backend (Go)
+# Backend (Go) — build nhanh (~30s)
 docker compose -f docker/compose.yaml build backend
 docker compose -f docker/compose.yaml up -d backend
 
@@ -268,9 +484,11 @@ docker compose -f docker/compose.yaml build web
 docker compose -f docker/compose.yaml up -d web
 ```
 
+---
+
 ## Cross-OS notes
 
-### Windows
+### Windows (with WSL2)
 
 - Đường dẫn file dùng `/` (forward slash) cho Linux-side mount
   (`./initdb`, `./cloudflared-config.yml`) — Docker Desktop tự map
@@ -278,27 +496,44 @@ docker compose -f docker/compose.yaml up -d web
 - `docker compose` (không phải `docker-compose`) cần WSL2 backend,
   xem [Docker Desktop WSL2](https://docs.docker.com/desktop/wsl/).
 - Line endings trong `.env` không quan trọng — Docker tự parse.
+- Run all commands from a WSL2 shell, not PowerShell or CMD.
 
 ### Linux
 
-- Nếu chạy Docker với `rootless` mode, volume path sẽ nằm trong
-  `~/.local/share/docker/volumes/` thay vì `/var/lib/docker/volumes/`.
+- If running Docker with `rootless` mode, volume paths live under
+  `~/.local/share/docker/volumes/` instead of `/var/lib/docker/volumes/`.
 - Không cần `chmod` UID 999 vì dùng **named volume** (không bind-mount
   vào host filesystem).
+- SELinux: if you see `permission denied` on volume mounts, run
+  `:z` or `:Z` on the volume mount. We don't bind-mount, so this
+  doesn't apply.
 
-## Khi nào cần rebuild image
+### macOS
 
-| Thay đổi                  | Cần rebuild?                              |
-| ------------------------- | ----------------------------------------- |
-| Sửa Go code trong `backend/` | `build backend` + `up -d backend`     |
-| Sửa Flutter code trong `lib/` | `build web` + `up -d web`             |
+- Docker Desktop with the new `docker buildx` works out of the box.
+- No `sudo` required (Docker Desktop adds the user to the `docker`
+  group during install).
+
+---
+
+## When to rebuild
+
+| Thay đổi | Cần rebuild? |
+| -------- | ------------ |
+| Sửa Go code trong `backend/` | `build backend` + `up -d backend` |
+| Sửa Flutter code trong `lib/` | `build web` + `up -d web` |
 | Đổi `BE_PUBLIC_URL` / `API_BASE_URL` | `build web` (Flutter build-time only) |
-| Đổi `nginx.conf`          | `build web`                                |
-| Đổi `POSTGRES_PASSWORD`   | Không — chỉ restart `postgres`            |
-| Đổi `ADMIN_PUBLIC_KEY`    | Không — chỉ restart `backend`             |
-| Đổi `CF_TUNNEL_TOKEN`     | Không — chỉ restart `cloudflared`         |
-| Đổi `IMAGE_TAG`           | `build` + `up -d` để image mới replace     |
-| Đổi `initdb/01-schema.sql` | Cẩn thận — chỉ chạy 1 lần volume trống  |
+| Đổi `nginx.conf` | `build web` |
+| Đổi `Dockerfile.backend` / `Dockerfile.web` | `build backend` / `build web` |
+| Đổi `compose.yaml` (resource limits, depends_on) | `up -d` (compose re-creates affected services) |
+| Đổi `initdb/01-schema.sql` | **Cẩn thận** — chỉ chạy 1 lần volume trống. Reset volume để re-init. |
+| Đổi `POSTGRES_PASSWORD` | Không — chỉ restart `postgres` |
+| Đổi `ADMIN_PUBLIC_KEY` | Không — chỉ restart `backend` |
+| Đổi `ALLOWED_ORIGIN` | Không — chỉ restart `backend` |
+| Đổi `CF_TUNNEL_TOKEN` | Không — chỉ restart `cloudflared` |
+| Đổi `IMAGE_TAG` | `build` + `up -d` để image mới replace |
+
+---
 
 ## Troubleshooting
 
@@ -311,10 +546,24 @@ docker compose -f docker/compose.yaml logs postgres | tail
 docker compose -f docker/compose.yaml exec backend env | grep DATABASE_URL
 ```
 
+Sửa bằng cách tăng `DB_RETRY_ATTEMPTS` và `DB_RETRY_INTERVAL_MS`
+trong `docker/.env` rồi `up -d backend`.
+
+### Backend log "ADMIN_PUBLIC_KEY is empty in production"
+
+Compose đã truyền `ADMIN_PUBLIC_KEY` qua env, nhưng giá trị rỗng.
+Kiểm tra `docker/.env` đã điền biến này chưa (`docker compose config`
+in ra config resolved).
+
 ### Cloudflare tunnel "no such host"
 
 `cloudflared-config.yml` chưa thay `<TUNNEL_ID>`, hoặc `CF_TUNNEL_TOKEN`
 không khớp tunnel ID trên dashboard. Lấy lại từ dashboard.
+
+### Cloudflare "Unable to reach origin: connection refused"
+
+Ingress rule trên dashboard trỏ sai service URL. Xem
+[Cloudflare setup](#nếu-gặp-lỗi-unable-to-reach-origin-connection-refused).
 
 ### Schema init không chạy
 
@@ -336,31 +585,66 @@ docker compose -f docker/compose.yaml up -d
 - `BE_PUBLIC_URL` rỗng → Flutter dùng `http://localhost:8080` →
   browser không gọi được khi truy cập qua Cloudflare. **Luôn đặt
   `BE_PUBLIC_URL` thành URL Cloudflare của BE.**
+- Cloudflare CDN caching stale JS — xem
+  [nếu FE vẫn load code cũ](#nếu-fe-vẫn-load-code-cũ-sau-khi-rebuild).
 
-## License
+### Container restart loop
 
-Cùng license với phần còn lại của dự án.
+```bash
+# Xem exit code + last log
+docker compose -f docker/compose.yaml ps
+docker compose -f docker/compose.yaml logs --tail=50 <service>
+```
 
-## Production rollout
+Common culprits: missing required env var (compose should have caught
+this — verify with `docker compose config`), bad volume permissions
+(rare — we use named volumes), port conflict on host (we don't
+publish ports, so this shouldn't happen).
 
-Stack đã build sẵn theo hướng production: BE strip debug + non-root,
-FE `--release`, Nginx có security headers, mọi service `restart:
-unless-stopped`. Phần này tổng hợp checklist + cách cập nhật an toàn.
+### Out of disk space
 
-### Checklist trước khi deploy
+Docker build cache + image layers add up. Clean up:
 
-- [ ] `POSTGRES_PASSWORD` đã đổi từ placeholder (khác rỗng).
-- [ ] `ADMIN_PUBLIC_KEY` đã set (hex 64 chars).
-- [ ] `ALLOWED_ORIGIN` đã trỏ về URL Cloudflare của FE.
+```bash
+docker system df                              # see what's using space
+docker image prune -a                         # remove unused images
+docker builder prune                          # remove build cache
+docker volume prune                           # remove unused volumes (CAREFUL)
+```
+
+Old images with explicit `IMAGE_TAG` are **kept** until `docker image
+prune` — that's intentional, to enable rollback.
+
+---
+
+## Production rollout checklist
+
+Trước khi deploy:
+
+- [ ] `POSTGRES_PASSWORD` đã đổi từ placeholder (khác rỗng, mạnh).
+- [ ] `ADMIN_PUBLIC_KEY` đã set (hex 64 chars, lấy từ `go run ./cmd/keygen`).
+- [ ] `ALLOWED_ORIGIN` đã trỏ về URL Cloudflare của FE (không có trailing slash).
 - [ ] `BE_PUBLIC_URL` đã trỏ về URL Cloudflare của BE.
 - [ ] `CF_TUNNEL_TOKEN` đã paste từ Cloudflare dashboard.
 - [ ] `IMAGE_TAG` đã set thành git SHA (hoặc build number) — tránh
-  `latest` cho rollout để có thể rollback.
+      `latest` cho rollout để có thể rollback.
 - [ ] Cloudflare dashboard đã khai 2 ingress với service URL
-  `http://backend:8080` và `http://web:80` (xem phần Cloudflare setup).
+      `http://backend:8080` và `http://web:80` (xem phần Cloudflare setup).
+- [ ] Cloudflare Cache Rules đã tạo cho `main.dart.js`,
+      `flutter_bootstrap.js`, `main.dart.wasm` (Bypass cache) — tránh
+      phải purge thủ công mỗi deploy.
 - [ ] File `docker/.env` KHÔNG commit (đã có trong `.gitignore`).
+- [ ] `admin.key` được backup offline (USB, password manager) —
+      nếu mất, không có cách nào khôi phục admin access.
+
+---
+
+## Rolling update & rollback
 
 ### Rolling update (BE / FE)
+
+Không cần `down` — compose replace container, volume Postgres + uploads
+giữ nguyên.
 
 ```bash
 # Cập nhật IMAGE_TAG trong docker/.env trước
@@ -373,9 +657,6 @@ docker compose -f docker/compose.yaml --env-file docker/.env \
 docker compose -f docker/compose.yaml --env-file docker/.env \
     up -d backend         # zero-downtime: rolling replace
 ```
-
-Không cần `down` — compose replace container, volume Postgres + uploads
-giữ nguyên.
 
 ### Rollback
 
@@ -393,3 +674,23 @@ docker compose -f docker/compose.yaml --env-file docker/.env \
 
 Image cũ KHÔNG bị xóa cho đến khi `docker image prune` thủ công →
 giữ nguyên trên host để rollback nhanh.
+
+### Rollback nếu schema mới đã apply
+
+Nếu migration đã chạy trong `initdb/01-schema.sql` (hoặc qua admin
+panel) rồi mới rollback BE image, **dữ liệu có thể không tương
+thích** với code cũ. Hai lựa chọn:
+
+1. Restore DB từ backup trước deploy:
+   ```bash
+   docker compose -f docker/compose.yaml down
+   ./docker/backup.sh restore ./data/simshop-<pre-deploy>.sql
+   docker compose -f docker/compose.yaml up -d
+   ```
+2. Forward-fix (viết migration tương thích ngược rồi deploy lại).
+
+---
+
+## License
+
+Cùng license với phần còn lại của dự án (MIT).
