@@ -28,6 +28,20 @@ enum _SaleStateKind {
 }
 
 /// A single row in the admin product list.
+///
+/// Layout strategy:
+///   • On tablet/desktop there's room for the inline stock stepper
+///     + Edit + Delete next to the body — keeps each row compact in
+///     the vertical dimension (one logical row per product, easy to
+///     scan).
+///   • On mobile (<600dp) the same trailing widget group is wider
+///     than the leftover content space after the 80dp image +
+///     padding. Forcing it inline used to crush the title to
+///     "Tai n..." and squeeze the option-chip Wrap down to a single
+///     chip per row (with text breaking mid-word, e.g. "Optio / n3").
+///     On mobile we drop the actions under the body instead so the
+///     title and chips get the full available width and the chips
+///     reflow horizontally.
 class ProductListTile extends StatelessWidget {
   const ProductListTile({
     super.key,
@@ -41,48 +55,85 @@ class ProductListTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
+    final isMobile = context.isMobile;
+    final actions = _buildActions(context, scheme);
+
     return Card(
       margin: EdgeInsets.only(
         bottom: context.responsive<double>(mobile: 8, tablet: 10, desktop: 12),
       ),
-      child: ListTile(
-        leading: _ProductImage(imageUrl: product.imageUrl),
-        title: Text(
-          product.name,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-        ),
-        subtitle: _ProductSubtitle(product: product),
-        trailing: Row(
-          mainAxisSize: MainAxisSize.min,
+      // Use a Padding+Row layout (instead of ListTile) so we can
+      // move the actions row to a second line on mobile while
+      // keeping the standard `Card` chrome. ListTile bakes its
+      // trailing into the same row as the body, with no built-in
+      // way to flow it under on narrow widths.
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Quick +/- stock stepper sits to the LEFT of Edit so
-            // admins can nudge inventory without opening the full
-            // product-edit dialog. The whole widget is rebuilt
-            // whenever the VM notifies (because we read
-            // `product.stock` from the row's copy); the optimistic
-            // update path in [AdminViewModel.quickAdjustStock]
-            // handles the round-trip / revert.
-            _StockStepper(
-              product: product,
-              viewModel: viewModel,
+            _ProductImage(imageUrl: product.imageUrl),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _TitleAndPrice(product: product),
+                  if (product.options.isNotEmpty) ...[
+                    const SizedBox(height: 6),
+                    _OptionChips(options: product.options),
+                  ],
+                  if (isMobile) ...[
+                    const SizedBox(height: 8),
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: actions,
+                    ),
+                  ],
+                ],
+              ),
             ),
-            IconButton(
-              tooltip: 'Sửa',
-              icon: Icon(Icons.edit, color: scheme.primary),
-              onPressed: () =>
-                  showEditProductDialog(context, viewModel, product),
-            ),
-            IconButton(
-              tooltip: 'Xoá',
-              icon: Icon(Icons.delete, color: scheme.error),
-              onPressed: () => _showDeleteConfirm(context),
-            ),
+            if (!isMobile) ...[
+              const SizedBox(width: 8),
+              actions,
+            ],
           ],
         ),
       ),
     );
   }
+
+  /// Inline stock stepper + Edit + Delete. Wrapped in a single
+  /// builder so we can render the same widget group inline on
+  /// tablet/desktop and under the body on mobile (see
+  /// [ProductListTile.build]).
+  Widget _buildActions(BuildContext context, ColorScheme scheme) => Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // Quick +/- stock stepper sits to the LEFT of Edit so
+          // admins can nudge inventory without opening the full
+          // product-edit dialog. The whole widget is rebuilt
+          // whenever the VM notifies (because we read
+          // `product.stock` from the row's copy); the optimistic
+          // update path in [AdminViewModel.quickAdjustStock]
+          // handles the round-trip / revert.
+          _StockStepper(
+            product: product,
+            viewModel: viewModel,
+          ),
+          IconButton(
+            tooltip: 'Sửa',
+            icon: Icon(Icons.edit, color: scheme.primary),
+            onPressed: () =>
+                showEditProductDialog(context, viewModel, product),
+          ),
+          IconButton(
+            tooltip: 'Xoá',
+            icon: Icon(Icons.delete, color: scheme.error),
+            onPressed: () => _showDeleteConfirm(context),
+          ),
+        ],
+      );
 
   void _showDeleteConfirm(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
@@ -157,80 +208,77 @@ class _ProductImage extends StatelessWidget {
   }
 }
 
-class _ProductSubtitle extends StatelessWidget {
-  const _ProductSubtitle({required this.product});
+/// First line of the row body: product name on the LEFT (Expanded
+/// so a long Vietnamese name ellipsizes instead of overflowing),
+/// price + (optional) sale pill on the RIGHT.
+///
+/// Why split title and price across the row instead of stacking
+/// them: on mobile the title can be long ("Tai nghe Bluetooth
+/// chống ồn chủ động") and stacking the price below makes the row
+/// feel tall. Putting the price to the right of the title keeps
+/// the row to one logical line of info, which matches what
+/// grocery/retail admin tables do.
+///
+/// When a discount is active the pill carries the exact promotional
+/// numbers; when nothing is on sale the row just shows the base
+/// price with no extra chrome.
+///
+/// Trailing cluster is wrapped in [Flexible] (with `fit: loose`) so
+/// on extremely narrow viewports — including the default Flutter
+/// test viewport of 800×600 — the pill can shrink and ellipsize
+/// the event-name detail instead of overflowing the row. The title
+/// still wins the budget via its [Expanded]; if both have to
+/// squeeze, the pill's internal `Flexible(detail)` clips first.
+class _TitleAndPrice extends StatelessWidget {
+  const _TitleAndPrice({required this.product});
   final Product product;
 
-  /// Render the subtitle: price + (optionally) a discount pill
-  /// describing *why* the price differs from the base.
-  ///
-  /// The pill slot used to carry "Tồn kho: N" but the inline
-  /// stock stepper in the trailing row already owns stock info;
-  /// sale state is the more actionable signal for admins — the
-  /// question they ask most when scanning the list is "which of
-  /// these is currently on promotion".
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      mainAxisSize: MainAxisSize.min,
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.center,
       children: [
-        Row(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.center,
-          children: [
-            // Always render the base price. When a discount is
-            // active the pill on the right carries the exact
-            // promotional numbers; when nothing is on sale the
-            // row just shows the base price with no extra chrome.
-            Text(
-              formatCurrency(product.price),
-              style: TextStyle(
-                fontSize: 12,
-                color: scheme.onSurfaceVariant,
-              ),
-            ),
-            if (_kind(product) != _SaleStateKind.none) ...[
-              const SizedBox(width: 8),
-              Flexible(child: _SalePill(product: product)),
-            ],
-          ],
-        ),
-        if (product.options.isNotEmpty) ...[
-          const SizedBox(height: 6),
-          Wrap(
-            spacing: 6,
-            runSpacing: 4,
-            children: product.options
-                .where((o) => o.name.isNotEmpty)
-                .take(4)
-                .map(
-                  (o) => Container(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 8, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: scheme.secondaryContainer,
-                      borderRadius: BorderRadius.circular(999),
-                    ),
-                    child: Text(
-                      o.name,
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: scheme.onSecondaryContainer,
-                      ),
-                    ),
-                  ),
-                )
-                .toList(),
+        Expanded(
+          child: Text(
+            product.name,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                  fontWeight: FontWeight.w600,
+                  color: scheme.onSurface,
+                ),
           ),
-        ],
+        ),
+        const SizedBox(width: 8),
+        // Flexible so a long event name in the pill can't push the
+        // title off-screen on narrow widths. The pill itself is
+        // already soft (its detail text uses Flexible+ellipsis).
+        Flexible(
+          fit: FlexFit.loose,
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                formatCurrency(product.price),
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w500,
+                  color: scheme.onSurfaceVariant,
+                ),
+              ),
+              if (_kind(product) != _SaleStateKind.none) ...[
+                const SizedBox(width: 6),
+                Flexible(child: _SalePill(product: product)),
+              ],
+            ],
+          ),
+        ),
       ],
     );
   }
 
-  /// Decide which [Widget] (if any) the subtitle's right-hand slot
-  /// should render.
+  /// Decide which [Widget] (if any) the right-hand slot should render.
   ///
   /// Event wins over manual: a product can be both (manual discount
   /// + active event) but the event is the live, server-validated
@@ -242,6 +290,52 @@ class _ProductSubtitle extends StatelessWidget {
       return _SaleStateKind.manual;
     }
     return _SaleStateKind.none;
+  }
+}
+
+/// Option-chip strip. Renders as a [Wrap] so chips reflow
+/// horizontally to fit the row width.
+///
+/// Previous bug: when this lived inside [ListTile.subtitle] it
+/// shared horizontal space with the price+title, and on mobile it
+/// was crushed to ~80dp wide → chips fell one-per-row and the
+/// internal [Text] broke long Vietnamese names mid-word ("Optio / n3").
+/// Now that the chip wrap gets the full body width, each chip can
+/// sit on a single line in the wrap, eliminating the mid-word
+/// breaks.
+class _OptionChips extends StatelessWidget {
+  const _OptionChips({required this.options});
+  final List<Option> options;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Wrap(
+      spacing: 6,
+      runSpacing: 4,
+      children: options
+          .where((o) => o.name.isNotEmpty)
+          .take(4)
+          .map(
+            (o) => Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+              decoration: BoxDecoration(
+                color: scheme.secondaryContainer,
+                borderRadius: BorderRadius.circular(999),
+              ),
+              child: Text(
+                o.name,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 11,
+                  color: scheme.onSecondaryContainer,
+                ),
+              ),
+            ),
+          )
+          .toList(),
+    );
   }
 }
 

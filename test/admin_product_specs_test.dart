@@ -82,6 +82,7 @@ class _CapturingAdminViewModel extends AdminViewModel {
     Product product, {
     dynamic imageFile,
     List<String>? removedImageUrls,
+    List<String>? imageOrder,
   }) async {
     lastSubmitted = product;
   }
@@ -98,6 +99,7 @@ class _AddCapturingAdminViewModel extends AdminViewModel {
     Product product, {
     dynamic imageFile,
     List<String>? removedImageUrls,
+    List<String>? imageOrder,
   }) async {
     lastCreated = product;
   }

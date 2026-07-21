@@ -1,7 +1,6 @@
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
 import '../../../models/product.dart';
 import '../../../utils/responsive.dart';
@@ -33,10 +32,15 @@ class _AddProductDialogState extends State<AddProductDialog> {
   final GlobalKey<MarkdownSplitEditorState> _descriptionKey =
       GlobalKey<MarkdownSplitEditorState>();
 
-  final List<XFile> _selectedImages = [];
-  final List<Uint8List> _selectedImagesBytes = [];
-  File? _imageFile;
-  Uint8List? _imageFileBytes;
+  /// Ordered list of newly-picked images. There are no existing
+  /// images on the create path, so every entry is a
+  /// [GalleryNewImage]. Kept as a list (rather than separate
+  /// `XFile` + `Uint8List` arrays) so the same drag-reorder UX as
+  /// the Edit dialog works without branching on the data shape.
+  /// `final` because every mutation goes through setState with a
+  /// freshly-allocated list, keeping the widget consistent with
+  /// the standard "immutable state" rule.
+  final List<GalleryItem> _gallery = <GalleryItem>[];
 
   List<String> _selectedCategories = [];
   List<Option> _options = [];
@@ -58,16 +62,31 @@ class _AddProductDialogState extends State<AddProductDialog> {
     final (images, bytes) = await pickMultipleImages();
     if (images.isEmpty) return;
     setState(() {
-      _selectedImages.addAll(images);
-      if (kIsWeb) {
-        _selectedImagesBytes.addAll(bytes);
-        _imageFile = null;
-        _imageFileBytes =
-            _selectedImagesBytes.isNotEmpty ? _selectedImagesBytes.first : null;
-      } else {
-        _imageFile = File(_selectedImages.first.path);
-        _imageFileBytes = null;
-      }
+      final added = [
+        for (var i = 0; i < images.length; i++)
+          GalleryNewImage(xfile: images[i], bytes: bytes[i]),
+      ];
+      // Allocate a fresh list so the `final _gallery` field stays
+      // immutable across rebuilds.
+      _gallery
+        ..clear()
+        ..addAll(added);
+    });
+  }
+
+  void _onReorder(int oldIndex, int newIndex) {
+    setState(() {
+      // Standard `List.move` semantics matching the
+      // `onReorderItem` contract: `newIndex` is already the
+      // post-removal slot.
+      final moved = _gallery.removeAt(oldIndex);
+      _gallery.insert(newIndex, moved);
+    });
+  }
+
+  void _onRemoveAt(int index) {
+    setState(() {
+      _gallery.removeAt(index);
     });
   }
 
@@ -92,13 +111,34 @@ class _AddProductDialogState extends State<AddProductDialog> {
     }
 
     final stock = int.tryParse(_stockController.text.trim()) ?? 0;
+
+    // Pre-upload every new image in the order the admin arranged
+    // them, then build an [imageOrder] that mirrors the gallery
+    // slots. Index 0 becomes the cover image.
+    final imageOrder = <String>[];
+    for (final item in _gallery) {
+      if (item is! GalleryNewImage) continue;
+      final url = await widget.viewModel.uploadImage(
+        kIsWeb ? item.bytes : File(item.xfile.path),
+        productName: name,
+      );
+      if (url == null) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Lỗi tải ảnh lên máy chủ')),
+        );
+        return;
+      }
+      imageOrder.add(url);
+    }
+
     final newProduct = Product(
       id: '',
       name: name,
       description: description,
       price: price,
       originalPrice: null,
-      imageUrl: '',
+      imageUrl: imageOrder.isNotEmpty ? imageOrder.first : '',
       category:
           _selectedCategories.isNotEmpty ? _selectedCategories.first : 'All',
       categories: _selectedCategories,
@@ -107,19 +147,21 @@ class _AddProductDialogState extends State<AddProductDialog> {
       stock: stock,
       specs: _specs,
       options: _options,
+      images: imageOrder,
     );
 
+    // `imageOrder` is already authoritative on the create path —
+    // every image was just uploaded by us. Pass `null` for
+    // [imageFile] so the VM doesn't try to upload a second time.
     await widget.viewModel.addProduct(
       newProduct,
-      imageFile: _selectedImages.isNotEmpty
-          ? (kIsWeb
-              ? _selectedImagesBytes
-              : _selectedImages.map((e) => File(e.path)).toList())
-          : (_imageFile ?? _imageFileBytes),
+      imageFile: null,
+      imageOrder: imageOrder,
     );
 
-    if (context.mounted) await context.read<HomeViewModel>().initialize();
-    if (!context.mounted) return;
+    if (!mounted) return;
+    await context.read<HomeViewModel>().initialize();
+    if (!mounted) return;
 
     Navigator.pop(context);
     ScaffoldMessenger.of(context).showSnackBar(
@@ -128,7 +170,8 @@ class _AddProductDialogState extends State<AddProductDialog> {
   }
 
   @override
-  Widget build(BuildContext context) => AlertDialog(
+  Widget build(BuildContext context) {
+    return AlertDialog(
       title: const Text('Thêm sản phẩm mới'),
       content: ConstrainedBox(
         constraints: BoxConstraints(maxWidth: context.dialogWidth),
@@ -137,14 +180,14 @@ class _AddProductDialogState extends State<AddProductDialog> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // Image picker
+              // Image picker — single ordered list so the admin can
+              // drag-reorder before submit, and the first slot
+              // becomes the cover.
               ImagePickerGrid(
-                newImagesBytes: _selectedImagesBytes,
+                items: _gallery,
                 onPickImages: _pickImages,
-                onRemoveNewImage: (i) => setState(() {
-                  _selectedImages.removeAt(i);
-                  _selectedImagesBytes.removeAt(i);
-                }),
+                onRemoveAt: _onRemoveAt,
+                onReorder: _onReorder,
               ),
               const SizedBox(height: 12),
 
@@ -198,12 +241,18 @@ class _AddProductDialogState extends State<AddProductDialog> {
               ),
               const SizedBox(height: 12),
 
-              // Options (variants) — shared editor with Edit so the layout
-              // (IntrinsicHeight alignment, image strip) matches.
+              // Options (variants) — shared editor with Edit so the
+              // layout (IntrinsicHeight alignment, image strip)
+              // matches. The "available" pool is the freshly-picked
+              // bytes only — there are no existing URLs on the
+              // create path.
               OptionsEditorWithImages(
                 options: _options,
                 existingImages: const [],
-                newImageBytes: _selectedImagesBytes,
+                newImageBytes: _gallery
+                    .whereType<GalleryNewImage>()
+                    .map((e) => e.bytes)
+                    .toList(),
                 onChanged: (opts) => setState(() => _options = opts),
               ),
             ],
@@ -221,4 +270,5 @@ class _AddProductDialogState extends State<AddProductDialog> {
         ),
       ],
     );
+  }
 }

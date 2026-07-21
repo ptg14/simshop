@@ -1,7 +1,6 @@
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
 import '../../../models/product.dart';
 import '../../../utils/responsive.dart';
@@ -51,17 +50,22 @@ class _EditProductDialogState extends State<EditProductDialog> {
   final GlobalKey<MarkdownSplitEditorState> _descriptionKey =
       GlobalKey<MarkdownSplitEditorState>();
 
-  final List<XFile> _selectedImages = [];
-  final List<Uint8List> _selectedImagesBytes = [];
-  late List<String> _existingImages;
-  // URLs the admin removed from the existing gallery during this
-  // edit session. Forwarded to the backend on submit, which
-  // best-effort deletes the underlying files from /uploads/ after
-  // the DB UPDATE commits (see RealProductService.updateProduct).
-  // We snapshot the URL at removal time so the dialog can
-  // `removeAt(j)` from `_existingImages` and still hand the
-  // backend the original (post-rename, post-CDN) URL.
+  /// Single ordered list of every image in the gallery — already-uploaded
+  /// URLs first, then freshly-picked bytes the admin added this session.
+  /// Order is preserved through any drag-reorder; the parent builds
+  /// `images` (for the backend) and `imageFile` (for upload) from this
+  /// list at submit time.
+  late List<GalleryItem> _gallery;
+
+  /// URLs the admin removed from the existing gallery during this
+  /// edit session. Forwarded to the backend on submit, which
+  /// best-effort deletes the underlying files from /uploads/ after
+  /// the DB UPDATE commits (see RealProductService.updateProduct).
+  /// We snapshot the URL at removal time so the dialog can drop the
+  /// entry from [_gallery] and still hand the backend the original
+  /// (post-rename, post-CDN) URL.
   final List<String> _removedImageUrls = [];
+
   late List<String> _selectedCategories;
   late List<Option> _options;
   // Specs editor state. Seeded from product.specs in initState so a
@@ -80,7 +84,16 @@ class _EditProductDialogState extends State<EditProductDialog> {
     _stockController =
         TextEditingController(text: p.stock?.toString() ?? '0');
 
-    _existingImages = List<String>.from(p.images);
+    // Seed the gallery with every existing image, in order. The
+    // product's `images` list is the source of truth on entry; if
+    // the server only filled in `image_url` (legacy / no gallery),
+    // synthesise a one-item list so the admin can still reorder.
+    _gallery = p.images.isNotEmpty
+        ? p.images.map(GalleryExistingImage.new).toList()
+        : (p.imageUrl.isNotEmpty
+            ? [GalleryExistingImage(p.imageUrl)]
+            : <GalleryItem>[]);
+
     _selectedCategories = p.categories.isNotEmpty
         ? List<String>.from(p.categories)
         : (p.category.isNotEmpty ? [p.category] : []);
@@ -100,11 +113,31 @@ class _EditProductDialogState extends State<EditProductDialog> {
     final (images, bytes) = await pickMultipleImages();
     if (images.isEmpty) return;
     setState(() {
-      _selectedImages.addAll(images);
-      if (kIsWeb) {
-        _selectedImagesBytes.addAll(bytes);
-      } else {
-        // Mobile: bytes stay empty; File path used at upload time
+      for (var i = 0; i < images.length; i++) {
+        _gallery.add(GalleryNewImage(xfile: images[i], bytes: bytes[i]));
+      }
+    });
+  }
+
+  void _onReorder(int oldIndex, int newIndex) {
+    setState(() {
+      // Standard `List.move` semantics matching the
+      // `onReorderItem` contract: the `newIndex` we receive is the
+      // post-removal slot, so a direct insert works.
+      final moved = _gallery.removeAt(oldIndex);
+      _gallery.insert(newIndex, moved);
+    });
+  }
+
+  void _onRemoveAt(int index) {
+    setState(() {
+      final removed = _gallery.removeAt(index);
+      // Track removed URL for backend cleanup. Only
+      // [GalleryExistingImage] carries a server-side URL —
+      // [GalleryNewImage] hasn't been uploaded yet, so there is
+      // nothing for the backend to delete.
+      if (removed is GalleryExistingImage) {
+        _removedImageUrls.add(removed.url);
       }
     });
   }
@@ -130,6 +163,46 @@ class _EditProductDialogState extends State<EditProductDialog> {
     }
 
     final stock = int.tryParse(_stockController.text.trim()) ?? 0;
+
+    // Pre-upload any new bytes so we can build a single ordered
+    // `imageOrder` that the VM will write to `images` verbatim.
+    // Without this the VM appends new URLs to the end of
+    // `existingUrls`, losing the order the admin set on the dialog.
+    final imageOrder = List<String>.filled(_gallery.length, '');
+    for (var i = 0; i < _gallery.length; i++) {
+      final item = _gallery[i];
+      if (item is GalleryExistingImage) {
+        imageOrder[i] = item.url;
+      }
+    }
+    for (final newImg in _gallery.whereType<GalleryNewImage>()) {
+      final url = await widget.viewModel.uploadImage(
+        kIsWeb ? newImg.bytes : File(newImg.xfile.path),
+        productName: widget.product.name.isNotEmpty
+            ? widget.product.name
+            : name,
+        productId: widget.product.id,
+      );
+      if (url == null) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Lỗi tải ảnh lên máy chủ')),
+        );
+        return;
+      }
+      // Fill the slot of the matching new image. The first match
+      // wins because each new image is unique by xfile+bytes.
+      final slot = _gallery.indexOf(newImg);
+      if (slot >= 0 && slot < imageOrder.length) {
+        imageOrder[slot] = url;
+      }
+    }
+
+    // Safety net: any slot the upload loop missed (shouldn't
+    // happen, but a null URL could land us here) gets dropped
+    // instead of producing a `null` in the URL list.
+    final cleanOrder = imageOrder.where((u) => u.isNotEmpty).toList();
+
     final updated = widget.product.copyWith(
       name: name,
       price: price,
@@ -150,14 +223,7 @@ class _EditProductDialogState extends State<EditProductDialog> {
       specs: _specs,
     );
 
-    dynamic imageFile;
-    if (_selectedImages.isNotEmpty) {
-      imageFile = kIsWeb
-          ? _selectedImagesBytes
-          : _selectedImages.map((e) => File(e.path)).toList();
-    }
-
-    // The admin can drop an image from [_existingImages] (which adds
+    // The admin can drop an image from the gallery (which adds
     // the URL to [_removedImageUrls] for backend cleanup) without
     // explicitly un-toggling that URL inside every option that
     // references it — the option's row loses the thumb, so the toggle
@@ -180,22 +246,37 @@ class _EditProductDialogState extends State<EditProductDialog> {
                 ))
             .toList();
 
+    // Cover image: the first slot of [imageOrder] (which we just
+    // built in gallery order). When the admin has removed every
+    // image we deliberately send an empty string so the backend
+    // clears `image_url` — falling back to `updated.imageUrl`
+    // would leave a stale URL on a product whose gallery is
+    // empty, and the backend has already deleted the file from
+    // /uploads/ (per [removedImageUrls]), so the leftover
+    // `image_url` would point at a 404.
+    final coverUrl = cleanOrder.isNotEmpty ? cleanOrder.first : '';
+
     final productWithImages = updated.copyWith(
-      images: _existingImages,
-      imageUrl:
-          _existingImages.isNotEmpty ? _existingImages.first : updated.imageUrl,
+      images: cleanOrder,
+      imageUrl: coverUrl,
       options: prunedOptions,
     );
 
+    // `imageFile` is plumbed through for any caller that still
+    // needs the raw bytes (e.g. the new-product flow). For an
+    // update we pre-uploaded everything above, so we pass `null`
+    // to skip the VM's append logic and use `imageOrder` instead.
     await widget.viewModel.updateProduct(
       widget.product.id,
       productWithImages,
-      imageFile: imageFile,
+      imageFile: null,
       removedImageUrls: _removedImageUrls,
+      imageOrder: cleanOrder,
     );
 
-    if (context.mounted) await context.read<HomeViewModel>().initialize();
-    if (!context.mounted) return;
+    if (!mounted) return;
+    await context.read<HomeViewModel>().initialize();
+    if (!mounted) return;
 
     Navigator.pop(context);
     ScaffoldMessenger.of(context).showSnackBar(
@@ -204,7 +285,8 @@ class _EditProductDialogState extends State<EditProductDialog> {
   }
 
   @override
-  Widget build(BuildContext context) => AlertDialog(
+  Widget build(BuildContext context) {
+    return AlertDialog(
       title: const Text('Cập nhật sản phẩm'),
       content: ConstrainedBox(
         constraints: BoxConstraints(maxWidth: context.dialogWidth),
@@ -213,23 +295,12 @@ class _EditProductDialogState extends State<EditProductDialog> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // Image picker (new + existing)
+              // Image picker (new + existing, single ordered list)
               ImagePickerGrid(
-                newImagesBytes: _selectedImagesBytes,
-                existingImages: _existingImages,
+                items: _gallery,
                 onPickImages: _pickImages,
-                onRemoveNewImage: (i) => setState(() {
-                  _selectedImages.removeAt(i);
-                  _selectedImagesBytes.removeAt(i);
-                }),
-                onRemoveExistingImage: (j) => setState(() {
-                  // Capture the URL *before* removing it from
-                  // [_existingImages] — once removed, the URL is
-                  // gone from local state and the backend can
-                  // only see it via [_removedImageUrls].
-                  _removedImageUrls.add(_existingImages[j]);
-                  _existingImages.removeAt(j);
-                }),
+                onRemoveAt: _onRemoveAt,
+                onReorder: _onReorder,
               ),
               const SizedBox(height: 12),
 
@@ -267,8 +338,7 @@ class _EditProductDialogState extends State<EditProductDialog> {
               const SizedBox(height: 12),
 
               // Specs editor — seeded from product.specs in
-              // initState, emitted back via copyWith on submit. Same
-              // slot as the Add dialog so the two layouts line up.
+              // initState, emitted back via copyWith on submit.
               SpecsEditor(
                 specs: _specs,
                 onChanged: (v) => setState(() => _specs = v),
@@ -278,7 +348,8 @@ class _EditProductDialogState extends State<EditProductDialog> {
               ProductCategoryPicker(
                 viewModel: widget.viewModel,
                 selectedCategories: _selectedCategories,
-                onChanged: (cats) => setState(() => _selectedCategories = cats),
+                onChanged: (cats) =>
+                    setState(() => _selectedCategories = cats),
               ),
               const SizedBox(height: 12),
 
@@ -286,8 +357,14 @@ class _EditProductDialogState extends State<EditProductDialog> {
               // (shared editor so Add and Edit share one layout).
               OptionsEditorWithImages(
                 options: _options,
-                existingImages: _existingImages,
-                newImageBytes: _selectedImagesBytes,
+                existingImages: _gallery
+                    .whereType<GalleryExistingImage>()
+                    .map((e) => e.url)
+                    .toList(),
+                newImageBytes: _gallery
+                    .whereType<GalleryNewImage>()
+                    .map((e) => e.bytes)
+                    .toList(),
                 onChanged: (opts) => setState(() => _options = opts),
               ),
             ],
@@ -305,4 +382,5 @@ class _EditProductDialogState extends State<EditProductDialog> {
         ),
       ],
     );
+  }
 }

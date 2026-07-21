@@ -528,8 +528,19 @@ class AdminViewModel extends ChangeNotifier {
   /// `updateProduct` until the matching fix there. Aligning the
   /// two methods keeps callers from having to remember a hidden
   /// behavioural difference between create and update.
+  ///
+  /// [imageOrder] is the explicit ordering for the resulting
+  /// `images` list. When supplied (e.g. by the dialog after a
+  /// drag-reorder) the VM writes it verbatim, mixing already-
+  /// uploaded URLs and freshly-uploaded URLs in the order the
+  /// admin chose. When `null` the VM falls back to the legacy
+  /// behaviour of "preserve existing `product.images` then append
+  /// the new uploads" — used by callers that don't care about
+  /// order.
   Future<void> addProduct(Product product,
-      {dynamic imageFile, List<String>? removedImageUrls}) async {
+      {dynamic imageFile,
+      List<String>? removedImageUrls,
+      List<String>? imageOrder}) async {
     _isLoading = true;
     _error = null;
     // Clear any stale "session expired" flag from a prior failure so
@@ -580,6 +591,23 @@ class AdminViewModel extends ChangeNotifier {
         }
       }
 
+      // Caller-supplied explicit ordering wins over the
+      // "preserve + append" default. The dialog passes this after a
+      // drag-reorder so newly-uploaded images can sit at the
+      // position the admin chose (including position 0 to become
+      // the cover), not at the tail of the list.
+      if (imageOrder != null) {
+        images
+          ..clear()
+          ..addAll(imageOrder);
+        // Caller-supplied order is authoritative for both the
+        // gallery and the cover: an empty [imageOrder] means the
+        // admin removed every image and we must clear [imageUrl]
+        // too — otherwise we'd leave a stale URL on a product
+        // whose gallery is empty.
+        imageUrl = images.isNotEmpty ? images.first : '';
+      }
+
       // Persist to backend and get the created product with real ID.
       // [removedImageUrls] is normally null/empty on create — there's
       // no pre-existing gallery to prune. The parameter is plumbed
@@ -622,8 +650,21 @@ class AdminViewModel extends ChangeNotifier {
   /// deletes each underlying file from /uploads/ after the DB UPDATE
   /// commits — see RealProductService.updateProduct for the body
   /// assembly.
+  ///
+  /// [imageOrder] is the explicit ordering for the resulting
+  /// `images` list. When supplied (e.g. by the dialog after a
+  /// drag-reorder) the VM writes it verbatim — already-uploaded
+  /// URLs and freshly-uploaded URLs in the order the admin chose.
+  /// When `null` the VM falls back to "preserve `product.images`
+  /// then append new uploads", the legacy behaviour for callers
+  /// that don't care about order. The dialog passes `null` for
+  /// [imageFile] alongside a populated [imageOrder] because it
+  /// has already uploaded the new bytes itself and just needs the
+  /// VM to persist the final list shape.
   Future<void> updateProduct(String id, Product product,
-      {dynamic imageFile, List<String>? removedImageUrls}) async {
+      {dynamic imageFile,
+      List<String>? removedImageUrls,
+      List<String>? imageOrder}) async {
     _isLoading = true;
     _error = null;
     _adminSessionExpired = false;
@@ -668,6 +709,26 @@ class AdminViewModel extends ChangeNotifier {
             if (imageUrl.isEmpty) imageUrl = url;
           }
         }
+      }
+
+      // Caller-supplied explicit ordering wins over the
+      // "preserve + append" default. The dialog passes this after a
+      // drag-reorder so newly-uploaded images can sit at the
+      // position the admin chose (including position 0 to become
+      // the cover), not at the tail of the list. The dialog also
+      // uploads new bytes itself in that case, so [imageFile] is
+      // typically `null` here and [imageOrder] is the source of
+      // truth for the final list.
+      if (imageOrder != null) {
+        images
+          ..clear()
+          ..addAll(imageOrder);
+        // Caller-supplied order is authoritative for both the
+        // gallery and the cover: an empty [imageOrder] means the
+        // admin removed every image and we must clear [imageUrl]
+        // too — otherwise we'd leave a stale URL on a product
+        // whose gallery is empty.
+        imageUrl = images.isNotEmpty ? images.first : '';
       }
 
       final updatedProduct =
