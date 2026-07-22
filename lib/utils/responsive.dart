@@ -11,32 +11,6 @@ class Breakpoints {
   static bool isDesktop(double width) => width >= desktop;
 }
 
-/// Responsive builder that provides layout info based on screen width.
-class ResponsiveBuilder extends StatelessWidget {
-  const ResponsiveBuilder({
-    super.key,
-    required this.mobile,
-    this.tablet,
-    this.desktop,
-  });
-
-  final Widget Function(BuildContext context) mobile;
-  final Widget Function(BuildContext context)? tablet;
-  final Widget Function(BuildContext context)? desktop;
-
-  @override
-  Widget build(BuildContext context) {
-    final width = MediaQuery.of(context).size.width;
-    if (width >= Breakpoints.desktop && desktop != null) {
-      return desktop!(context);
-    }
-    if (width >= Breakpoints.mobile && tablet != null) {
-      return tablet!(context);
-    }
-    return mobile(context);
-  }
-}
-
 /// Extension on [BuildContext] for quick responsive checks.
 extension ResponsiveContext on BuildContext {
   bool get isMobile => Breakpoints.isMobile(MediaQuery.of(this).size.width);
@@ -89,13 +63,6 @@ extension ResponsiveContext on BuildContext {
     if (isDesktop) return 48;
     if (isTablet) return 24;
     return 12;
-  }
-
-  /// Responsive card width for grids.
-  double get cardWidth {
-    if (isDesktop) return 280;
-    if (isTablet) return 220;
-    return double.infinity;
   }
 
   /// Responsive grid spacing.
@@ -167,13 +134,6 @@ extension ResponsiveContext on BuildContext {
     return 36;
   }
 
-  /// Responsive admin grid columns for stat cards.
-  int get adminGridColumns {
-    if (isDesktop) return 4;
-    if (isTablet) return 2;
-    return 2;
-  }
-
   /// Responsive dialog width.
   ///
   /// On mobile this caps the dialog at 360 so it doesn't run edge-to-edge.
@@ -193,12 +153,6 @@ extension ResponsiveContext on BuildContext {
 
   /// Whether to show a full navigation rail (desktop) vs compact (tablet).
   bool get useFullNavigationRail => screenWidth > 900;
-
-  /// Whether the device orientation is portrait.
-  bool get isPortrait => screenHeight > screenWidth;
-
-  /// Whether the device orientation is landscape.
-  bool get isLandscape => screenWidth > screenHeight;
 
   /// Responsive product detail image height.
   double get productDetailImageHeight => responsive<double>(
@@ -256,28 +210,4 @@ extension ResponsiveContext on BuildContext {
         tablet: 2,
         desktop: 4,
       );
-}
-
-/// Responsive SizedBox that adapts spacing based on screen size.
-class ResponsiveSpace extends StatelessWidget {
-  const ResponsiveSpace(
-      {super.key, this.mobile = 8, this.tablet = 16, this.desktop = 24});
-
-  final double mobile;
-  final double tablet;
-  final double desktop;
-
-  @override
-  Widget build(BuildContext context) {
-    final w = context.screenWidth;
-    double size;
-    if (w >= Breakpoints.desktop) {
-      size = desktop;
-    } else if (w >= Breakpoints.mobile) {
-      size = tablet;
-    } else {
-      size = mobile;
-    }
-    return SizedBox(height: size);
-  }
 }
