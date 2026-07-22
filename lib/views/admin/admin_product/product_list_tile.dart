@@ -390,8 +390,8 @@ class _SalePill extends StatelessWidget {
 
     return Semantics(
       label: kind == _SaleStateKind.event
-          ? 'Đang tham gia sự kiện ${product.currentEvent!.name} với giảm giá ${tag}'
-          : 'Giảm giá thủ công ${tag}',
+          ? 'Đang tham gia sự kiện ${product.currentEvent!.name} với giảm giá $tag'
+          : 'Giảm giá thủ công $tag',
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
         decoration: BoxDecoration(

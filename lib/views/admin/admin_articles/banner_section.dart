@@ -10,7 +10,7 @@ import 'banner_dialog.dart';
 // ---------------------------------------------------------------------------
 
 class BannerSection extends StatelessWidget {
-  const BannerSection({required this.banners, required this.vm});
+  const BannerSection({super.key, required this.banners, required this.vm});
 
   final List<BannerSlide> banners;
   final ArticlesViewModel vm;

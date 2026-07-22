@@ -37,8 +37,7 @@ class CategorySelector extends StatelessWidget {
   final ValueChanged<String> onSubToggled;
 
   @override
-  Widget build(BuildContext context) {
-    return Container(
+  Widget build(BuildContext context) => Container(
       margin: EdgeInsets.symmetric(
         vertical: context.responsive<double>(mobile: 8, tablet: 10, desktop: 12),
       ),
@@ -67,7 +66,6 @@ class CategorySelector extends StatelessWidget {
         ],
       ),
     );
-  }
 
   /// Single-select row (Large).
   Widget _buildRow({
@@ -75,8 +73,7 @@ class CategorySelector extends StatelessWidget {
     required List<String> items,
     required String selected,
     required ValueChanged<String> onSelected,
-  }) {
-    return SingleChildScrollView(
+  }) => SingleChildScrollView(
       scrollDirection: Axis.horizontal,
       padding: EdgeInsets.symmetric(horizontal: context.horizontalPadding),
       child: Row(
@@ -96,7 +93,6 @@ class CategorySelector extends StatelessWidget {
         ],
       ),
     );
-  }
 
   /// Multi-select row (subs). The tap is a toggle — the view-model
   /// decides whether the click adds or removes the entry.
@@ -105,8 +101,7 @@ class CategorySelector extends StatelessWidget {
     required List<String> items,
     required Set<String> selectedSubs,
     required ValueChanged<String> onToggled,
-  }) {
-    return SingleChildScrollView(
+  }) => SingleChildScrollView(
       scrollDirection: Axis.horizontal,
       padding: EdgeInsets.symmetric(horizontal: context.horizontalPadding),
       child: Row(
@@ -126,7 +121,6 @@ class CategorySelector extends StatelessWidget {
         ],
       ),
     );
-  }
 }
 
 /// A single tappable category pill.

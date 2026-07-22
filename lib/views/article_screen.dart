@@ -35,9 +35,7 @@ class _ArticleScreenState extends State<ArticleScreen> {
     _future = _load();
   }
 
-  Future<ArticleWithProducts?> _load() {
-    return context.read<IArticleService>().getArticle(widget.articleId);
-  }
+  Future<ArticleWithProducts?> _load() => context.read<IArticleService>().getArticle(widget.articleId);
 
   Future<void> _reload() async {
     setState(() {
@@ -47,8 +45,7 @@ class _ArticleScreenState extends State<ArticleScreen> {
   }
 
   @override
-  Widget build(BuildContext context) {
-    return Scaffold(
+  Widget build(BuildContext context) => Scaffold(
       appBar: AppBar(
         title: const Text('Bài viết'),
         centerTitle: true,
@@ -76,7 +73,6 @@ class _ArticleScreenState extends State<ArticleScreen> {
         },
       ),
     );
-  }
 }
 
 class _ArticleBody extends StatelessWidget {

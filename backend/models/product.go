@@ -25,8 +25,8 @@ type Product struct {
 
 // Option represents a product option/variant which may reference one of the product images.
 type Option struct {
-	ID       string `json:"id"`
-	Name     string `json:"name"`
+	ID   string `json:"id"`
+	Name string `json:"name"`
 	// ImageURLs allows multiple images to be associated with this option.
 	ImageURLs []string `json:"image_urls,omitempty"`
 }

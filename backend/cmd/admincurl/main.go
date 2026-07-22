@@ -12,15 +12,15 @@
 //
 // Outputs each step to stdout in two formats:
 //
-//   ### <step title>
-//   === VERBATIM CURL ===
-//   $ curl -sS -i -X POST http://localhost:8080/api/admin/auth/challenge \
-//       -H 'Origin: http://localhost:57500' -H 'Content-Type: application/json'
-//   HTTP/1.1 200 OK
-//   ...
+//	### <step title>
+//	=== VERBATIM CURL ===
+//	$ curl -sS -i -X POST http://localhost:8080/api/admin/auth/challenge \
+//	    -H 'Origin: http://localhost:57500' -H 'Content-Type: application/json'
+//	HTTP/1.1 200 OK
+//	...
 //
-//   === JSON SUMMARY ===
-//   {"challenge": "abc123..."}
+//	=== JSON SUMMARY ===
+//	{"challenge": "abc123..."}
 //
 // Stops on the first non-2xx for steps after token acquisition so
 // the operator sees where the chain broke.

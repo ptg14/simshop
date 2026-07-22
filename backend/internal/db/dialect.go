@@ -113,7 +113,8 @@ func (d Dialect) UpsertIgnoreSuffix(uniqueCol string) string {
 // key or a UNIQUE column).
 //
 // Callers can keep their existing string concatenation style:
-//   UpsertSQL("INSERT INTO x (a, b) VALUES (?, ?)", []string{"a"})
+//
+//	UpsertSQL("INSERT INTO x (a, b) VALUES (?, ?)", []string{"a"})
 func (d Dialect) UpsertSQL(insertPrefix, uniqueColsCSV string) string {
 	if d == DialectPostgres {
 		return insertPrefix + " ON CONFLICT (" + uniqueColsCSV + ") DO NOTHING"

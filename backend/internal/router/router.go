@@ -82,22 +82,22 @@ func New(productRepo *handler.ProductRepo, storeRepo *handler.StoreRepo, article
 	r.HandleFunc("/health", handler.HealthHandler).Methods(http.MethodGet)
 
 	// Admin auth (challenge + verify + logout) — public. Wrapping
-// these in rateLimit (and later RequireAdminSession) would
-// deadlock the very endpoint needed to GET a session token.
-//
-// /challenge is rate-limited strictly (never trusts proxy headers) so
-// anonymous attackers can't burn CPU issuing nonces. /verify and
-// /logout are NOT rate-limited — legitimate admins hit them once per
-// browser tab and we rely on Ed25519 verification (~µs) plus the 60s
-// nonce TTL to bound abuse.
-if stores != nil && len(adminPub) > 0 {
-	authBase := r.PathPrefix("/api/admin/auth").Subrouter()
-	challengeSub := authBase.PathPrefix("").Subrouter()
-	challengeSub.Use(strictRateLimit)
-	challengeSub.HandleFunc("/challenge", handler.ChallengeHandler(stores)).Methods(http.MethodPost)
-	authBase.HandleFunc("/verify", handler.VerifyHandler(stores, adminPub)).Methods(http.MethodPost)
-	authBase.HandleFunc("/logout", handler.LogoutHandler(stores)).Methods(http.MethodPost)
-}
+	// these in rateLimit (and later RequireAdminSession) would
+	// deadlock the very endpoint needed to GET a session token.
+	//
+	// /challenge is rate-limited strictly (never trusts proxy headers) so
+	// anonymous attackers can't burn CPU issuing nonces. /verify and
+	// /logout are NOT rate-limited — legitimate admins hit them once per
+	// browser tab and we rely on Ed25519 verification (~µs) plus the 60s
+	// nonce TTL to bound abuse.
+	if stores != nil && len(adminPub) > 0 {
+		authBase := r.PathPrefix("/api/admin/auth").Subrouter()
+		challengeSub := authBase.PathPrefix("").Subrouter()
+		challengeSub.Use(strictRateLimit)
+		challengeSub.HandleFunc("/challenge", handler.ChallengeHandler(stores)).Methods(http.MethodPost)
+		authBase.HandleFunc("/verify", handler.VerifyHandler(stores, adminPub)).Methods(http.MethodPost)
+		authBase.HandleFunc("/logout", handler.LogoutHandler(stores)).Methods(http.MethodPost)
+	}
 
 	// Product routes – the handler package expects a repository.
 	// eventRepo decorates each read with effective_price + current_event.

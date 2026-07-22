@@ -285,8 +285,7 @@ class _EditProductDialogState extends State<EditProductDialog> {
   }
 
   @override
-  Widget build(BuildContext context) {
-    return AlertDialog(
+  Widget build(BuildContext context) => AlertDialog(
       title: const Text('Cập nhật sản phẩm'),
       content: ConstrainedBox(
         constraints: BoxConstraints(maxWidth: context.dialogWidth),
@@ -382,5 +381,4 @@ class _EditProductDialogState extends State<EditProductDialog> {
         ),
       ],
     );
-  }
 }

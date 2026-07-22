@@ -38,11 +38,11 @@ import (
 // of magnitude more than any legitimate admin fleet would produce.
 // Tests can mutate these fields directly to exercise the cap paths.
 type SessionStore struct {
-	mu          sync.RWMutex
-	sessions    map[string]time.Time // token → expiry
-	challenges  map[string]time.Time // nonce → expiry
-	tokenTTL    time.Duration
-	challengeTTL time.Duration
+	mu            sync.RWMutex
+	sessions      map[string]time.Time // token → expiry
+	challenges    map[string]time.Time // nonce → expiry
+	tokenTTL      time.Duration
+	challengeTTL  time.Duration
 	MaxChallenges int // public: max in-flight challenges; default 1024
 	MaxSessions   int // public: max active sessions; default 1024
 }

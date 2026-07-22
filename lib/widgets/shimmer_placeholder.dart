@@ -53,8 +53,7 @@ class _ShimmerPlaceholderState extends State<ShimmerPlaceholder>
     );
     return AnimatedBuilder(
       animation: _controller,
-      builder: (context, child) {
-        return ShaderMask(
+      builder: (context, child) => ShaderMask(
           blendMode: BlendMode.srcATop,
           shaderCallback: (rect) {
             // Move the highlight across the box from -1.5 to 1.5 of its width.
@@ -67,8 +66,7 @@ class _ShimmerPlaceholderState extends State<ShimmerPlaceholder>
             ).createShader(Rect.fromLTWH(dx, 0, rect.width, rect.height));
           },
           child: child,
-        );
-      },
+        ),
       child: widget.child,
     );
   }

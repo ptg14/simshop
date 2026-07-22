@@ -93,8 +93,7 @@ class _AdminAuthGateState extends State<AdminAuthGate> {
       ),
       body: SafeArea(
         child: Consumer<AdminAuthViewModel>(
-          builder: (context, vm, _) {
-            return Center(
+          builder: (context, vm, _) => Center(
               child: ConstrainedBox(
                 constraints: const BoxConstraints(maxWidth: 480),
                 child: Padding(
@@ -163,8 +162,7 @@ class _AdminAuthGateState extends State<AdminAuthGate> {
                   ),
                 ),
               ),
-            );
-          },
+            ),
         ),
       ),
     );

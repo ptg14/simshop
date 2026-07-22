@@ -90,7 +90,7 @@ func (r *ProductRepo) removeProductIDFromJSONArrayColumn(tableName, jsonColumn, 
 	defer rows.Close()
 
 	type update struct {
-		rowID  string
+		rowID     string
 		rewritten []string
 	}
 	var updates []update

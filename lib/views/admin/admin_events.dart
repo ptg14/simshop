@@ -33,8 +33,7 @@ class _AdminEventsScreenState extends State<AdminEventsScreen> {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     return Consumer<EventsViewModel>(
-      builder: (context, vm, _) {
-        return RefreshIndicator(
+      builder: (context, vm, _) => RefreshIndicator(
           color: scheme.primary,
           onRefresh: vm.load,
           child: ListView(
@@ -74,8 +73,7 @@ class _AdminEventsScreenState extends State<AdminEventsScreen> {
               const SizedBox(height: 32),
             ],
           ),
-        );
-      },
+        ),
     );
   }
 }

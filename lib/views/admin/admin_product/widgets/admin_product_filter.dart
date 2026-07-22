@@ -189,8 +189,7 @@ class _LargeRow extends StatelessWidget {
   final Widget? trailing;
 
   @override
-  Widget build(BuildContext context) {
-    return SingleChildScrollView(
+  Widget build(BuildContext context) => SingleChildScrollView(
       scrollDirection: Axis.horizontal,
       child: Row(
         children: [
@@ -210,7 +209,6 @@ class _LargeRow extends StatelessWidget {
         ],
       ),
     );
-  }
 }
 
 /// Multi-select row of sub pills. Tap is a toggle — the VM carries
@@ -227,8 +225,7 @@ class _SubRow extends StatelessWidget {
   final ValueChanged<String> onToggled;
 
   @override
-  Widget build(BuildContext context) {
-    return SingleChildScrollView(
+  Widget build(BuildContext context) => SingleChildScrollView(
       scrollDirection: Axis.horizontal,
       child: Row(
         children: [
@@ -247,7 +244,6 @@ class _SubRow extends StatelessWidget {
         ],
       ),
     );
-  }
 }
 
 /// A single tappable filter pill. Mirrors the look of the home

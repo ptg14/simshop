@@ -33,8 +33,7 @@ class _AdminArticlesScreenState extends State<AdminArticlesScreen> {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     return Consumer<ArticlesViewModel>(
-      builder: (context, vm, _) {
-        return RefreshIndicator(
+      builder: (context, vm, _) => RefreshIndicator(
           color: scheme.primary,
           onRefresh: () async {
             await vm.load();
@@ -79,8 +78,7 @@ class _AdminArticlesScreenState extends State<AdminArticlesScreen> {
               const SizedBox(height: 32),
             ],
           ),
-        );
-      },
+        ),
     );
   }
 }

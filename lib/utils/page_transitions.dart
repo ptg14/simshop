@@ -4,13 +4,11 @@ import 'package:flutter/material.dart';
 ///
 /// Replace direct `Navigator.pushNamed` calls with
 /// `Navigator.of(context).push(fadeSlideRoute(...))` for a smoother feel.
-Route<T> fadeSlideRoute<T>(Widget page) {
-  return PageRouteBuilder<T>(
+Route<T> fadeSlideRoute<T>(Widget page) => PageRouteBuilder<T>(
     transitionDuration: const Duration(milliseconds: 220),
     reverseTransitionDuration: const Duration(milliseconds: 180),
     pageBuilder: (_, __, ___) => page,
-    transitionsBuilder: (_, animation, __, child) {
-      return FadeTransition(
+    transitionsBuilder: (_, animation, __, child) => FadeTransition(
         opacity: animation,
         child: SlideTransition(
           position: Tween<Offset>(
@@ -21,7 +19,5 @@ Route<T> fadeSlideRoute<T>(Widget page) {
           ),
           child: child,
         ),
-      );
-    },
+      ),
   );
-}

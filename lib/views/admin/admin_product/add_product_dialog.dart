@@ -170,8 +170,7 @@ class _AddProductDialogState extends State<AddProductDialog> {
   }
 
   @override
-  Widget build(BuildContext context) {
-    return AlertDialog(
+  Widget build(BuildContext context) => AlertDialog(
       title: const Text('Thêm sản phẩm mới'),
       content: ConstrainedBox(
         constraints: BoxConstraints(maxWidth: context.dialogWidth),
@@ -270,5 +269,4 @@ class _AddProductDialogState extends State<AddProductDialog> {
         ),
       ],
     );
-  }
 }
