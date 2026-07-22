@@ -22,7 +22,6 @@ class AdminViewModel extends ChangeNotifier {
   final IProductService _productService;
   final List<Product> _products = [];
 
-  // 2-level category hierarchy.
   final List<String> _largeCategories = [];
   final List<Category> _subCategories = [];
   String? _selectedLargeCategory;
@@ -56,7 +55,6 @@ class AdminViewModel extends ChangeNotifier {
   bool _adminSessionExpired = false;
   String _selectedTab = 'products'; // products, categories, articles, events, settings
 
-  // Getters
   List<Product> get products => _filteredProducts;
   List<String> get largeCategories => List.unmodifiable(_largeCategories);
   List<Category> get subCategories => List.unmodifiable(_subCategories);
