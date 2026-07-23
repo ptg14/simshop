@@ -136,15 +136,28 @@ simshop/
 
 ---
 
-## Quick start (local dev)
+## Chạy dự án
 
-This is the **fastest** path: SQLite + Flutter web, all on `localhost`.
+Dự án có **hai cách chạy** tùy mục đích:
+
+| Mode | Tên | Mục đích | Stack | Đặc điểm |
+| ---- | --- | -------- | ----- | -------- |
+| 1 | **Develop** | Code, debug, hot-reload | Flutter web trực tiếp + Go binary + SQLite | Không Docker, hot-reload, log stdout, DB xóa thoải mái |
+| 2 | **Product** | Deploy, demo, test production | 4 services trong Docker (Postgres + Go + Nginx + Cloudflare Tunnel) | Multi-stage build, strip debug, named volume, restart tự động |
+
+> **Luôn bắt đầu bằng Develop** khi sửa code. Chỉ chuyển sang
+> Product khi cần verify behavior production (multi-service,
+> persistence, network thật qua Cloudflare).
+
+---
+
+## 1. Develop (local, không Docker)
 
 ### Prerequisites
 
 - Flutter ≥ 3.16 (Dart ≥ 3.0). Verify: `flutter --version`.
 - Go ≥ 1.25. Verify: `go version`.
-- (Optional) Docker Desktop — only needed for the production stack.
+- Trình duyệt Chrome (cho Flutter web).
 
 ### One-time setup
 
@@ -152,51 +165,197 @@ This is the **fastest** path: SQLite + Flutter web, all on `localhost`.
 # 1. Clone & enter
 git clone <repo> simshop && cd simshop
 
-# 2. Backend: install deps + scaffold .env + create admin keypair
+# 2. Backend: install deps + scaffold .env + tạo admin keypair
 cd backend
 go mod download
 cp .env.example .env
 go run ./cmd/keygen
-# → in public-key hex → paste vào ADMIN_PUBLIC_KEY trong backend/.env
-# → file admin.key  (private, gitignored) và admin.key.pub (public)
+# → paste public-key hex vào ADMIN_PUBLIC_KEY trong backend/.env
+# → admin.key (private, gitignored) + admin.key.pub (public)
+cd ..
 
 # 3. Frontend: fetch deps
-cd ..
 flutter pub get
-cp .env.example .env   # nếu có (xem lib/config/api_config.dart)
+cp .env.example .env
 ```
 
-### Run both processes
+### Chạy (2 terminals song song)
 
 ```bash
-# Terminal 1 — backend
+# Terminal 1 — backend (SQLite, hot-reload code qua `go run`)
 cd backend
 go run .
-# → listen :8080, log "admin auth enabled (public key loaded)"
+# → listen :8080
+# → log: "admin auth enabled (public key loaded)"
+# → DB tự tạo tại ./backend/simshop.db (gitignored)
 
-# Terminal 2 — Flutter web
-cd ..
+# Terminal 2 — Flutter web (hot-reload enabled)
 flutter run -d chrome --dart-define=API_BASE_URL=http://localhost:8080
-# → mở Chrome, http gốc là FE, gọi BE qua localhost:8080
+# → Chrome mở tại http gốc, gọi BE qua localhost:8080
+# → Save file trong lib/ → hot-reload ngay (r trong terminal Flutter)
 ```
 
 ### Verify end-to-end
 
 ```bash
-# Backend health
+# Backend health (từ terminal thứ 3)
 curl http://localhost:8080/health
 # → {"status":"ok"}
 
-# Admin auth verification (optional but recommended)
+# Admin auth flow tự động (challenge → sign → verify → create product)
 cd backend
 go run ./cmd/admincurl
-# → walks challenge / verify / product create against running BE
+# → in verbatim curl transcript + JSON summary cho mỗi step
 ```
 
-The admin panel is hidden inside the running app — tap the footer
-banner **seven times within three seconds** to surface the auth gate,
-then upload `admin.key`. (Implementation: `AdminBannerTrigger` in
-`lib/widgets/admin_banner_trigger.dart`.)
+### Develop — vòng lặp hàng ngày
+
+```bash
+# 1. Sửa code trong lib/ → save
+# 2. Trong terminal Flutter: nhấn `r` để hot-reload
+#    (hoặc `R` cho hot-restart, giữ state runtime)
+# 3. Sửa Go code trong backend/internal/ → save
+#    Go tự rebuild (nhờ `go run`); backend tự restart
+# 4. Test
+flutter test                                          # Flutter unit/widget
+cd backend && go test ./...                           # Go unit
+
+# Reset state dev (xóa SQLite + uploads)
+rm -f backend/simshop.db
+rm -rf backend/uploads/
+go run .   # schema tự re-init
+```
+
+### Develop — chạy FE trên mobile thay vì Chrome
+
+```bash
+# Liệt kê thiết bị đang kết nối
+flutter devices
+
+# iOS Simulator (chỉ trên macOS)
+flutter run -d ios --dart-define=API_BASE_URL=http://localhost:8080
+
+# Android Emulator (host là 10.0.2.2 từ trong emulator, KHÔNG phải localhost)
+flutter run -d android --dart-define=API_BASE_URL=http://10.0.2.2:8080
+
+# Thiết bị thật (cùng WiFi với máy dev)
+flutter run -d <device-id> --dart-define=API_BASE_URL=http://<your-lan-ip>:8080
+# Nhớ mở firewall :8080 và thêm IP LAN vào ALLOWED_ORIGIN trong backend/.env
+```
+
+### Develop — nhiều thiết bị cùng lúc
+
+`flutter run -d chrome` chọn port ngẫu nhiên cho Chrome gốc — ví dụ
+`http://localhost:57500`. Backend CORS cần allow origin đó:
+
+```bash
+# backend/.env — thêm port vào allowlist
+ALLOWED_ORIGIN=http://localhost:8080,http://localhost:57500,http://localhost:9090
+```
+
+Sau đó restart backend (`Ctrl+C` rồi `go run .` lại).
+
+---
+
+## 2. Product (Docker stack)
+
+Stack 4-service chạy như production thật. Phù hợp để verify:
+
+- Cloudflare Tunnel routing (cần domain thật)
+- Postgres persistence qua restart
+- Multi-stage build (binary đã strip, chạy non-root)
+- Nginx cache headers
+- Tất cả 4 service khởi động cùng nhau
+
+### Prerequisites
+
+- Docker ≥ 20.10 với Compose v2: `docker compose version`
+- Cloudflare account + domain đã add (để tạo tunnel)
+- 5–10 phút cho lần build đầu (Flutter image là lớn nhất)
+
+### Quick start
+
+```bash
+# 1. Tạo .env từ template
+cp docker/.env.example docker/.env
+
+# 2. Điền các biến BẮT BUỘC (xem docker/README.md → Cloudflare setup)
+$EDITOR docker/.env
+# - POSTGRES_PASSWORD : đổi từ "changeme"
+# - ADMIN_PUBLIC_KEY  : hex 64 chars (cd backend && go run ./cmd/keygen)
+# - ALLOWED_ORIGIN    : URL Cloudflare của FE
+# - CF_TUNNEL_TOKEN   : từ Cloudflare dashboard
+# - BE_PUBLIC_URL     : URL Cloudflare của BE
+# - IMAGE_TAG         : git SHA hoặc build number
+
+# 3. Khởi động stack (lần đầu: 5-10 phút build image Flutter)
+docker compose -f docker/compose.yaml --env-file docker/.env up -d --build
+
+# 4. Xem log
+docker compose -f docker/compose.yaml logs -f
+
+# 5. Kiểm tra services đều healthy
+docker compose -f docker/compose.yaml ps
+# → tất cả services Up (healthy)
+```
+
+### Verify end-to-end
+
+```bash
+# Nội bộ Docker network
+docker compose -f docker/compose.yaml exec backend \
+    wget -qO- http://localhost:8080/health
+# → {"status":"ok"}
+
+# Qua Cloudflare URL (cần DNS propagated + ingress config xong)
+curl https://api.<yourdomain>/health
+# → {"status":"ok"}
+
+open https://<yourdomain>   # Flutter web load
+```
+
+### Product — vòng lặp khi sửa code
+
+```bash
+# Sửa Go code → rebuild image backend (nhanh, ~30s)
+docker compose -f docker/compose.yaml build backend
+docker compose -f docker/compose.yaml up -d backend
+
+# Sửa Flutter code → rebuild image web (lâu, ~5 phút cold cache)
+docker compose -f docker/compose.yaml build web
+docker compose -f docker/compose.yaml up -d web
+
+# Sửa docker config → compose tự re-create affected services
+$EDITOR docker/compose.yaml
+docker compose -f docker/compose.yaml up -d
+```
+
+> **Không bao giờ cần `down`** trong vòng lặp dev — compose replace
+> container, volume Postgres + uploads giữ nguyên.
+
+### Product — debugging container
+
+Xem [docker/README.md → Debug container](../docker/README.md#debug-container)
+để biết chi tiết về:
+
+- Đọc log (`docker logs`, `docker compose logs`)
+- Exec shell vào container (`docker exec -it ... sh`)
+- Inspect Postgres query
+- Debug Go panic trace
+- Reset volume, rebuild image
+
+### Develop vs Product — khi nào dùng cái nào
+
+| Tình huống | Develop | Product |
+| --------- | ------- | ------- |
+| Sửa code Flutter | ✅ hot-reload | ❌ phải rebuild image (lâu) |
+| Sửa code Go | ✅ auto-restart | ⚠️ rebuild image (~30s) |
+| Test SQLite query | ✅ nhanh | ⚠️ phải exec vào Postgres |
+| Test Postgres-specific | ❌ SQLite khác | ✅ Postgres thật |
+| Test Cloudflare Tunnel | ❌ không có tunnel | ✅ qua DNS thật |
+| Test persistence qua restart | ❌ SQLite file dễ mất | ✅ named volume |
+| Verify production binary | ❌ debug symbols | ✅ strip + non-root |
+| Demo cho stakeholder | ⚠️ cần setup | ✅ domain thật |
 
 ---
 

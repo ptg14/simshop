@@ -516,6 +516,277 @@ docker compose -f docker/compose.yaml up -d web
 
 ---
 
+## Debug container
+
+Tất cả lệnh dưới đây dùng `--env-file docker/.env` để compose resolve
+cùng config với lúc `up`. Nếu bạn dùng compose từ ngoài `docker/`,
+nhớ thêm `-f docker/compose.yaml`.
+
+### Đọc log
+
+```bash
+# Tất cả services, follow mode
+docker compose -f docker/compose.yaml logs -f
+
+# Chỉ một service
+docker compose -f docker/compose.yaml logs -f backend
+
+# 100 dòng cuối + timestamps
+docker compose -f docker/compose.yaml logs --tail=100 -t backend
+
+# Lọc log theo mức độ (compose ≥ 2.20)
+docker compose -f docker/compose.yaml logs -f --level error
+```
+
+Log backend có format `YYYY-MM-DD HH:MM:SS msg` (default `log` package).
+Tìm các marker:
+
+| Pattern | Ý nghĩa |
+| ------- | -------- |
+| `admin auth enabled (public key loaded)` | Backend đọc được `ADMIN_PUBLIC_KEY` |
+| `WARNING: ADMIN_PUBLIC_KEY is empty` | Dev mode + key rỗng → admin auth TẮT (mọi write public) |
+| `db not ready (attempt N/M): ...` | Postgres chưa ready, đang retry (xem [Backend crash](#backend-crash-liên-tục-db-not-ready)) |
+| `database init: connected` | Postgres ready, migrations xong |
+| `starting server on :8080` | Backend listen thành công |
+| `signal received, shutting down...` | Nhận SIGTERM, đang shutdown graceful |
+| panic stack trace | Bug — xem [Debug Go panic](#debug-go-panic) |
+
+### Exec shell vào container
+
+Mỗi container đều có shell để inspect runtime:
+
+```bash
+# Backend (Alpine)
+docker compose -f docker/compose.yaml exec backend sh
+
+# Web (Nginx Alpine)
+docker compose -f docker/compose.yaml exec web sh
+
+# Postgres
+docker compose -f docker/compose.yaml exec postgres sh
+
+# Cloudflared (debug thường không cần — chỉ tail log là đủ)
+docker compose -f docker/compose.yaml logs cloudflared --tail=200
+```
+
+Trong shell của backend:
+
+```bash
+# Xem file binary, env, working dir
+ls -la /app/
+env | grep -E '^(DATABASE_URL|ADMIN_PUBLIC_KEY|ALLOWED_ORIGIN)='
+ps auxf
+
+# Xem HTTP server còn listen không
+wget -qO- http://localhost:8080/health
+# → {"status":"ok"}
+
+# Test connectivity tới Postgres (không cần psql client)
+wget -qO- --timeout=2 http://postgres:5432/ || echo "expected: connection refused on HTTP"
+nc -zv postgres 5432
+# → postgres (172.18.0.x:5432) open
+```
+
+### Inspect Postgres query
+
+`docker/initdb/01-schema.sql` đã seed sẵn 1 row trong `store_info`.
+Container Postgres có sẵn `psql` client:
+
+```bash
+# Mở psql
+docker compose -f docker/compose.yaml exec postgres psql \
+    -U simshop -d simshop
+
+# Một số query hữu ích
+\dt                                       # liệt kê tables
+\dt+ products                             # chi tiết 1 table
+\d products                               # columns + indexes
+
+SELECT count(*) FROM products;
+SELECT id, name, price, stock FROM products ORDER BY id LIMIT 10;
+
+-- Xem draft articles (admin-only field)
+SELECT id, title, is_draft FROM articles;
+
+-- Xem events còn hiệu lực (Unix timestamp)
+SELECT id, name, end_time, discount_type, discount_value
+  FROM events
+ WHERE end_time IS NULL OR end_time > extract(epoch from now());
+
+-- Xem ảnh upload gần đây
+SELECT id, product_id, image_url
+  FROM product_images
+ ORDER BY id DESC LIMIT 10;
+
+-- Thoát
+\q
+```
+
+Chạy 1 query mà không cần vào REPL:
+
+```bash
+docker compose -f docker/compose.yaml exec -T postgres \
+    psql -U simshop -d simshop -c "SELECT count(*) FROM products;"
+```
+
+### Debug Go panic
+
+Panic trong backend in full stack trace ra stdout — bạn sẽ thấy trong
+`docker logs`. Ví dụ:
+
+```
+panic: runtime error: invalid memory address or nil pointer dereference
+[signal SIGSEGV: segmentation violation ...]
+
+goroutine 42 [running]:
+github.com/ptg14/simshop/backend/internal/handler.GetProductHandler.func1
+        /src/internal/handler/handler.go:142 +0x1a3
+github.com/ptg14/simshop/backend/internal/router.New.func11
+        /src/internal/router/router.go:87 +0x88
+...
+```
+
+Lưu ý:
+
+- **Stack trace đã bị strip** (build với `-ldflags="-s -w"`). Bạn sẽ
+  thấy file + line number (`handler.go:142`) nhưng không có tên
+  biến cục bộ. Đủ để tìm bug.
+- **Path là `/src/...`** chứ không phải path repo. Đó là `WORKDIR`
+  trong stage build của `Dockerfile.backend` — line number vẫn khớp
+  với code trong repo local.
+- **Restart tự động**: container có `restart: unless-stopped`, nên
+  panic sẽ khiến container restart. Nếu panic liên tục, container
+  vào crash loop → xem log dài hơn:
+
+  ```bash
+  docker compose -f docker/compose.yaml logs --tail=500 backend
+  ```
+
+- **Reproduce local**: với stack trace bạn tìm được `file:line`, đọc
+  code local rồi viết test trong `backend/internal/handler/*_test.go`.
+  Chạy test ngoài Docker:
+
+  ```bash
+  cd backend
+  go test -run TestFailingCase ./internal/handler/...
+  ```
+
+### Xem Docker network + DNS
+
+Service discovery trong compose dùng Docker DNS. Kiểm tra nhanh:
+
+```bash
+# Liệt kê networks
+docker network ls | grep simshop
+
+# Xem services trong network
+docker network inspect simshop-net --format '{{range .Containers}}{{.Name}} {{.IPv4Address}}{{"\n"}}{{end}}'
+# → simshop-postgres 172.18.0.2/16
+# → simshop-backend  172.18.0.3/16
+# → simshop-web      172.18.0.4/16
+# → simshop-cloudflared 172.18.0.5/16
+
+# Resolve DNS từ trong 1 container
+docker compose -f docker/compose.yaml exec backend nslookup postgres
+docker compose -f docker/compose.yaml exec backend nslookup web
+
+# Xem port map / mount của container
+docker inspect simshop-backend \
+    --format '{{json .Mounts}}' | python3 -m json.tool
+```
+
+### Resource usage
+
+Container có `deploy.resources.limits` trong `compose.yaml`. Kiểm
+tra xem có sắp bị OOM không:
+
+```bash
+# Real-time stats
+docker stats simshop-backend simshop-web simshop-postgres simshop-cloudflared
+
+# Lịch sử (cần cgroup v2 + systemd)
+systemctl status docker   # xem journal
+journalctl -u docker --since "1 hour ago" | grep -i 'oom\|killed'
+```
+
+Nếu backend bị kill vì OOM, tăng `mem.limit` trong `compose.yaml`:
+
+```yaml
+backend:
+  deploy:
+    resources:
+      limits:
+        memory: 512M   # ↑ từ 256M
+```
+
+### Reset mà KHÔNG mất data
+
+```bash
+# Restart 1 service (giữ volume)
+docker compose -f docker/compose.yaml restart backend
+
+# Force re-create (giữ volume, rebuild image)
+docker compose -f docker/compose.yaml up -d --force-recreate backend
+
+# Tail logs của 1 service để xem nó có boot OK không
+docker compose -f docker/compose.yaml logs -f --tail=50 backend
+```
+
+### Reset mà MẤT data
+
+```bash
+# Dừng + xóa containers + volumes
+docker compose -f docker/compose.yaml down -v
+# (-v = xóa cả named volumes)
+
+# Khởi động lại (volume tạo mới, schema re-init)
+docker compose -f docker/compose.yaml --env-file docker/.env up -d --build
+
+# Chạy seeder để có placeholder data
+./docker/seed.sh
+```
+
+### Xem Cloudflare tunnel state
+
+`cloudflared` chạy ở foreground, log ra stdout. Một số pattern hữu ích:
+
+```bash
+# Tail log cloudflared
+docker compose -f docker/compose.yaml logs -f --tail=100 cloudflared
+
+# Đếm số connection tới Cloudflare edge (càng nhiều càng ổn)
+docker compose -f docker/compose.yaml logs cloudflared 2>&1 \
+    | grep -c "Registered tunnel connection"
+
+# Verify ingress rules trên dashboard đang active
+docker compose -f docker/compose.yaml logs cloudflared 2>&1 \
+    | grep -E "(https://|http://)" | tail -20
+# → "https://api.<your-domain>" → http://backend:8080
+# → "https://<your-domain>"     → http://web:80
+```
+
+Nếu thấy `Unable to reach origin: connection refused`: ingress rule
+trên dashboard đang trỏ sai service URL. Xem
+[Nếu gặp lỗi "Unable to reach origin: connection refused"](#nếu-gặp-lỗi-unable-to-reach-origin-connection-refused).
+
+### Verify cache-bypass hoạt động
+
+Sau khi tạo Cache Rule Bypass cho `main.dart.js`:
+
+```bash
+# 1. Lấy URL từ Cloudflare (qua DNS thật)
+curl -I https://<your-domain>/main.dart.js
+
+# Response phải có:
+#   cf-cache-status: DYNAMIC         ← không phải HIT
+#   cache-control: no-cache, must-revalidate   ← từ nginx
+```
+
+Nếu thấy `cf-cache-status: HIT`, rule chưa active hoặc path không
+match (xem lại match pattern trong dashboard).
+
+---
+
 ## When to rebuild
 
 | Thay đổi | Cần rebuild? |
