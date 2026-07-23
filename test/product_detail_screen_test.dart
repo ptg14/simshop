@@ -316,7 +316,27 @@ void main() {
             'regression on the old shared ImageCarousel; even though the '
             'screen now uses GallerySection, the body must remain a '
             'ListView so the redesign stays consistent with the fix.');
-    expect(find.byType(ListView), findsWidgets);
+
+    // The ListView must be a DESCENDANT of the screen's Scaffold
+    // body — i.e. it's the actual scroll view for the screen,
+    // not just any incidental ListView nested somewhere in the
+    // tree (e.g. inside GallerySection's internal ThumbnailStrip
+    // uses a horizontal ListView, which would also match
+    // `find.byType(ListView)`). Pinning to "Scaffold contains
+    // ListView" guarantees the screen-level body is a ListView.
+    expect(
+      find.descendant(
+        of: find.byType(Scaffold),
+        matching: find.byType(ListView),
+      ),
+      findsOneWidget,
+      reason: 'Scaffold body must contain exactly one ListView — '
+          'the screen-level scroll view wrapping the content. '
+          'If the body is a SingleChildScrollView, the previous '
+          'assertion already fails; if some other widget (e.g. a '
+          'nested Column or no ListView at all) is used, this '
+          'catches that too.',
+    );
   });
 
   // -----------------------------------------------------------------
@@ -411,11 +431,33 @@ void main() {
           'spans the full content width',
     );
 
-    // 3. The screen must contain the gallery+info Row somewhere.
-    //    (There may also be other Rows in ListView separators, so
-    //    we don't count Rows — we just confirm at least one Row
-    //    is present in the body.)
-    expect(find.byType(Row), findsWidgets);
+    // 3. The screen must contain the gallery+info Row with TWO
+    //    Expanded children (flex 3 for the gallery, flex 2 for
+    //    the info column). Just checking `find.byType(Row)` is
+    //    weak — there are other Rows in the tree (InfoSection's
+    //    price Wrap, ListView separators), so a single Column
+    //    layout would also pass. We need to assert the SPECIFIC
+    //    Row that hosts the gallery + info side-by-side.
+    //
+    //    Heuristic: find the Row that has exactly 2 Expanded
+    //    children — the price Wrap uses `Wrap`, not `Expanded`,
+    //    so any Row with two Expanded children is the gallery+
+    //    info row. This catches a refactor that drops the Row
+    //    and stacks everything vertically.
+    final rows = find.byType(Row).evaluate();
+    final hasGalleryInfoRow = rows.any((element) {
+      final row = element.widget as Row;
+      final expandedChildren =
+          row.children.whereType<Expanded>().toList();
+      return expandedChildren.length == 2;
+    });
+    expect(hasGalleryInfoRow, isTrue,
+        reason: 'PC layout must render gallery + info side-by-side in '
+            'a Row with TWO Expanded children. A flat Column '
+            '(gallery on top, info below) would still show one '
+            'InfoSection + one DetailsSection but no longer use '
+            'the 2-col layout — this assertion catches that '
+            'regression.');
 
     // 4. The ThumbnailStrip must NOT be inside the gallery
     //    column. We can't directly query "the gallery column"
@@ -584,39 +626,48 @@ void main() {
     // The footer must exist (the screen always renders it).
     expect(find.byType(SiteInfoFooter), findsOneWidget);
 
-    // The footer MUST be a descendant of a Container with a
-    // maxWidth constraint (== maxContentWidth, 1200 dp on
-    // desktop). Without that ancestor, the banner image inside
-    // the footer's Card (width: double.infinity) would stretch
-    // edge-to-edge.
-    final constrainedAncestors = find.ancestor(
-      of: find.byType(SiteInfoFooter),
-      matching: find.byType(Container),
+    // Definitive structural assertion: SiteInfoFooter MUST be
+    // a descendant of the `Container(maxWidth:
+    // maxContentWidth)` wrapper that wraps `body`. The wrapper
+    // is the one and only Container in the screen subtree
+    // whose `constraints.maxWidth` is finite and ≤ 1200 dp.
+    //
+    // Why structural (not rendered-size): the footer's outer
+    // Card applies its own `horizontalPadding` margin
+    // (= 48 dp on desktop via `context.horizontalPadding`),
+    // which shrinks the Card to ~1184 dp on a 1280-dp
+    // viewport REGARDLESS of whether the regression is
+    // present. The Card's intrinsic margin masks the
+    // full-bleed bug from any `tester.getSize` check. The
+    // structural check (does the constrained Container
+    // actually WRAP the footer?) is the only assertion that
+    // survives the margin noise.
+    //
+    // If the regression returns (footer as a sibling of
+    // `body` at the ListView level), the footer is no longer
+    // inside the `Container(maxWidth: 1200)` wrapper — the
+    // wrapper only wraps `body` itself. The descendant search
+    // returns `findsNothing` and the assertion fails.
+    final constrainedWrapper = find.byWidgetPredicate((w) =>
+        w is Container &&
+        w.constraints != null &&
+        w.constraints!.maxWidth.isFinite &&
+        // Exact match: maxContentWidth on desktop is exactly
+        // 1200 (see `context.maxContentWidth`). Other Containers
+        // in the tree may also clamp to ≤ 1200 (e.g. viewport
+        // sizing) but they don't equal 1200 exactly. Pinning to
+        // == 1200.0 narrows the finder to the `body` wrapper.
+        w.constraints!.maxWidth == 1200.0);
+    final footerInsideWrapper = find.descendant(
+      of: constrainedWrapper,
+      matching: find.byType(SiteInfoFooter),
     );
-    final hasMaxWidthAncestor = constrainedAncestors.evaluate().any((element) {
-      final container = element.widget as Container;
-      return container.constraints != null &&
-          container.constraints!.maxWidth.isFinite &&
-          container.constraints!.maxWidth <= 1200.0;
-    });
-    expect(hasMaxWidthAncestor, isTrue,
-        reason: 'SiteInfoFooter must have at least one Container '
-            'ancestor with a finite maxWidth ≤ 1200 dp — that\'s how '
-            'the banner image gets its width constraint instead of '
-            'stretching full-bleed across the viewport');
-
-    // Additionally: the footer's nearest Container ancestor (in
-    // the widget tree depth sense — via `firstWidget` of the
-    // ancestor finder, which returns the deepest match) must have
-    // the constraint. `find.ancestor(...).first` returns the
-    // topmost ancestor in tree depth order, which is the
-    // OUTERMOST constrained Container = the `body` wrapper. So
-    // if THAT one is constrained, the fix is in place.
-    final outermost = constrainedAncestors.first.evaluate().single.widget
-        as Container;
-    expect(outermost.constraints?.maxWidth.isFinite, isTrue,
-        reason: 'the outermost constrained Container ancestor is the '
-            '`body` wrapper — it must carry the maxContentWidth '
-            'constraint so the footer is constrained on PC');
+    expect(footerInsideWrapper, findsOneWidget,
+        reason: 'SiteInfoFooter must be a descendant of the '
+            'Container(maxWidth ≤ 1200) wrapper. If the footer '
+            'is moved out of that wrapper (commit 23cea41 '
+            'regression), the wrapper no longer constrains it '
+            'and the banner image stretches full-bleed across '
+            'the 1280-dp viewport.');
   });
 }
