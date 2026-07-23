@@ -441,23 +441,25 @@ class _StockCard extends StatelessWidget {
                 : scheme.onTertiaryContainer,
           ),
           const SizedBox(width: 8),
-          Text(
-            () {
-              if (product.isOutOfStock) return 'Hết hàng';
-              if (product.stock == null) {
-                return 'Số lượng không xác định';
-              }
-              return 'Còn ${product.stock} sản phẩm';
-            }(),
-            style: TextStyle(
-              color: product.isOutOfStock
-                  ? scheme.onErrorContainer
-                  : scheme.onTertiaryContainer,
-              fontWeight: FontWeight.w600,
-              fontSize: context.responsive<double>(
-                mobile: 14,
-                tablet: 15,
-                desktop: 16,
+          Expanded(
+            child: Text(
+              () {
+                if (product.isOutOfStock) return 'Hết hàng';
+                if (product.stock == null) {
+                  return 'Số lượng không xác định';
+                }
+                return 'Còn ${product.stock} sản phẩm';
+              }(),
+              style: TextStyle(
+                color: product.isOutOfStock
+                    ? scheme.onErrorContainer
+                    : scheme.onTertiaryContainer,
+                fontWeight: FontWeight.w600,
+                fontSize: context.responsive<double>(
+                  mobile: 14,
+                  tablet: 15,
+                  desktop: 16,
+                ),
               ),
             ),
           ),
