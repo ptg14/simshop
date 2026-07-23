@@ -10,6 +10,7 @@ import 'package:simshop/views/product_detail_screen/_details_section.dart';
 import 'package:simshop/views/product_detail_screen/_gallery_section.dart';
 import 'package:simshop/views/product_detail_screen/_info_section.dart';
 import 'package:simshop/widgets/image_carousel.dart';
+import 'package:simshop/widgets/site_info_footer.dart';
 
 /// In-memory store service — the SiteInfoFooter inside ProductDetailScreen
 /// reads site config via Consumer<SiteConfigViewModel>, so we need a stub
@@ -660,5 +661,70 @@ void main() {
           'row, not inside the gallery column',
     );
     expect(find.byType(ThumbnailStrip), findsOneWidget);
+  });
+
+  // Regression: SiteInfoFooter was rendering full-bleed on PC because
+  // it was a sibling of `body` at the ListView level. The
+  // banner image inside the footer's Card uses `width:
+  // double.infinity`, so without a width constraint the banner
+  // stretched edge-to-edge across the viewport instead of staying
+  // inside the page's `maxContentWidth` (1200 dp on desktop).
+  //
+  // Fix: move the SiteInfoFooter into the inner Column (inside the
+  // `Container(maxWidth: maxContentWidth)` wrapper), matching the
+  // pattern used by the home page.
+  //
+  // Structural assertion: the footer MUST have at least one
+  // Container ancestor with a finite maxWidth constraint. That's
+  // the Container wrapping the body — without it the banner
+  // stretches full-bleed.
+  testWidgets(
+      'ProductDetailScreen: SiteInfoFooter is constrained to '
+      'maxContentWidth on PC (was full-bleed before the fix)',
+      (tester) async {
+    final product = _buildProduct();
+    await tester.pumpWidget(_wrapSized(
+      ProductDetailScreen(product: product),
+      const Size(1280, 800), // PC landscape
+    ));
+    await tester.pump();
+
+    // The footer must exist (the screen always renders it).
+    expect(find.byType(SiteInfoFooter), findsOneWidget);
+
+    // The footer MUST be a descendant of a Container with a
+    // maxWidth constraint (== maxContentWidth, 1200 dp on
+    // desktop). Without that ancestor, the banner image inside
+    // the footer's Card (width: double.infinity) would stretch
+    // edge-to-edge.
+    final constrainedAncestors = find.ancestor(
+      of: find.byType(SiteInfoFooter),
+      matching: find.byType(Container),
+    );
+    final hasMaxWidthAncestor = constrainedAncestors.evaluate().any((element) {
+      final container = element.widget as Container;
+      return container.constraints != null &&
+          container.constraints!.maxWidth.isFinite &&
+          container.constraints!.maxWidth <= 1200.0;
+    });
+    expect(hasMaxWidthAncestor, isTrue,
+        reason: 'SiteInfoFooter must have at least one Container '
+            'ancestor with a finite maxWidth ≤ 1200 dp — that\'s how '
+            'the banner image gets its width constraint instead of '
+            'stretching full-bleed across the viewport');
+
+    // Additionally: the footer's nearest Container ancestor (in
+    // the widget tree depth sense — via `firstWidget` of the
+    // ancestor finder, which returns the deepest match) must have
+    // the constraint. `find.ancestor(...).first` returns the
+    // topmost ancestor in tree depth order, which is the
+    // OUTERMOST constrained Container = the `body` wrapper. So
+    // if THAT one is constrained, the fix is in place.
+    final outermost = constrainedAncestors.first.evaluate().single.widget
+        as Container;
+    expect(outermost.constraints?.maxWidth.isFinite, isTrue,
+        reason: 'the outermost constrained Container ancestor is the '
+            '`body` wrapper — it must carry the maxContentWidth '
+            'constraint so the footer is constrained on PC');
   });
 }

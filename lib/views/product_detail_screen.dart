@@ -186,6 +186,15 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                     ),
                   ),
                   postRowContent,
+                  // SiteInfoFooter is mounted INSIDE the
+                  // `maxContentWidth` Container so the footer
+                  // banner card stays inside the page's centered
+                  // column on PC / laptop. Previously the footer
+                  // was a sibling of `body` at the ListView level,
+                  // which let it stretch full-bleed (banner image
+                  // has `width: double.infinity`) and looked
+                  // detached from the rest of the content.
+                  const SiteInfoFooter(),
                 ],
               )
             : Column(
@@ -193,6 +202,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                 children: [
                   gallery,
                   infoTop, // compact: false → renders details in-place
+                  const SiteInfoFooter(),
                 ],
               ),
       ),
@@ -206,10 +216,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
       body: ListView(
         shrinkWrap: true,
         physics: const ClampingScrollPhysics(),
-        children: [
-          body,
-          const SiteInfoFooter(),
-        ],
+        children: [body],
       ),
     );
   }
