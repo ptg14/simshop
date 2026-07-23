@@ -434,20 +434,25 @@ void main() {
   // right column on PC ends at the stock card, with thumbs +
   // Description + Specs + Buy CTA + Footer flowing below the row.
   //
-  // Threshold (clarified with user): ≥1024 dp uses the 2-col +
-  // thumbs-below-row layout. iPad portrait (768 dp) stays
-  // mobile-style. iPad landscape (1024 dp) and PC/laptop (≥1200 dp)
-  // use the 2-col layout.
+  // Refined later (same conversation): "thêm cả điện thoại nằm
+  // ngang cũng dùng layout giống máy tính" — phone landscape
+  // (~932×430) should ALSO use the 2-col PC layout. Rule is now
+  // orientation-based: anything in landscape → 2-col; anything in
+  // portrait → single column.
   //
   // These tests pin that split by pumping ProductDetailScreen at
   // specific MediaQuery sizes and asserting the structural
   // children — we don't dispatch gestures, the layout choice is
-  // purely a function of MediaQuery.size.width.
+  // purely a function of MediaQuery.orientation (which Flutter
+  // derives from size: width > height → landscape).
   // -----------------------------------------------------------------
 
   // Helper: pump the screen at an explicit viewport size. The
-  // responsive getters read MediaQuery.of(context).size, so an
-  // override at the top of the tree drives the layout choice.
+  // orientation-based rule (see [isProductDetailTwoCol]) reads
+  // MediaQuery.orientation, which Flutter derives from size:
+// width > height → landscape, else portrait. Tests pass a Size
+// whose width-vs-height relationship matches the device class
+// they want to simulate (phone landscape = width > height).
   Widget _wrapSized(Widget child, Size size, {StoreInfo? storeInfo}) {
     final seed = storeInfo ?? const StoreInfo();
     return MaterialApp(
@@ -468,9 +473,10 @@ void main() {
   }
 
   testWidgets(
-      'ProductDetailScreen: at 1280x800 (PC) uses 2-col Row, renders '
-      'InfoSection(compact=true) on the right, DetailsSection below the '
-      'row, and ThumbnailStrip below the row (not inside the gallery)',
+      'ProductDetailScreen: in landscape (1280x800, PC) uses 2-col Row, '
+      'renders InfoSection(compact=true) on the right, DetailsSection '
+      'below the row, and ThumbnailStrip below the row (not inside '
+      'the gallery)',
       (tester) async {
     // Build a product with multiple images so the ThumbnailStrip
     // actually renders (it's hidden for single-image products).
@@ -537,10 +543,10 @@ void main() {
   });
 
   testWidgets(
-      'ProductDetailScreen: at 768x1024 (iPad portrait) uses the '
-      'single-column mobile layout — no gallery+info Row, ThumbnailStrip '
-      'rendered inside the gallery column, InfoSection renders full '
-      'content (no separate DetailsSection)',
+      'ProductDetailScreen: in portrait (768x1024, iPad portrait) uses '
+      'the single-column mobile layout — no gallery+info Row, '
+      'ThumbnailStrip rendered inside the gallery column, InfoSection '
+      'renders full content (no separate DetailsSection)',
       (tester) async {
     final product = Product(
       id: 'p-ipad',
@@ -596,6 +602,63 @@ void main() {
 
     // 3. There should be exactly one ThumbnailStrip on the screen
     //    (inside the gallery column).
+    expect(find.byType(ThumbnailStrip), findsOneWidget);
+  });
+
+  // Phone landscape (~932×430) — the rule added in this turn.
+  //
+  // User said: "thêm cả điện thoại nằm ngang cũng dùng layout giống
+  // máy tính" — phone landscape should use the same 2-col PC layout
+  // as iPad landscape / PC. Under the previous width-based rule
+  // (≥1024 dp), iPhone landscape fell under the threshold because
+  // its width is only ~932 dp. The rule is now orientation-based:
+  // landscape → 2-col, portrait → single col.
+  //
+  // This test pumps the screen at 932×430 (iPhone 14 Pro Max
+  // landscape logical pixels) and asserts the PC layout — same
+  // shape as the 1280×800 PC test above. The Size(932, 430) is the
+  // key: width > height → landscape → 2-col. A test at 430×932
+  // (the same physical device in portrait) would assert the
+  // opposite — see the portrait test above for that.
+  testWidgets(
+      'ProductDetailScreen: in phone landscape (932x430) uses the '
+      '2-col PC layout — same as iPad landscape / PC, even though '
+      'width < 1024 dp',
+      (tester) async {
+    final product = Product(
+      id: 'p-phone-land',
+      name: 'Phone landscape test product',
+      description: 'Phone landscape layout test',
+      price: 199000,
+      imageUrl: '',
+      category: 'Áo',
+      rating: 4.5,
+      specs: const ['Spec A'],
+      images: const ['https://example.com/1.jpg', 'https://example.com/2.jpg'],
+    );
+    await tester.pumpWidget(_wrapSized(
+      ProductDetailScreen(product: product),
+      const Size(932, 430), // width > height → landscape
+    ));
+    await tester.pump();
+
+    // Same structural assertions as the PC test: InfoSection +
+    // DetailsSection are SIBLINGS, the strip lives below the row.
+    expect(find.byType(InfoSection), findsOneWidget);
+    expect(find.byType(DetailsSection), findsOneWidget);
+    expect(
+      find.descendant(of: find.byType(InfoSection), matching: find.byType(DetailsSection)),
+      findsNothing,
+      reason: 'phone landscape must use compact InfoSection — '
+          'DetailsSection is a sibling below the row, not a child of '
+          'the right column',
+    );
+    expect(
+      find.descendant(of: find.byType(GallerySection), matching: find.byType(ThumbnailStrip)),
+      findsNothing,
+      reason: 'phone landscape must render the ThumbnailStrip below the '
+          'row, not inside the gallery column',
+    );
     expect(find.byType(ThumbnailStrip), findsOneWidget);
   });
 }

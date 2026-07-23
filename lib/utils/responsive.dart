@@ -6,17 +6,17 @@ class Breakpoints {
   static const double tablet = 900;
   static const double desktop = 1200;
 
-  /// Width at which the product-detail screen switches from the
-  /// single-column mobile-style layout (gallery on top, info
-  /// below) to the 2-column PC/laptop layout (gallery on the left,
-  /// info on the right, with the thumbnail strip + description +
-  /// specs + buy CTA flowing below the row).
+  /// Width threshold kept for callers that want a static fallback
+  /// (e.g. tests that build MediaQuery without orientation). The
+  /// product-detail screen itself uses the orientation-based
+  /// getter [isProductDetailTwoCol] — see that getter for the
+  /// rule.
   ///
-  /// Picked at 1024 dp so iPad landscape (1024 dp) uses the
-  /// PC-style layout while iPad portrait (768 dp) stays
-  /// mobile-style. This is intentionally narrower than
-  /// [desktop] (1200 dp) because the 2-column product gallery
-  /// still fits comfortably at 1024 dp.
+  /// History: was 1024 dp when the rule was "width >= 1024 dp
+  /// switches to the 2-col layout". Replaced with orientation
+  /// because iPhone landscape (~932 dp wide) falls under 1024 dp
+  /// but should still use the 2-col PC layout. Kept as a constant
+  /// so tests + future code can pin to a number if they want.
   static const double productDetailTwoCol = 1024;
 
   static bool isMobile(double width) => width < mobile;
@@ -196,13 +196,22 @@ extension ResponsiveContext on BuildContext {
   /// the thumbnail strip + description + specs + buy CTA rendered
   /// below the row in the main flow.
   ///
-  /// False on phones and iPad portrait — those keep the
-  /// single-column mobile-style layout with the thumbnail strip
-  /// rendered directly below the gallery's [PageView].
+  /// Rule: **orientation-based** — true when the device is in
+  /// landscape (`MediaQuery.of(context).orientation ==
+  /// Orientation.landscape`), false in portrait. This covers:
+  ///   * PC / laptop (landscape) → 2-col
+  ///   * iPad landscape (1024×768) → 2-col
+  ///   * iPad split-view landscape → 2-col
+  ///   * iPhone landscape (~932×430) → 2-col
+  ///   * iPad portrait (768×1024) → single col (mobile)
+  ///   * iPhone portrait (~390×844) → single col (mobile)
   ///
-  /// Threshold: [Breakpoints.productDetailTwoCol] (1024 dp).
+  /// History: was width-based with a 1024 dp threshold. Replaced
+  /// because iPhone landscape (~932 dp wide) falls under 1024 dp
+  /// but should use the 2-col layout — and orientation is the
+  /// intent: "anything wider than tall uses the desktop layout".
   bool get isProductDetailTwoCol =>
-      screenWidth >= Breakpoints.productDetailTwoCol;
+      MediaQuery.of(this).orientation == Orientation.landscape;
 
   /// Responsive cell height for the product grid in dp. Used as the
   /// `mainAxisExtent` of the [SliverGridDelegate] so the cell

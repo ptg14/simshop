@@ -33,19 +33,25 @@ String resolveStoreMapUrl(StoreInfo info) {
 }
 
 /// Product detail screen — whole-screen redesign (2026-07-23)
-/// + iPad/PC layout split.
+/// + orientation-based layout split.
 ///
 /// Layout:
-///   * Mobile / iPad portrait (<1024dp): single column — gallery
+///   * Portrait (phones + iPad portrait): single column — gallery
 ///     on top (with the thumbnail strip rendered inside the
 ///     gallery column), info column below with categories →
 ///     options → name → price → stock card → description →
 ///     specs → Buy CTA in vertical order.
-///   * iPad landscape / PC / laptop (≥1024dp): 2-column Row —
-///     gallery 60% on left, info column 40% on right. The right
-///     column stops at the stock card. The thumbnail strip +
-///     description + specs + Buy CTA flow below the row at full
-///     content width.
+///   * Landscape (phones landscape + iPad landscape + PC / laptop):
+///     2-column Row — gallery 60% on left, info column 40% on
+///     right. The right column stops at the stock card. The
+///     thumbnail strip + description + specs + Buy CTA flow below
+///     the row at full content width.
+///
+/// The threshold is orientation-based, not width-based, because
+/// iPhone landscape (~932 dp wide) falls under the previous 1024
+/// dp width threshold but should still use the 2-column PC
+/// layout — see [Breakpoints.productDetailTwoCol] and
+/// `context.isProductDetailTwoCol`.
 ///
 /// The gallery uses [GallerySection] (a native `PageView` with a
 /// thumbnail strip, keyboard arrows on desktop, and tap-to-lightbox)
