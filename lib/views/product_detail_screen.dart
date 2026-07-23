@@ -4,6 +4,7 @@ import '../models/product.dart';
 import '../models/store_info.dart';
 import '../utils/responsive.dart';
 import '../widgets/site_info_footer.dart';
+import 'product_detail_screen/_details_section.dart';
 import 'product_detail_screen/_gallery_section.dart';
 import 'product_detail_screen/_info_section.dart';
 
@@ -31,12 +32,20 @@ String resolveStoreMapUrl(StoreInfo info) {
   return '';
 }
 
-/// Product detail screen — whole-screen redesign (2026-07-23).
+/// Product detail screen — whole-screen redesign (2026-07-23)
+/// + iPad/PC layout split.
 ///
 /// Layout:
-///   * Mobile (<600dp): single column — gallery on top, info below.
-///   * Tablet/Desktop (≥600dp): 2-column Row — gallery 60% on left,
-///     info column 40% on right.
+///   * Mobile / iPad portrait (<1024dp): single column — gallery
+///     on top (with the thumbnail strip rendered inside the
+///     gallery column), info column below with categories →
+///     options → name → price → stock card → description →
+///     specs → Buy CTA in vertical order.
+///   * iPad landscape / PC / laptop (≥1024dp): 2-column Row —
+///     gallery 60% on left, info column 40% on right. The right
+///     column stops at the stock card. The thumbnail strip +
+///     description + specs + Buy CTA flow below the row at full
+///     content width.
 ///
 /// The gallery uses [GallerySection] (a native `PageView` with a
 /// thumbnail strip, keyboard arrows on desktop, and tap-to-lightbox)
@@ -87,8 +96,12 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final galleryImages = _galleryImages();
-    final isWide = context.isTabletOrUp;
+    final isTwoCol = context.isProductDetailTwoCol;
 
+    // The gallery widget itself (PageView + lightbox tap target).
+    // On mobile / iPad portrait we wrap it with the thumbnail strip
+    // below; on PC / laptop the strip is rendered below the row
+    // instead, so the gallery widget stays a single child.
     final gallery = Container(
       color: scheme.surfaceContainerLowest,
       child: Column(
@@ -101,7 +114,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
             scheme: scheme,
             activeIndex: _activeImageIndex,
           ),
-          if (galleryImages.length > 1)
+          if (!isTwoCol && galleryImages.length > 1)
             Padding(
               padding: const EdgeInsets.symmetric(vertical: 8),
               child: ThumbnailStrip(
@@ -114,7 +127,10 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
       ),
     );
 
-    final info = InfoSection(
+    // PC/laptop: the right column only carries the top half
+    // (categories → options → name → price → stock card). The
+    // bottom half lives in [DetailsSection] below the row.
+    final infoTop = InfoSection(
       product: product,
       selectedOptionId: _selectedOptionId,
       onSelectOption: (id) => setState(() {
@@ -122,6 +138,58 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
         _activeImageIndex.value = 0; // reset gallery on option change
       }),
       scheme: scheme,
+      compact: isTwoCol,
+    );
+
+    // Post-row block: thumbnail strip (PC only, ≥2 images) + the
+    // full details (description + specs + Buy CTA). Skipped on
+    // mobile / iPad portrait because [InfoSection(compact: false)]
+    // already renders the details in-place inside the info column.
+    final Widget postRowContent = isTwoCol
+        ? Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (galleryImages.length > 1)
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 8),
+                  child: ThumbnailStrip(
+                    images: galleryImages,
+                    activeIndex: _activeImageIndex,
+                    scheme: scheme,
+                  ),
+                ),
+              DetailsSection(product: product, scheme: scheme),
+            ],
+          )
+        : infoTop;
+
+    final Widget body = Center(
+      child: Container(
+        constraints: BoxConstraints(maxWidth: context.maxContentWidth),
+        child: isTwoCol
+            ? Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  IntrinsicHeight(
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Expanded(flex: 3, child: gallery),
+                        Expanded(flex: 2, child: infoTop),
+                      ],
+                    ),
+                  ),
+                  postRowContent,
+                ],
+              )
+            : Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  gallery,
+                  infoTop, // compact: false → renders details in-place
+                ],
+              ),
+      ),
     );
 
     return Scaffold(
@@ -133,28 +201,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
         shrinkWrap: true,
         physics: const ClampingScrollPhysics(),
         children: [
-          Center(
-            child: Container(
-              constraints: BoxConstraints(maxWidth: context.maxContentWidth),
-              child: isWide
-                  ? IntrinsicHeight(
-                      child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Expanded(flex: 3, child: gallery),
-                          Expanded(flex: 2, child: info),
-                        ],
-                      ),
-                    )
-                  : Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        gallery,
-                        info,
-                      ],
-                    ),
-            ),
-          ),
+          body,
           const SiteInfoFooter(),
         ],
       ),

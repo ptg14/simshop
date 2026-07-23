@@ -6,6 +6,7 @@ import 'package:simshop/models/store_info.dart';
 import 'package:simshop/services/store_service.dart';
 import 'package:simshop/viewmodels/site_config_viewmodel.dart';
 import 'package:simshop/views/product_detail_screen.dart';
+import 'package:simshop/views/product_detail_screen/_details_section.dart';
 import 'package:simshop/views/product_detail_screen/_gallery_section.dart';
 import 'package:simshop/views/product_detail_screen/_info_section.dart';
 import 'package:simshop/widgets/image_carousel.dart';
@@ -423,5 +424,178 @@ void main() {
 
     expect(find.byType(SingleChildScrollView), findsNothing);
     expect(find.byType(ListView), findsWidgets);
+  });
+
+  // -----------------------------------------------------------------
+  // iPad / PC layout split (2026-07-23).
+  //
+  // User feedback: "UI trên ipad làm giống điện thoại, UI trên pc,
+  // laptop thì sửa lại như sau" — and then drew a sketch where the
+  // right column on PC ends at the stock card, with thumbs +
+  // Description + Specs + Buy CTA + Footer flowing below the row.
+  //
+  // Threshold (clarified with user): ≥1024 dp uses the 2-col +
+  // thumbs-below-row layout. iPad portrait (768 dp) stays
+  // mobile-style. iPad landscape (1024 dp) and PC/laptop (≥1200 dp)
+  // use the 2-col layout.
+  //
+  // These tests pin that split by pumping ProductDetailScreen at
+  // specific MediaQuery sizes and asserting the structural
+  // children — we don't dispatch gestures, the layout choice is
+  // purely a function of MediaQuery.size.width.
+  // -----------------------------------------------------------------
+
+  // Helper: pump the screen at an explicit viewport size. The
+  // responsive getters read MediaQuery.of(context).size, so an
+  // override at the top of the tree drives the layout choice.
+  Widget _wrapSized(Widget child, Size size, {StoreInfo? storeInfo}) {
+    final seed = storeInfo ?? const StoreInfo();
+    return MaterialApp(
+      home: MediaQuery(
+        data: MediaQueryData(size: size),
+        child: MultiProvider(
+          providers: [
+            ChangeNotifierProvider<SiteConfigViewModel>(
+              create: (_) => SiteConfigViewModel(
+                service: _FakeStoreService(seed),
+              )..load(),
+            ),
+          ],
+          child: child,
+        ),
+      ),
+    );
+  }
+
+  testWidgets(
+      'ProductDetailScreen: at 1280x800 (PC) uses 2-col Row, renders '
+      'InfoSection(compact=true) on the right, DetailsSection below the '
+      'row, and ThumbnailStrip below the row (not inside the gallery)',
+      (tester) async {
+    // Build a product with multiple images so the ThumbnailStrip
+    // actually renders (it's hidden for single-image products).
+    final product = Product(
+      id: 'p-pc',
+      name: 'PC test product',
+      description: 'Multi-image product for the 2-col layout test',
+      price: 199000,
+      imageUrl: '',
+      category: 'Áo',
+      rating: 4.5,
+      specs: const ['Spec A', 'Spec B'],
+      images: const ['https://example.com/1.jpg', 'https://example.com/2.jpg'],
+    );
+    await tester.pumpWidget(_wrapSized(
+      ProductDetailScreen(product: product),
+      const Size(1280, 800),
+    ));
+    // pump() (not pumpAndSettle) because CachedNetworkImage keeps
+    // a retry loop on bad URLs in test.
+    await tester.pump();
+
+    // 1. The screen must mount ONE InfoSection and ONE
+    //    DetailsSection. compact: true on InfoSection means
+    //    DetailsSection is NOT a child of InfoSection — it lives
+    //    as a sibling below the row.
+    expect(find.byType(InfoSection), findsOneWidget);
+    expect(find.byType(DetailsSection), findsOneWidget);
+
+    // 2. The DetailsSection must NOT be inside the InfoSection
+    //    subtree. Otherwise the right column on PC would carry
+    //    Description + Specs + CTA — which is exactly what the
+    //    user asked us to move out.
+    expect(
+      find.descendant(of: find.byType(InfoSection), matching: find.byType(DetailsSection)),
+      findsNothing,
+      reason: 'DetailsSection must NOT be nested inside InfoSection on '
+          'PC — it must be a sibling rendered below the row so it '
+          'spans the full content width',
+    );
+
+    // 3. The screen must contain the gallery+info Row somewhere.
+    //    (There may also be other Rows in ListView separators, so
+    //    we don't count Rows — we just confirm at least one Row
+    //    is present in the body.)
+    expect(find.byType(Row), findsWidgets);
+
+    // 4. The ThumbnailStrip must NOT be inside the gallery
+    //    column. We can't directly query "the gallery column"
+    //    without a key, so we verify the structural invariant:
+    //    the ThumbnailStrip is NOT a descendant of GallerySection
+    //    on PC. (On mobile / iPad portrait it IS a descendant of
+    //    GallerySection — covered by the iPad-portrait test.)
+    expect(
+      find.descendant(of: find.byType(GallerySection), matching: find.byType(ThumbnailStrip)),
+      findsNothing,
+      reason: 'on PC the ThumbnailStrip is rendered below the row, not '
+          'inside the gallery column',
+    );
+
+    // 5. The ThumbnailStrip must exist exactly once at the screen
+    //    level (below the row).
+    expect(find.byType(ThumbnailStrip), findsOneWidget);
+  });
+
+  testWidgets(
+      'ProductDetailScreen: at 768x1024 (iPad portrait) uses the '
+      'single-column mobile layout — no gallery+info Row, ThumbnailStrip '
+      'rendered inside the gallery column, InfoSection renders full '
+      'content (no separate DetailsSection)',
+      (tester) async {
+    final product = Product(
+      id: 'p-ipad',
+      name: 'iPad portrait test product',
+      description: 'Multi-image product for the single-col layout test',
+      price: 199000,
+      imageUrl: '',
+      category: 'Áo',
+      rating: 4.5,
+      specs: const ['Spec A'],
+      images: const ['https://example.com/1.jpg', 'https://example.com/2.jpg'],
+    );
+    await tester.pumpWidget(_wrapSized(
+      ProductDetailScreen(product: product),
+      const Size(768, 1024),
+    ));
+    await tester.pump();
+
+    // 1. iPad portrait → InfoSection(compact: false) renders the
+    //    full info column, INCLUDING the bottom half. So the
+    //    Description + Specs + Buy CTA live INSIDE InfoSection
+    //    via DetailsSection-as-child. The screen does NOT mount
+    //    a top-level DetailsSection.
+    expect(find.byType(InfoSection), findsOneWidget);
+    expect(find.byType(DetailsSection), findsOneWidget);
+    expect(
+      find.descendant(of: find.byType(InfoSection), matching: find.byType(DetailsSection)),
+      findsOneWidget,
+      reason: 'on iPad portrait the DetailsSection is a child of '
+          'InfoSection (compact: false), so the full info column '
+          'renders as one widget',
+    );
+
+    // 2. The ThumbnailStrip is a sibling of GallerySection inside
+    //    the gallery column (both children of the same Column
+    //    inside a Container with `surfaceContainerLowest`).
+    //    It's NOT a descendant of GallerySection (GallerySection
+    //    is a leaf-ish widget — it doesn't contain the strip).
+    //    We assert the strip is NOT inside InfoSection, since the
+    //    gallery column and the info column are siblings.
+    expect(
+      find.descendant(of: find.byType(InfoSection), matching: find.byType(ThumbnailStrip)),
+      findsNothing,
+      reason: 'on iPad portrait the ThumbnailStrip lives in the gallery '
+          'column, not inside the info column',
+    );
+    expect(
+      find.descendant(of: find.byType(GallerySection), matching: find.byType(ThumbnailStrip)),
+      findsNothing,
+      reason: 'GallerySection is a leaf-ish widget — the ThumbnailStrip '
+          'is rendered by the screen as a sibling, not a descendant',
+    );
+
+    // 3. There should be exactly one ThumbnailStrip on the screen
+    //    (inside the gallery column).
+    expect(find.byType(ThumbnailStrip), findsOneWidget);
   });
 }

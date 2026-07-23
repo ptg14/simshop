@@ -1,13 +1,9 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
-import 'package:provider/provider.dart';
-import 'package:url_launcher/url_launcher.dart';
 
 import '../../models/product.dart';
 import '../../utils/currency_formatter.dart';
 import '../../utils/responsive.dart';
-import '../../viewmodels/site_config_viewmodel.dart';
-import '../product_detail_screen.dart' show resolveStoreMapUrl;
+import '_details_section.dart';
 
 /// Right column (or below-gallery section on mobile) of the
 /// product-detail screen. Extracted from the inline `Column` so
@@ -20,6 +16,7 @@ class InfoSection extends StatelessWidget {
     required this.selectedOptionId,
     required this.onSelectOption,
     required this.scheme,
+    this.compact = false,
   });
 
   final Product product;
@@ -27,10 +24,13 @@ class InfoSection extends StatelessWidget {
   final ValueChanged<String?> onSelectOption;
   final ColorScheme scheme;
 
-  Future<void> _openMap(BuildContext context, String url) async {
-    final uri = Uri.parse(url);
-    await launchUrl(uri, mode: LaunchMode.externalApplication);
-  }
+  /// When true, render ONLY the top half of the info column —
+  /// categories → options → name → price → stock card. Description,
+  /// specs and the Buy CTA are moved to [DetailsSection] so the
+  /// PC/laptop 2-column layout can place them below the row in the
+  /// main flow. Mobile / iPad portrait pass `compact: false` so
+  /// this widget still owns the full info column (current behavior).
+  final bool compact;
 
   @override
   Widget build(BuildContext context) {
@@ -39,7 +39,7 @@ class InfoSection extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          if (!context.isMobile && product.isOnSale)
+          if (context.isProductDetailTwoCol && product.isOnSale)
             _DiscountRibbon(product: product, scheme: scheme),
 
           if (product.categories.any((c) => c.trim().isNotEmpty)) ...[
@@ -151,153 +151,13 @@ class InfoSection extends StatelessWidget {
               desktop: 32,
             ),
           ),
-          Text(
-            'Mô tả sản phẩm',
-            style: TextStyle(
-              fontWeight: FontWeight.bold,
-              fontSize: context.responsive<double>(
-                mobile: 16,
-                tablet: 18,
-                desktop: 20,
-              ),
-              color: scheme.onSurface,
-            ),
-          ),
-          SizedBox(
-            height: context.responsive<double>(
-              mobile: 8,
-              tablet: 10,
-              desktop: 12,
-            ),
-          ),
-          MarkdownBody(
-            data: product.description.isEmpty
-                ? '_(Sản phẩm chưa có mô tả)_'
-                : product.description,
-            selectable: true,
-            styleSheet:
-                MarkdownStyleSheet.fromTheme(Theme.of(context)),
-          ),
-          SizedBox(
-            height: context.responsive<double>(
-              mobile: 24,
-              tablet: 28,
-              desktop: 32,
-            ),
-          ),
-          if (product.specs.isNotEmpty) ...[
-            Text(
-              'Thông số kỹ thuật',
-              style: TextStyle(
-                fontWeight: FontWeight.bold,
-                fontSize: context.responsive<double>(
-                  mobile: 16,
-                  tablet: 18,
-                  desktop: 20,
-                ),
-                color: scheme.onSurface,
-              ),
-            ),
-            SizedBox(
-              height: context.responsive<double>(
-                mobile: 12,
-                tablet: 14,
-                desktop: 16,
-              ),
-            ),
-            ...product.specs.map((spec) => Padding(
-                  padding: EdgeInsets.only(
-                    bottom: context.responsive<double>(
-                      mobile: 8,
-                      tablet: 10,
-                      desktop: 12,
-                    ),
-                  ),
-                  child: Row(
-                    children: [
-                      Icon(
-                        Icons.check_circle_outline,
-                        color: scheme.primary,
-                        size: context.responsive<double>(
-                          mobile: 20,
-                          tablet: 22,
-                          desktop: 24,
-                        ),
-                      ),
-                      SizedBox(
-                        width: context.responsive<double>(
-                          mobile: 12,
-                          tablet: 14,
-                          desktop: 16,
-                        ),
-                      ),
-                      Expanded(
-                        child: Text(
-                          spec,
-                          style: TextStyle(
-                            fontSize: context.responsive<double>(
-                              mobile: 14,
-                              tablet: 15,
-                              desktop: 16,
-                            ),
-                            color: scheme.onSurface,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                )),
-            SizedBox(
-              height: context.responsive<double>(
-                mobile: 24,
-                tablet: 28,
-                desktop: 32,
-              ),
-            ),
-          ],
-          Consumer<SiteConfigViewModel>(
-            builder: (context, vm, _) {
-              final info = vm.siteInfo;
-              final url = resolveStoreMapUrl(info);
-              if (url.isEmpty) return const SizedBox.shrink();
-              final addressLine = info.address.isNotEmpty
-                  ? info.address
-                  : 'cửa hàng';
-              return Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'Mua trực tiếp tại:',
-                    style: TextStyle(
-                      fontWeight: FontWeight.w600,
-                      fontSize: context.responsive<double>(
-                        mobile: 14,
-                        tablet: 15,
-                        desktop: 16,
-                      ),
-                      color: scheme.onSurface,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  SizedBox(
-                    key: const Key('buy-at-store-cta'),
-                    width: double.infinity,
-                    height: context.responsive<double>(
-                      mobile: 56,
-                      tablet: 52,
-                      desktop: 48,
-                    ),
-                    child: FilledButton.icon(
-                      onPressed: () => _openMap(context, url),
-                      icon: const Icon(Icons.place_outlined),
-                      label: Text(addressLine),
-                    ),
-                  ),
-                ],
-              );
-            },
-          ),
-          const SizedBox(height: 32),
+          // compact = true: end the right column here. Description,
+          // specs and the Buy CTA are owned by [DetailsSection] and
+          // mounted directly below the row by the screen (PC/laptop).
+          // compact = false: render the bottom half inside this same
+          // widget so the mobile / iPad-portrait path is unchanged
+          // from before the layout split.
+          if (!compact) DetailsSection(product: product, scheme: scheme),
         ],
       ),
     );
@@ -342,7 +202,22 @@ class _PriceRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Row(
+    // On PC/laptop the right column on the 2-col layout is
+    // ~480 dp wide minus 96 dp horizontalPadding = 384 dp of
+    // content. Price text + strikethrough + 20 dp gap + 20 dp gap
+    // + discount chip at desktop font sizes overflows that. Wrap
+    // in a [Wrap] so children flow to a second row when the
+    // column is narrow instead of overflowing. Gap tokens mirror
+    // the original [Row] layout — they become [Wrap.spacing] when
+    // children fit on one line.
+    return Wrap(
+      spacing: context.responsive<double>(
+        mobile: 12,
+        tablet: 16,
+        desktop: 20,
+      ),
+      runSpacing: 6,
+      crossAxisAlignment: WrapCrossAlignment.center,
       children: [
         Text(
           formatCurrency(product.effectivePayPrice),
@@ -357,33 +232,17 @@ class _PriceRow extends StatelessWidget {
           ),
         ),
         if (product.isOnSale) ...[
-          SizedBox(
-            width: context.responsive<double>(
-              mobile: 12,
-              tablet: 16,
-              desktop: 20,
-            ),
-          ),
-          Flexible(
-            child: Text(
-              formatCurrency(product.price),
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                color: scheme.onSurfaceVariant,
-                decoration: TextDecoration.lineThrough,
-                fontSize: context.responsive<double>(
-                  mobile: 16,
-                  tablet: 18,
-                  desktop: 20,
-                ),
+          Text(
+            formatCurrency(product.price),
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: scheme.onSurfaceVariant,
+              decoration: TextDecoration.lineThrough,
+              fontSize: context.responsive<double>(
+                mobile: 16,
+                tablet: 18,
+                desktop: 20,
               ),
-            ),
-          ),
-          SizedBox(
-            width: context.responsive<double>(
-              mobile: 12,
-              tablet: 16,
-              desktop: 20,
             ),
           ),
           Container(

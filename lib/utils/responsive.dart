@@ -6,6 +6,19 @@ class Breakpoints {
   static const double tablet = 900;
   static const double desktop = 1200;
 
+  /// Width at which the product-detail screen switches from the
+  /// single-column mobile-style layout (gallery on top, info
+  /// below) to the 2-column PC/laptop layout (gallery on the left,
+  /// info on the right, with the thumbnail strip + description +
+  /// specs + buy CTA flowing below the row).
+  ///
+  /// Picked at 1024 dp so iPad landscape (1024 dp) uses the
+  /// PC-style layout while iPad portrait (768 dp) stays
+  /// mobile-style. This is intentionally narrower than
+  /// [desktop] (1200 dp) because the 2-column product gallery
+  /// still fits comfortably at 1024 dp.
+  static const double productDetailTwoCol = 1024;
+
   static bool isMobile(double width) => width < mobile;
   static bool isTablet(double width) => width >= mobile && width < desktop;
   static bool isDesktop(double width) => width >= desktop;
@@ -171,9 +184,25 @@ extension ResponsiveContext on BuildContext {
 
   /// True when the screen is wide enough for the product-detail
   /// 2-column layout (gallery left, info right). Threshold is
-  /// [Breakpoints.mobile] (600 dp) — the same breakpoint that
-  /// switches the home page to a wider grid.
+  /// [Breakpoints.mobile] (600 dp) — used by the home grid + admin
+  /// rail for the "tablet-or-wider" decision. The product-detail
+  /// screen itself uses [isProductDetailTwoCol] (≥1024 dp) instead,
+  /// because we want iPad portrait (768 dp) to stay mobile-style
+  /// while iPad landscape (1024 dp) gets the 2-column layout.
   bool get isTabletOrUp => screenWidth >= Breakpoints.mobile;
+
+  /// True when the product-detail screen should render the
+  /// 2-column Row (gallery on the left, info on the right) with
+  /// the thumbnail strip + description + specs + buy CTA rendered
+  /// below the row in the main flow.
+  ///
+  /// False on phones and iPad portrait — those keep the
+  /// single-column mobile-style layout with the thumbnail strip
+  /// rendered directly below the gallery's [PageView].
+  ///
+  /// Threshold: [Breakpoints.productDetailTwoCol] (1024 dp).
+  bool get isProductDetailTwoCol =>
+      screenWidth >= Breakpoints.productDetailTwoCol;
 
   /// Responsive cell height for the product grid in dp. Used as the
   /// `mainAxisExtent` of the [SliverGridDelegate] so the cell
