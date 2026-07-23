@@ -48,14 +48,62 @@ class _GallerySectionState extends State<GallerySection> {
   late final PageController _pageController;
   int _activeIndex = 0;
 
+  // The notifier we are currently subscribed to. Tracked so we can
+  // detach the listener in dispose / didUpdateWidget when the
+  // parent's notifier reference changes.
+  ValueNotifier<int>? _subscribedNotifier;
+  late final void Function() _notifierListener;
+
   @override
   void initState() {
     super.initState();
     _pageController = PageController();
+    // Stored as a tear-off so we can pass the same reference to
+    // removeListener later.
+    _notifierListener = _onNotifierChanged;
+    _subscribeToNotifier(widget.activeIndex);
+  }
+
+  @override
+  void didUpdateWidget(GallerySection oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!identical(widget.activeIndex, oldWidget.activeIndex)) {
+      _subscribeToNotifier(widget.activeIndex);
+    }
+  }
+
+  void _subscribeToNotifier(ValueNotifier<int>? notifier) {
+    if (identical(_subscribedNotifier, notifier)) return;
+    if (_subscribedNotifier != null) {
+      _subscribedNotifier!.removeListener(_notifierListener);
+    }
+    _subscribedNotifier = notifier;
+    _subscribedNotifier?.addListener(_notifierListener);
+  }
+
+  /// Reacts to external writes to [widget.activeIndex] — typically
+  /// from [ThumbnailStrip] when the user taps a thumbnail. Writes
+  /// from `_next` / `_previous` are filtered out (`notifier.value`
+  /// already matches `_activeIndex`) so we never feed back into our
+  /// own animation.
+  void _onNotifierChanged() {
+    final notifier = _subscribedNotifier;
+    if (notifier == null) return;
+    final target = notifier.value;
+    if (target == _activeIndex) return; // we wrote this ourselves
+    if (target < 0 || target >= widget.images.length) return;
+    if (!_pageController.hasClients) return; // not attached yet
+    _pageController.animateToPage(
+      target,
+      duration: const Duration(milliseconds: 250),
+      curve: Curves.easeOut,
+    );
+    setState(() => _activeIndex = target);
   }
 
   @override
   void dispose() {
+    _subscribedNotifier?.removeListener(_notifierListener);
     _pageController.dispose();
     super.dispose();
   }
@@ -63,13 +111,19 @@ class _GallerySectionState extends State<GallerySection> {
   void _next() {
     if (_activeIndex < widget.images.length - 1) {
       final next = _activeIndex + 1;
+      // Update our own index FIRST so the listener (when we write
+      // the notifier below) sees `target == _activeIndex` and skips
+      // its own redundant `animateToPage`.
+      setState(() => _activeIndex = next);
       _pageController.nextPage(
         duration: const Duration(milliseconds: 250),
         curve: Curves.easeOut,
       );
       // The notifier will also be updated by onPageChanged when the
       // animation settles — but writing here too gives an immediate
-      // visual response to keyboard arrows / chevron taps.
+      // visual response (the thumbnail strip's highlight) to
+      // keyboard arrows / chevron taps, without waiting 250 ms for
+      // the animation.
       widget.activeIndex?.value = next;
     }
   }
@@ -77,6 +131,7 @@ class _GallerySectionState extends State<GallerySection> {
   void _previous() {
     if (_activeIndex > 0) {
       final prev = _activeIndex - 1;
+      setState(() => _activeIndex = prev);
       _pageController.previousPage(
         duration: const Duration(milliseconds: 250),
         curve: Curves.easeOut,
