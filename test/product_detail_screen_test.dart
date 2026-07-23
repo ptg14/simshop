@@ -272,126 +272,13 @@ void main() {
     expect(find.text('12 Nguyễn Huệ'), findsWidgets);
   });
 
-// User-reported regression: on iOS Safari (and Chrome DevTools iPhone
-  // emulation) horizontal swipes across the product gallery did
-  // nothing — the customer could see all the dot indicators but
-  // couldn't flip between them, both for the default gallery and for
-  // the variant gallery after picking an option.
-  //
-  // Two earlier fix attempts both passed unit tests but failed in the
-  // browser:
-  //   • A raw [Listener] outside the gesture arena (no arena
-  //     participation → parent's vertical drag always won on iOS).
-  //   • A custom [OneSequenceGestureRecognizer] inside the carousel
-  //     fighting the parent's [SingleChildScrollView] vertical drag
-  //     — the recognizer's TestPointer dispatch passed in
-  //     `flutter_test`, but real WebKit pointer-event timing
-  //     consistently defeated it.
-  //
-  // The fix that actually holds in the browser is a different
-  // scroll-wrapper choice for the screen body — [ListView] instead
-  // of [SingleChildScrollView]. Two structural assertions pin the
-  // fix so a future refactor can't quietly regress it:
-  //
-  //   1. The body scroll view is a [ListView] (NOT a
-  //      [SingleChildScrollView]). The two render the same visually
-  //      but resolve their `VerticalDragGestureRecognizer` slightly
-  //      differently — with [ListView] + the embedded [PageView]'s
-  //      default [PageScrollPhysics], a dominantly horizontal swipe
-  //      is unambiguously claimed by [PageView] first. The vertical
-  //      scroll view only wins a drag that's clearly vertical.
-  //
-  //   2. The carousel's [PageView] uses DEFAULT physics (i.e. NOT
-  //      [NeverScrollableScrollPhysics]). The earlier custom-recognizer
-  //      approach gave [PageView] `NeverScrollableScrollPhysics` to
-  //      keep its built-in drag recognizer out of the arena while
-  //      the custom one drove [PageController] — but that left the
-  //      whole carousel dependent on the recognizer firing in the
-  //      right sequence. With [PageView] in charge of its own drag
-  //      (default physics) and a [ListView] parent that doesn't
-  //      compete on a dominantly horizontal swipe, the carousel just
-  //      works on every platform, including iOS Safari.
-  //
-  // Why we DON'T dispatch [TestPointer] events here any more:
-  // `flutter_test`'s gesture simulation cannot reproduce WebKit's
-  // real pointer-event timing — every earlier attempt passed in
-  // tests but stuck in the browser. The structural assertions are
-  // what guards the actual fix.
-  testWidgets(
-      'ProductDetailScreen: body wraps content in a ListView (not '
-      'SingleChildScrollView) so the carousel wins horizontal swipes',
-      (tester) async {
-    final product = _buildProduct();
-    await tester.pumpWidget(_wrap(ProductDetailScreen(product: product)));
-    // We use `pump()` (not `pumpAndSettle`) because the carousel
-    // mounts `AppNetworkImage` widgets that retry forever when
-    // given an empty URL in test — `pumpAndSettle` would never
-    // return. We're only inspecting widget configs here, not
-    // waiting for the page to fully paint.
-    await tester.pump();
-
-    // 1. The body must be a [ListView], not a [SingleChildScrollView].
-    // Both render identically to the eye; the difference is in how
-    // they resolve their `VerticalDragGestureRecognizer` when a child
-    // [PageView] also wants the same pointer sequence. On iOS Safari,
-    // only [ListView] (as the parent of an embedded [PageView]) lets
-    // a dominantly horizontal swipe reach the carousel.
-    expect(find.byType(SingleChildScrollView), findsNothing,
-        reason:
-            'on iOS Safari the parent SingleChildScrollView was claiming '
-            'horizontal swipes inside the carousel, leaving it "stuck". '
-            'The screen body must use [ListView] instead — both render '
-            'the same scroll behaviour visually, but [ListView] doesn\'t '
-            'fight [PageView] in the gesture arena on a horizontal drag');
-    expect(find.byType(ListView), findsWidgets,
-        reason: 'the screen body should now be a ListView (shrinkWrap)');
-  });
-
-  testWidgets(
-      'ProductDetailScreen: carousel PageView owns its horizontal drag '
-      '(default physics, not NeverScrollableScrollPhysics)',
-      (tester) async {
-    final product = _buildProduct();
-    await tester.pumpWidget(_wrap(ProductDetailScreen(product: product)));
-    await tester.pump();
-
-    final pageView = tester.widget<PageView>(find.byType(PageView));
-    final physics = pageView.physics;
-    // 2. The [PageView] must use DEFAULT physics — i.e. NOT
-    // [NeverScrollableScrollPhysics] (the workaround the prior
-    // custom-recognizer approach needed). With default physics the
-    // carousel drives its own horizontal drag; the surrounding
-    // [ListView] doesn't compete on a dominantly horizontal swipe,
-    // so real iOS Safari pointer events flow through cleanly.
-    //
-    // Note: when [PageView] is constructed with `physics: null`
-    // (i.e. the default), the property reads back as null. The
-    // PageView internally instantiates `PageScrollPhysics()` if no
-    // explicit physics is given — that's the "default" case our fix
-    // wants. We accept either null (no explicit physics) or any
-    // [PageScrollPhysics]-derived type, and reject only
-    // [NeverScrollableScrollPhysics].
-    expect(physics == null || physics is PageScrollPhysics, isTrue,
-        reason:
-            'the carousel PageView must own its own horizontal drag '
-            '(default PageScrollPhysics). The previous approach gave it '
-            'NeverScrollableScrollPhysics while a custom recognizer drove '
-            'PageController — that path passed unit tests but failed in '
-            'the browser because WebKit pointer-event timing is what '
-            'flutter_test can\'t reliably reproduce.');
-    expect(physics, isNot(isA<NeverScrollableScrollPhysics>()),
-        reason:
-            'NeverScrollableScrollPhysics is the workaround from the '
-            'prior custom-recognizer approach — it kept [PageView]\'s '
-            'own drag recognizer out of the gesture arena. The fix is '
-            'to let [PageView] drive its own drag, so this MUST be gone');
-  });
-
   // -----------------------------------------------------------------
-  // Whole-screen redesign (2026-07-23) — assert the architectural
-  // decisions, not the gesture behavior (which still needs the
-  // real-browser verification in [[simshop-product-detail-redesign-2026-07-23]]
-  // because flutter_test cannot reproduce WebKit pointer-event timing).
+  // Whole-screen redesign (2026-07-23) — the screen no longer uses the
+  // shared [ImageCarousel] at all (the iOS swipe-stuck bug was specific
+  // to that widget's [SingleChildScrollView] nesting). It now uses
+  // [GallerySection] which has its own PageView — see
+  // `test/gallery_section_test.dart` for the gallery-level physics and
+  // gesture coverage.
   // -----------------------------------------------------------------
 
   testWidgets(
@@ -423,7 +310,12 @@ void main() {
     await tester.pumpWidget(_wrap(ProductDetailScreen(product: product)));
     await tester.pump();
 
-    expect(find.byType(SingleChildScrollView), findsNothing);
+    expect(find.byType(SingleChildScrollView), findsNothing,
+        reason:
+            'SingleChildScrollView is what caused the iOS swipe-stuck '
+            'regression on the old shared ImageCarousel; even though the '
+            'screen now uses GallerySection, the body must remain a '
+            'ListView so the redesign stays consistent with the fix.');
     expect(find.byType(ListView), findsWidgets);
   });
 

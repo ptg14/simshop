@@ -17,20 +17,6 @@ void main() {
     return tester.element(find.byType(SizedBox)).productDetailImageHeight;
   }
 
-  Future<bool> readIsTablet(WidgetTester tester, double width) async {
-    await tester.pumpWidget(MaterialApp(
-      home: MediaQuery(
-        data: MediaQueryData(size: Size(width, 800)),
-        child: Builder(builder: (context) {
-          // ignore: unused_local_variable
-          final _ = context.isTabletOrUp;
-          return const SizedBox.shrink();
-        }),
-      ),
-    ));
-    return tester.element(find.byType(SizedBox)).isTabletOrUp;
-  }
-
   testWidgets('productDetailImageHeight: mobile=320, tablet=480, desktop=600',
       (tester) async {
     expect(await readHeight(tester, 390), 320);
@@ -38,17 +24,10 @@ void main() {
     expect(await readHeight(tester, 1280), 600);
   });
 
-  testWidgets('isTabletOrUp is false at <600dp, true at >=600dp',
-      (tester) async {
-    expect(await readIsTablet(tester, 599), isFalse);
-    expect(await readIsTablet(tester, 600), isTrue);
-    expect(await readIsTablet(tester, 1280), isTrue);
-  });
-
-  // New breakpoint for the iPad/PC layout split:
-  //   <1024dp  → mobile / iPad portrait (single column)
-  //   ≥1024dp  → iPad landscape / PC / laptop (2-column + thumbs
-  //             below the row)
+  // Orientation-based rule for the product-detail layout:
+  //   portrait  (height >= width) → mobile / iPad portrait (single column)
+  //   landscape (width > height)  → iPad landscape / PC / laptop
+  //                                  (2-column + thumbs below the row)
   Future<bool> readIsProductDetailTwoCol(
     WidgetTester tester, {
     required double width,
@@ -71,12 +50,6 @@ void main() {
     ));
     return tester.element(find.byType(SizedBox)).isProductDetailTwoCol;
   }
-
-  test('Breakpoints.productDetailTwoCol is 1024 dp (legacy fallback)', () {
-    // The constant is kept for callers that want a static fallback;
-    // the getter itself now reads MediaQuery.orientation.
-    expect(Breakpoints.productDetailTwoCol, 1024);
-  });
 
   testWidgets(
       'isProductDetailTwoCol: true in landscape (phone landscape / '
@@ -112,10 +85,9 @@ void main() {
             'when width is huge');
 
     // LANDSCAPE cases (width > height → landscape) — must use 2-col
-    // PC layout. Note that 932×430 (iPhone landscape) is the new
-    // case this rule adds: width is only 932 dp (under the
-    // previous 1024 dp threshold) but the device is in landscape
-    // → 2-col.
+    // PC layout. Note that 932×430 (iPhone landscape) is the case
+    // this rule covers: width is only 932 dp (under the previous
+    // 1024 dp threshold) but the device is in landscape → 2-col.
     expect(
         await readIsProductDetailTwoCol(
           tester,
@@ -123,8 +95,8 @@ void main() {
           height: 430,
         ),
         isTrue,
-        reason: 'iPhone 14 Pro Max landscape — the NEW rule: 2-col even '
-            'though width < 1024 dp');
+        reason: 'iPhone 14 Pro Max landscape — 2-col even though '
+            'width < 1024 dp');
     expect(
         await readIsProductDetailTwoCol(
           tester,

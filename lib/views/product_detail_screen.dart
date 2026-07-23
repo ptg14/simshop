@@ -50,14 +50,13 @@ String resolveStoreMapUrl(StoreInfo info) {
 /// The threshold is orientation-based, not width-based, because
 /// iPhone landscape (~932 dp wide) falls under the previous 1024
 /// dp width threshold but should still use the 2-column PC
-/// layout — see [Breakpoints.productDetailTwoCol] and
-/// `context.isProductDetailTwoCol`.
+/// layout — see `context.isProductDetailTwoCol`.
 ///
 /// The gallery uses [GallerySection] (a native `PageView` with a
 /// thumbnail strip, keyboard arrows on desktop, and tap-to-lightbox)
 /// instead of the shared `ImageCarousel` widget. The shared widget is
-/// still used by the home banner + product card; the iOS Safari
-/// swipe-stuck bug was specific to the product-detail nesting
+/// still used by the home banner; the iOS Safari swipe-stuck bug
+/// was specific to the product-detail nesting
 /// ([[simshop-product-detail-ios-swipe-stuck]]).
 class ProductDetailScreen extends StatefulWidget {
   const ProductDetailScreen({super.key, required this.product});

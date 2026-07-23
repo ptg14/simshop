@@ -30,46 +30,39 @@ class ImageCarousel extends StatefulWidget {
   final void Function(int index)? onTap;
 
   /// When true, the carousel renders circular prev/next buttons
-  /// floating over the left and right edges. The product-detail
-  /// screen opts in (manual navigation, no auto-scroll); the home
-  /// banner carousel leaves it off because the auto-advance + dot
-  /// indicator is enough and the buttons would compete with the
-  /// customer's first instinct to scroll the page. The buttons
+  /// floating over the left and right edges. The home banner
+  /// carousel leaves this off by default because the auto-advance
+  /// + dot indicator is enough and the buttons would compete with
+  /// the customer's first instinct to scroll the page. The buttons
   /// are only rendered when there is more than one image — a
   /// single-image carousel has nothing to advance to.
   final bool showNavigationButtons;
 
   /// How each image fills its frame. Default [BoxFit.cover] keeps
-  /// the existing banner + product-card behaviour (image fills the
-  /// frame, edges get cropped). Product detail uses
-  /// [BoxFit.contain] so the customer sees the full photo with
-  /// letterboxing instead of having the product zoomed in and
-  /// cropped.
+  /// the banner behaviour (image fills the frame, edges get
+  /// cropped). Callers can opt into [BoxFit.contain] when they want
+  /// the full photo with letterboxing instead of a cropped fill.
   final BoxFit fit;
 
   /// When non-null, wraps the *first* slide in a [Hero] with this
-  /// exact tag — matching the [Hero] tag used by the product card
-  /// on the home grid (e.g. `'product-image-<product.id>'`). The
-  /// fly-in animation from the home card then transitions smoothly
+  /// exact tag. Callers that show one image at the source (and
+  /// many at the destination) can hand off a tag like
+  /// `'product-image-<id>'` so the fly-in animation flows smoothly
   /// into the carousel. Only the first slide is wrapped because the
-  /// home grid only shows one image; subsequent slides are revealed
+  /// source shows a single image; subsequent slides are revealed
   /// via the carousel's own PageView motion.
   final Object? heroTag;
 
   /// Whether to wrap the carousel in [EdgeInsets.symmetric] using
   /// `context.horizontalPadding` (12 / 24 / 48 dp on mobile / tablet /
-  /// desktop). Defaults to `true` so the home banner and product
-  /// card carousels keep their responsive gutter.
+  /// desktop). Defaults to `true` so the home banner keeps its
+  /// responsive gutter.
   ///
   /// Set to `false` when the caller has already placed the carousel
-  /// inside a full-width container with its own background — most
-  /// commonly the product detail screen, which puts the carousel
-  /// inside a `Container(width: double.infinity, color: surface)`
-  /// that doubles as the letterbox background for `BoxFit.contain`.
-  /// Adding a second horizontal padding on top of that container
-  /// leaves the caller's letterbox background visible as a white
-  /// stripe down both sides — the image looks "framed" instead of
-  /// filling the screen.
+  /// inside a full-width container with its own background — adding
+  /// a second horizontal padding on top of that container leaves
+  /// the caller's background visible as a stripe down both sides
+  /// and the image looks "framed" instead of filling the screen.
   final bool useHorizontalPadding;
 
   @override
@@ -87,11 +80,11 @@ class _ImageCarouselState extends State<ImageCarousel>
   /// horizontal drag detector (via [PageView.physics] -> never
   /// scrollable) and instead drive the [PageController] ourselves
   /// from the surrounding [GestureDetector]. This bypasses the
-  /// gesture arena entirely: the carousel always wins the
+  /// gesture arena entirely so the carousel always wins the
   /// horizontal swipe, even when it's nested inside a vertical
-  /// [SingleChildScrollView] whose content is short enough to be
-  /// sitting at the top of its scroll bounds (which is exactly
-  /// when a vanilla [PageView] appears "stuck" on mobile).
+  /// scroller whose content is short enough to be sitting at the
+  /// top of its scroll bounds (which is exactly when a vanilla
+  /// [PageView] appears "stuck" on mobile).
   ///
   /// `_dragStartControllerOffset` is captured at the start of each
   /// drag so the delta we feed the controller is always measured
@@ -181,12 +174,10 @@ class _ImageCarouselState extends State<ImageCarousel>
     _timer?.cancel();
     if (widget.imageUrls.length < 2) return;
     // A zero/negative duration means "the caller disabled auto-scroll"
-    // (e.g. the product detail screen, where auto-advance fought the
-    // customer's manual swipes inside the vertical
-    // SingleChildScrollView). Bail out before scheduling a timer —
-    // `Timer.periodic(Duration.zero, ...)` fires every microtask and
-    // calls `animateToPage` on every frame, which is what made the
-    // carousel feel sluggish and unresponsive to user input.
+    // — bail out before scheduling a timer. `Timer.periodic(Duration.zero, ...)`
+    // fires every microtask and calls `animateToPage` on every frame,
+    // which is what made the carousel feel sluggish and unresponsive
+    // to user input.
     if (widget.autoScrollDuration <= Duration.zero) return;
     _timer = Timer.periodic(widget.autoScrollDuration, (_) {
       if (!mounted || !_controller.hasClients) return;
@@ -243,13 +234,12 @@ class _ImageCarouselState extends State<ImageCarousel>
                 // the gesture arena.
                 //
                 // Why: when this carousel sits inside a vertical
-                // [SingleChildScrollView] (the product detail
-                // page), the parent and the [PageView] both want
-                // pan gestures, and on mobile the parent often
-                // wins — every horizontal swipe gets mis-classified
-                // as a vertical drag and the carousel appears
-                // stuck. By wrapping the [PageView] in a
-                // [GestureDetector] that explicitly handles
+                // scroller, the parent and the [PageView] both
+                // want pan gestures, and on mobile the parent
+                // often wins — every horizontal swipe gets
+                // mis-classified as a vertical drag and the
+                // carousel appears stuck. By wrapping the [PageView]
+                // in a [GestureDetector] that explicitly handles
                 // `onHorizontalDragUpdate`, the carousel claims
                 // the horizontal gesture immediately, before the
                 // parent gets a chance to. The [PageView] is given
@@ -260,9 +250,8 @@ class _ImageCarouselState extends State<ImageCarousel>
                 //
                 // `behavior: opaque` is required so the
                 // GestureDetector's hit-test doesn't fall through
-                // to widgets behind it (the discount ribbon
-                // overlay, the page background, etc.) when the
-                // carousel sits inside a [Stack].
+                // to widgets behind it when the carousel sits
+                // inside a [Stack].
                 behavior: HitTestBehavior.opaque,
                 onHorizontalDragStart: (details) {
                   if (widget.imageUrls.length < 2) return;

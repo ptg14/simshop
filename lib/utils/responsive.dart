@@ -6,19 +6,6 @@ class Breakpoints {
   static const double tablet = 900;
   static const double desktop = 1200;
 
-  /// Width threshold kept for callers that want a static fallback
-  /// (e.g. tests that build MediaQuery without orientation). The
-  /// product-detail screen itself uses the orientation-based
-  /// getter [isProductDetailTwoCol] — see that getter for the
-  /// rule.
-  ///
-  /// History: was 1024 dp when the rule was "width >= 1024 dp
-  /// switches to the 2-col layout". Replaced with orientation
-  /// because iPhone landscape (~932 dp wide) falls under 1024 dp
-  /// but should still use the 2-col PC layout. Kept as a constant
-  /// so tests + future code can pin to a number if they want.
-  static const double productDetailTwoCol = 1024;
-
   static bool isMobile(double width) => width < mobile;
   static bool isTablet(double width) => width >= mobile && width < desktop;
   static bool isDesktop(double width) => width >= desktop;
@@ -181,15 +168,6 @@ extension ResponsiveContext on BuildContext {
         tablet: 480,
         desktop: 600,
       );
-
-  /// True when the screen is wide enough for the product-detail
-  /// 2-column layout (gallery left, info right). Threshold is
-  /// [Breakpoints.mobile] (600 dp) — used by the home grid + admin
-  /// rail for the "tablet-or-wider" decision. The product-detail
-  /// screen itself uses [isProductDetailTwoCol] (≥1024 dp) instead,
-  /// because we want iPad portrait (768 dp) to stay mobile-style
-  /// while iPad landscape (1024 dp) gets the 2-column layout.
-  bool get isTabletOrUp => screenWidth >= Breakpoints.mobile;
 
   /// True when the product-detail screen should render the
   /// 2-column Row (gallery on the left, info on the right) with

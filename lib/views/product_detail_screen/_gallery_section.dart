@@ -8,8 +8,8 @@ import 'lightbox_screen.dart';
 /// Inline product gallery for the product-detail screen.
 ///
 /// Replaces the shared `ImageCarousel` widget on this screen only
-/// (the shared widget is still used by the home banner + product
-/// card). Three navigation paths feed the same `PageController`:
+/// (the shared widget is still used by the home banner). Three
+/// navigation paths feed the same `PageController`:
 ///
 ///   * Tap on a thumbnail (`onTap` → `animateToPage`)
 ///   * Swipe the main `PageView` (built-in horizontal drag)
