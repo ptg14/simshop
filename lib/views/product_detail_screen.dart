@@ -1,56 +1,66 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
-import 'package:provider/provider.dart';
-import 'package:url_launcher/url_launcher.dart';
 
 import '../models/product.dart';
 import '../models/store_info.dart';
-import '../utils/currency_formatter.dart';
 import '../utils/responsive.dart';
-import '../viewmodels/site_config_viewmodel.dart';
-import '../widgets/image_carousel.dart';
 import '../widgets/site_info_footer.dart';
+import 'product_detail_screen/_details_section.dart';
+import 'product_detail_screen/_gallery_section.dart';
+import 'product_detail_screen/_info_section.dart';
 
 /// Build a Google Maps *directions* URL with [address] as the
 /// destination. The `origin` parameter is omitted so Maps uses the
-/// device's current location automatically. URL-encoding handles
-/// Vietnamese diacritics and commas so they round-trip through
-/// Android Intent and iOS `openURL:` intact.
+/// device's current location automatically.
 String buildGoogleMapsDirectionsUrl(String address) =>
     'https://www.google.com/maps/dir/?api=1&destination=${Uri.encodeComponent(address)}';
 
-/// Prepend `https://` to [url] when it has no scheme. Admin typically
-/// pastes a share-link from Google Maps (e.g. 'www.google.com/maps/...')
-/// without the scheme. Without this fix, `Uri.parse` treats the URL
-/// as a relative path and `launchUrl` on web navigates to
-/// `http://localhost:3000/www.google.com/...` instead of the real
-/// Google Maps URL. On mobile the same lack of scheme triggers
-/// deep-link fallback paths into the app's own routes.
+/// Prepend `https://` to [url] when it has no scheme.
 String _ensureUrlScheme(String url) {
   if (url.startsWith('http://') || url.startsWith('https://')) return url;
   return 'https://$url';
 }
 
 /// Resolve the URL the product detail "Buy at store" CTA should
-/// launch, following the user's three-tier flow:
-///
-///   1. [StoreInfo.googleMapsUrl] set → return it (with https://
-///      prepended if the admin pasted a scheme-less URL).
-///   2. Only [StoreInfo.address] set → return a built directions URL
-///      with the address as the destination.
-///   3. Both empty → return '' (caller hides the button).
+/// launch, following the user's three-tier flow.
 String resolveStoreMapUrl(StoreInfo info) {
   if (info.googleMapsUrl.isNotEmpty) {
     return _ensureUrlScheme(info.googleMapsUrl);
   }
-  if (info.address.isNotEmpty) return buildGoogleMapsDirectionsUrl(info.address);
+  if (info.address.isNotEmpty) {
+    return buildGoogleMapsDirectionsUrl(info.address);
+  }
   return '';
 }
 
-/// Product detail screen.
+/// Product detail screen — whole-screen redesign (2026-07-23)
+/// + orientation-based layout split.
+///
+/// Layout:
+///   * Portrait (phones + iPad portrait): single column — gallery
+///     on top (with the thumbnail strip rendered inside the
+///     gallery column), info column below with categories →
+///     options → name → price → stock card → description →
+///     specs → Buy CTA in vertical order.
+///   * Landscape (phones landscape + iPad landscape + PC / laptop):
+///     2-column Row — gallery 60% on left, info column 40% on
+///     right. The right column stops at the stock card. The
+///     thumbnail strip + description + specs + Buy CTA flow below
+///     the row at full content width.
+///
+/// The threshold is orientation-based, not width-based, because
+/// iPhone landscape (~932 dp wide) falls under the previous 1024
+/// dp width threshold but should still use the 2-column PC
+/// layout — see [Breakpoints.productDetailTwoCol] and
+/// `context.isProductDetailTwoCol`.
+///
+/// The gallery uses [GallerySection] (a native `PageView` with a
+/// thumbnail strip, keyboard arrows on desktop, and tap-to-lightbox)
+/// instead of the shared `ImageCarousel` widget. The shared widget is
+/// still used by the home banner + product card; the iOS Safari
+/// swipe-stuck bug was specific to the product-detail nesting
+/// ([[simshop-product-detail-ios-swipe-stuck]]).
 class ProductDetailScreen extends StatefulWidget {
   const ProductDetailScreen({super.key, required this.product});
-
   final Product product;
 
   @override
@@ -59,30 +69,22 @@ class ProductDetailScreen extends StatefulWidget {
 
 class _ProductDetailScreenState extends State<ProductDetailScreen> {
   late Product product;
-
-  /// Currently selected option id. Null means "no option chosen /
-  /// default view" — in that case the gallery shows every image
-  /// from the product. Once the customer picks an option, the
-  /// gallery narrows to that option's [Option.imageUrls] (falling
-  /// back to the product images if the option has none).
   String? _selectedOptionId;
+  late final ValueNotifier<int> _activeImageIndex;
 
   @override
   void initState() {
     super.initState();
     product = widget.product;
+    _activeImageIndex = ValueNotifier<int>(0);
   }
 
-  Future<void> _openMap(String url) async {
-    final uri = Uri.parse(url);
-    await launchUrl(uri, mode: LaunchMode.externalApplication);
+  @override
+  void dispose() {
+    _activeImageIndex.dispose();
+    super.dispose();
   }
 
-  /// Compute the image list to show in the gallery.
-  ///
-  /// When no option is selected, or the selected option has no
-  /// images of its own, we fall back to every image attached to
-  /// the product (so the customer never sees an empty carousel).
   List<String> _galleryImages() {
     if (_selectedOptionId != null) {
       for (final o in product.options) {
@@ -99,597 +101,122 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    // Compute the gallery image list once per build — [_galleryImages]
-    // walks [product.options] and is called for both the carousel key
-    // and its imageUrls arg below. Caching avoids running the lookup
-    // twice and keeps the key/arg trivially in sync.
     final galleryImages = _galleryImages();
+    final isTwoCol = context.isProductDetailTwoCol;
+
+    // The gallery widget itself (PageView + lightbox tap target).
+    // On mobile / iPad portrait we wrap it with the thumbnail strip
+    // below; on PC / laptop the strip is rendered below the row
+    // instead, so the gallery widget stays a single child.
+    final gallery = Container(
+      color: scheme.surfaceContainerLowest,
+      child: Column(
+        children: [
+          GallerySection(
+            key: ValueKey(
+                'gallery-${product.id}-${_selectedOptionId ?? 'default'}'),
+            images: galleryImages,
+            height: context.productDetailImageHeight,
+            scheme: scheme,
+            activeIndex: _activeImageIndex,
+          ),
+          if (!isTwoCol && galleryImages.length > 1)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 8),
+              child: ThumbnailStrip(
+                images: galleryImages,
+                activeIndex: _activeImageIndex,
+                scheme: scheme,
+              ),
+            ),
+        ],
+      ),
+    );
+
+    // PC/laptop: the right column only carries the top half
+    // (categories → options → name → price → stock card). The
+    // bottom half lives in [DetailsSection] below the row.
+    final infoTop = InfoSection(
+      product: product,
+      selectedOptionId: _selectedOptionId,
+      onSelectOption: (id) => setState(() {
+        _selectedOptionId = id;
+        _activeImageIndex.value = 0; // reset gallery on option change
+      }),
+      scheme: scheme,
+      compact: isTwoCol,
+    );
+
+    // Post-row block: thumbnail strip (PC only, ≥2 images) + the
+    // full details (description + specs + Buy CTA). Skipped on
+    // mobile / iPad portrait because [InfoSection(compact: false)]
+    // already renders the details in-place inside the info column.
+    final Widget postRowContent = isTwoCol
+        ? Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (galleryImages.length > 1)
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 8),
+                  child: ThumbnailStrip(
+                    images: galleryImages,
+                    activeIndex: _activeImageIndex,
+                    scheme: scheme,
+                  ),
+                ),
+              DetailsSection(product: product, scheme: scheme),
+            ],
+          )
+        : infoTop;
+
+    final Widget body = Center(
+      child: Container(
+        constraints: BoxConstraints(maxWidth: context.maxContentWidth),
+        child: isTwoCol
+            ? Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  IntrinsicHeight(
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Expanded(flex: 3, child: gallery),
+                        Expanded(flex: 2, child: infoTop),
+                      ],
+                    ),
+                  ),
+                  postRowContent,
+                  // SiteInfoFooter is mounted INSIDE the
+                  // `maxContentWidth` Container so the footer
+                  // banner card stays inside the page's centered
+                  // column on PC / laptop. Previously the footer
+                  // was a sibling of `body` at the ListView level,
+                  // which let it stretch full-bleed (banner image
+                  // has `width: double.infinity`) and looked
+                  // detached from the rest of the content.
+                  const SiteInfoFooter(),
+                ],
+              )
+            : Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  gallery,
+                  infoTop, // compact: false → renders details in-place
+                  const SiteInfoFooter(),
+                ],
+              ),
+      ),
+    );
 
     return Scaffold(
       appBar: AppBar(
         title: const Text('Chi tiết sản phẩm'),
         centerTitle: true,
       ),
-      body: SingleChildScrollView(
-        // Wrap the underlying scroll physics in
-        // [AlwaysScrollableScrollPhysics] so the carousel's
-        // horizontal drag detector always wins the gesture arena,
-        // even when the page is short enough that the vertical
-        // scroll view is sitting at the top or bottom (and would
-        // otherwise eat the first horizontal swipe). Without this
-        // the carousel appeared "stuck" on mobile — the customer
-        // could see all images in the dot indicator but couldn't
-        // flip between them.
-        physics: const ClampingScrollPhysics(
-          parent: AlwaysScrollableScrollPhysics(),
-        ),
-        child: Center(
-          child: Container(
-            constraints: BoxConstraints(maxWidth: context.maxContentWidth),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                /// Product gallery. The carousel renders every image
-                /// in [galleryImages] (computed above). When the
-                /// customer picks an option below, [_galleryImages]
-                /// narrows the list to that option's [Option.imageUrls]
-                /// (falling back to the product images when the option
-                /// has none of its own), so the carousel swaps to
-                /// the chosen variant's photos.
-                ///
-                /// The [heroTag] matches the tag the home grid's
-                /// [ProductCard] uses (`'product-image-<product.id>'`),
-                /// so the fly-in animation from the card survives the
-                /// change from a single image to a full carousel.
-                /// The tag is keyed to the product, *not* the first
-                /// gallery image — that way switching options doesn't
-                /// trigger a new Hero flight mid-detail.
-                ///
-                /// `BoxFit.contain` lets the customer see the full
-                /// product photo. [BoxFit.cover] — the previous
-                /// default — zoomed the image to fill the frame and
-                /// cropped the edges, hiding whatever the seller
-                /// wanted to show (logo, full silhouette, dimension
-                /// labels).
-                Container(
-                  height: context.productDetailImageHeight,
-                  width: double.infinity,
-                  // Letterbox background for [BoxFit.contain]: the
-                  // image may not fill the frame (e.g. a square
-                  // product on a wide screen). Use the lightest
-                  // surface so the letterboxing matches the page
-                  // background and doesn't look like a CSS bug.
-                  color: scheme.surfaceContainerLowest,
-                  child: Stack(
-                    children: [
-                      Positioned.fill(
-                        child: ImageCarousel(
-                          key: ValueKey(product.id),
-                          imageUrls: galleryImages,
-                          height: context.productDetailImageHeight,
-                          // Caller already wrapped the carousel in a
-                          // full-width container with a letterbox
-                          // background (see `color: surfaceContainerLowest`
-                          // above). Disable [ImageCarousel]'s own
-                          // horizontal padding so the image actually
-                          // fills that container — without this the
-                          // carousel adds 12/24/48 dp of inset on
-                          // each side and the letterbox background
-                          // shows up as a "white frame" around the
-                          // photo (visible on every product that
-                          // doesn't have a wide banner-style image).
-                          useHorizontalPadding: false,
-                          // Zero duration disables auto-scroll. The
-                          // product-detail carousel sits inside a
-                          // vertical SingleChildScrollView, and the
-                          // every-few-seconds auto-advance fought
-                          // the customer's manual swipes — the page
-                          // would jump under their finger mid-gesture
-                          // and the carousel felt sluggish. Manual
-                          // swipes are plenty fast on their own.
-                          autoScrollDuration: Duration.zero,
-                          fit: BoxFit.contain,
-                          heroTag: 'product-image-${product.id}',
-                          // Floating prev/next buttons because the
-                          // product-detail carousel has no auto-advance
-                          // — without explicit controls the only way
-                          // to navigate is touch drag or wheel scroll,
-                          // which desktop users (and hesitant mobile
-                          // users) often miss.
-                          showNavigationButtons: true,
-                        ),
-                      ),
-
-                      /// Discount ribbon.
-                      /// Manual sale → "GIÁ CŨ: …"; active event →
-                      /// "GIÁ SỰ KIỆN: …" with the event name.
-                      if (product.isOnSale)
-                        Positioned(
-                          top: 16,
-                          right: 16,
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 12,
-                              vertical: 8,
-                            ),
-                            decoration: BoxDecoration(
-                              color: scheme.error,
-                              borderRadius: BorderRadius.circular(8),
-                            ),
-                            child: Text(
-                              product.currentEvent != null
-                                  ? 'GIÁ SỰ KIỆN: ${product.currentEvent!.formatDiscount()}'
-                                      '${product.currentEvent!.name.isEmpty ? '' : ' · ${product.currentEvent!.name}'}'
-                                  : 'GIÁ CŨ: ${formatCurrency(product.originalPrice ?? 0)}',
-                              style: TextStyle(
-                                color: scheme.onError,
-                                fontWeight: FontWeight.bold,
-                                fontSize: 12,
-                              ),
-                            ),
-                          ),
-                        ),
-                    ],
-                  ),
-                ),
-
-                /// Product details
-                Padding(
-                  padding: EdgeInsets.all(context.horizontalPadding),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      /// Categories — render every entry from [Product.categories] as
-                      /// a pill. We deliberately do NOT fall back to
-                      /// the legacy singular [Product.category]
-                      /// string when [Product.categories] is an
-                      /// explicit empty list: that would re-attach a
-                      /// category the admin just removed, and show a
-                      /// stray pink pill on the detail page.
-                      ///
-                      /// When the list is empty we skip the whole
-                      /// block (pill row *and* its trailing spacer)
-                      /// so no empty frame is left between the
-                      /// carousel and the next section.
-                      ///
-                      /// Each entry is also `.trim()`-checked —
-                      /// guards against a stale API payload that
-                      /// synthesized `[""]` from a blank legacy
-                      /// `category` field (see [Product.fromJson]
-                      /// for the upstream filter). The model
-                      /// already strips empties, but if a future
-                      /// backend ships raw data this stays safe.
-                      ///
-                      /// [Wrap] lets multiple pills flow onto a
-                      /// second row instead of overflowing the card
-                      /// edge.
-                      if (product.categories
-                          .any((c) => c.trim().isNotEmpty)) ...[
-                        Wrap(
-                          spacing: 6,
-                          runSpacing: 6,
-                          children: product.categories
-                              .where((c) => c.trim().isNotEmpty)
-                              .map((cat) => Container(
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 12,
-                                      vertical: 6,
-                                    ),
-                                    decoration: BoxDecoration(
-                                      color: scheme.secondaryContainer,
-                                      borderRadius:
-                                          BorderRadius.circular(999),
-                                    ),
-                                    child: Text(
-                                      cat,
-                                      style: TextStyle(
-                                        color: scheme.onSecondaryContainer,
-                                        fontWeight: FontWeight.w500,
-                                        fontSize: context.responsive<double>(
-                                          mobile: 12,
-                                          tablet: 13,
-                                          desktop: 14,
-                                        ),
-                                      ),
-                                    ),
-                                  ))
-                              .toList(),
-                        ),
-
-                        SizedBox(
-                            height: context.responsive<double>(
-                          mobile: 12,
-                          tablet: 16,
-                          desktop: 20,
-                        )),
-                      ],
-
-                      /// Option selector — only rendered when the
-                      /// product actually has variants. Tapping a
-                      /// chip swaps the gallery above to that
-                      /// option's imageUrls. The first chip is
-                      /// always "Mặc định" so the customer can
-                      /// return to the full product gallery.
-                      ///
-                      /// Uses Material's [ChoiceChip] (not a custom
-                      /// widget) so it picks up the app's
-                      /// [ChipThemeData] and gets a screen-reader
-                      /// "selected" hint for free, matching the
-                      /// category picker used in the admin product
-                      /// form.
-                      if (product.options.isNotEmpty) ...[
-                        Text(
-                          'Tuỳ chọn',
-                          style: TextStyle(
-                            fontWeight: FontWeight.w600,
-                            fontSize: context.responsive<double>(
-                              mobile: 14,
-                              tablet: 15,
-                              desktop: 16,
-                            ),
-                            color: scheme.onSurfaceVariant,
-                          ),
-                        ),
-                        const SizedBox(height: 8),
-                        Wrap(
-                          spacing: 8,
-                          runSpacing: 8,
-                          children: [
-                            ChoiceChip(
-                              label: const Text('Mặc định'),
-                              selected: _selectedOptionId == null,
-                              onSelected: (_) => setState(
-                                  () => _selectedOptionId = null),
-                            ),
-                            for (final o in product.options)
-                              ChoiceChip(
-                                label: Text(o.name),
-                                selected: _selectedOptionId == o.id,
-                                onSelected: (_) => setState(
-                                    () => _selectedOptionId = o.id),
-                              ),
-                          ],
-                        ),
-                        const SizedBox(height: 12),
-                      ],
-
-                      /// Product name
-                      Text(
-                        product.name,
-                        style: TextStyle(
-                          fontWeight: FontWeight.bold,
-                          fontSize: context.responsive<double>(
-                            mobile: 20,
-                            tablet: 24,
-                            desktop: 28,
-                          ),
-                          color: scheme.onSurface,
-                          height: 1.3,
-                        ),
-                      ),
-
-                      SizedBox(
-                          height: context.responsive<double>(
-                        mobile: 12,
-                        tablet: 16,
-                        desktop: 20,
-                      )),
-
-                      /// Price row.
-                      /// When an event is active the customer sees the
-                      /// discounted price and the base price is struck
-                      /// through (with the event name as supporting
-                      /// context). [isOnSale] now also returns true for
-                      /// event-only products.
-                      Row(
-                        children: [
-                          Text(
-                            formatCurrency(product.effectivePayPrice),
-                            style: TextStyle(
-                              color: scheme.error,
-                              fontWeight: FontWeight.bold,
-                              fontSize: context.responsive<double>(
-                                mobile: 24,
-                                tablet: 28,
-                                desktop: 32,
-                              ),
-                            ),
-                          ),
-                          if (product.isOnSale) ...[
-                            SizedBox(
-                                width: context.responsive<double>(
-                              mobile: 12,
-                              tablet: 16,
-                              desktop: 20,
-                            )),
-                            Flexible(
-                              child: Text(
-                                formatCurrency(product.price),
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  color: scheme.onSurfaceVariant,
-                                  decoration: TextDecoration.lineThrough,
-                                  fontSize: context.responsive<double>(
-                                    mobile: 16,
-                                    tablet: 18,
-                                    desktop: 20,
-                                  ),
-                                ),
-                              ),
-                            ),
-                            SizedBox(
-                                width: context.responsive<double>(
-                              mobile: 12,
-                              tablet: 16,
-                              desktop: 20,
-                            )),
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 8,
-                                vertical: 4,
-                              ),
-                              decoration: BoxDecoration(
-                                color: scheme.error,
-                                borderRadius: BorderRadius.circular(8),
-                              ),
-                              child: Text(
-                                '-${product.discountPercentage}%',
-                                style: TextStyle(
-                                  color: scheme.onError,
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: context.responsive<double>(
-                                    mobile: 12,
-                                    tablet: 13,
-                                    desktop: 14,
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ],
-                        ],
-                      ),
-
-                      SizedBox(
-                          height: context.responsive<double>(
-                        mobile: 16,
-                        tablet: 20,
-                        desktop: 24,
-                      )),
-
-                      /// Stock info. Three visual states share the same card shape so the
-                      /// layout doesn't reflow when stock crosses zero:
-                      ///   stock == null   → neutral "Số lượng không xác định"
-                      ///   stock == 0      → error "Hết hàng" (distinct from
-                      ///                     the amber "Sắp hết" pill on the card)
-                      ///   0 < stock < 10  → tertiary "Còn N sản phẩm"
-                      ///   stock >= 10     → tertiary "Còn N sản phẩm"
-                      Container(
-                        padding: EdgeInsets.all(context.responsive<double>(
-                          mobile: 12,
-                          tablet: 14,
-                          desktop: 16,
-                        )),
-                        decoration: BoxDecoration(
-                          // Out-of-stock gets a red background so the
-                          // state is unmissable; everything else keeps
-                          // the tertiary "info" tone.
-                          color: product.isOutOfStock
-                              ? scheme.errorContainer
-                              : scheme.tertiaryContainer,
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: Row(
-                          children: [
-                            Icon(
-                              product.isOutOfStock
-                                  ? Icons.do_disturb_alt_outlined
-                                  : Icons.inventory_2_outlined,
-                              color: product.isOutOfStock
-                                  ? scheme.onErrorContainer
-                                  : scheme.onTertiaryContainer,
-                            ),
-                            const SizedBox(width: 8),
-                            Text(
-                              () {
-                                if (product.isOutOfStock) return 'Hết hàng';
-                                if (product.stock == null) {
-                                  return 'Số lượng không xác định';
-                                }
-                                return 'Còn ${product.stock} sản phẩm';
-                              }(),
-                              style: TextStyle(
-                                color: product.isOutOfStock
-                                    ? scheme.onErrorContainer
-                                    : scheme.onTertiaryContainer,
-                                fontWeight: FontWeight.w600,
-                                fontSize: context.responsive<double>(
-                                  mobile: 14,
-                                  tablet: 15,
-                                  desktop: 16,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-
-                      SizedBox(
-                          height: context.responsive<double>(
-                        mobile: 24,
-                        tablet: 28,
-                        desktop: 32,
-                      )),
-
-                      /// Description
-                      Text(
-                        'Mô tả sản phẩm',
-                        style: TextStyle(
-                          fontWeight: FontWeight.bold,
-                          fontSize: context.responsive<double>(
-                            mobile: 16,
-                            tablet: 18,
-                            desktop: 20,
-                          ),
-                          color: scheme.onSurface,
-                        ),
-                      ),
-
-                      SizedBox(
-                          height: context.responsive<double>(
-                        mobile: 8,
-                        tablet: 10,
-                        desktop: 12,
-                      )),
-
-                      MarkdownBody(
-                        data: product.description.isEmpty
-                            ? '_(Sản phẩm chưa có mô tả)_'
-                            : product.description,
-                        selectable: true,
-                        styleSheet: MarkdownStyleSheet.fromTheme(
-                            Theme.of(context)),
-                      ),
-
-                      SizedBox(
-                          height: context.responsive<double>(
-                        mobile: 24,
-                        tablet: 28,
-                        desktop: 32,
-                      )),
-
-                      /// Specifications
-                      if (product.specs.isNotEmpty) ...[
-                        Text(
-                          'Thông số kỹ thuật',
-                          style: TextStyle(
-                            fontWeight: FontWeight.bold,
-                            fontSize: context.responsive<double>(
-                              mobile: 16,
-                              tablet: 18,
-                              desktop: 20,
-                            ),
-                            color: scheme.onSurface,
-                          ),
-                        ),
-                        SizedBox(
-                            height: context.responsive<double>(
-                          mobile: 12,
-                          tablet: 14,
-                          desktop: 16,
-                        )),
-                        ...product.specs.map((spec) => Padding(
-                              padding: EdgeInsets.only(
-                                bottom: context.responsive<double>(
-                                  mobile: 8,
-                                  tablet: 10,
-                                  desktop: 12,
-                                ),
-                              ),
-                              child: Row(
-                                children: [
-                                  Icon(Icons.check_circle_outline,
-                                      color: scheme.primary,
-                                      size: context.responsive<double>(
-                                        mobile: 20,
-                                        tablet: 22,
-                                        desktop: 24,
-                                      )),
-                                  SizedBox(
-                                      width: context.responsive<double>(
-                                    mobile: 12,
-                                    tablet: 14,
-                                    desktop: 16,
-                                  )),
-                                  Expanded(
-                                    child: Text(
-                                      spec,
-                                      style: TextStyle(
-                                        fontSize: context.responsive<double>(
-                                          mobile: 14,
-                                          tablet: 15,
-                                          desktop: 16,
-                                        ),
-                                        color: scheme.onSurface,
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            )),
-                        SizedBox(
-                            height: context.responsive<double>(
-                          mobile: 24,
-                          tablet: 28,
-                          desktop: 32,
-                        )),
-                      ],
-
-                      /// Buy at store CTA: opens Google Maps. Three-tier
-                      /// resolution:
-                      ///   1. configured googleMapsUrl -> launch as-is
-                      ///   2. configured address -> launch directions
-                      ///      URL with the address as destination
-                      ///   3. both empty -> no button
-                      ///
-                      /// The "Mua trực tiếp tại:" caption sits OUTSIDE
-                      /// the button so the button itself shows only
-                      /// the destination (the address, with a place
-                      /// icon). When only googleMapsUrl is configured
-                      /// the button falls back to "cửa hàng".
-                      Consumer<SiteConfigViewModel>(
-                        builder: (context, vm, _) {
-                          final info = vm.siteInfo;
-                          final url = resolveStoreMapUrl(info);
-                          if (url.isEmpty) {
-                            return const SizedBox.shrink();
-                          }
-                          final addressLine = info.address.isNotEmpty
-                              ? info.address
-                              : 'cửa hàng';
-                          return Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                'Mua trực tiếp tại:',
-                                style: TextStyle(
-                                  fontWeight: FontWeight.w600,
-                                  fontSize: context.responsive<double>(
-                                    mobile: 14,
-                                    tablet: 15,
-                                    desktop: 16,
-                                  ),
-                                  color: scheme.onSurface,
-                                ),
-                              ),
-                              const SizedBox(height: 8),
-                              SizedBox(
-                                key: const Key('buy-at-store-cta'),
-                                width: double.infinity,
-                                height: context.responsive<double>(
-                                  mobile: 56,
-                                  tablet: 52,
-                                  desktop: 48,
-                                ),
-                                child: FilledButton.icon(
-                                  onPressed: () => _openMap(url),
-                                  icon: const Icon(Icons.place_outlined),
-                                  label: Text(addressLine),
-                                ),
-                              ),
-                            ],
-                          );
-                        },
-                      ),
-
-                      const SizedBox(height: 32),
-                    ],
-                  ),
-                ),
-                const SiteInfoFooter(),
-              ],
-            ),
-          ),
-        ),
+      body: ListView(
+        shrinkWrap: true,
+        physics: const ClampingScrollPhysics(),
+        children: [body],
       ),
     );
   }
