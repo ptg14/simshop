@@ -155,11 +155,25 @@ extension ResponsiveContext on BuildContext {
   bool get useFullNavigationRail => screenWidth > 900;
 
   /// Responsive product detail image height.
+  ///
+  /// Bumped from 250/350/450 to 320/480/600 for the redesign — the
+  /// inline gallery now fills more of the screen on tablet/desktop
+  /// because the info column sits beside it instead of below it.
+  /// Mobile stays at 320 dp so a portrait phone (~390 dp wide)
+  /// still has room for the thumbnail strip + dot indicators
+  /// without forcing the user to scroll past the gallery to see
+  /// the price.
   double get productDetailImageHeight => responsive<double>(
-        mobile: 250,
-        tablet: 350,
-        desktop: 450,
+        mobile: 320,
+        tablet: 480,
+        desktop: 600,
       );
+
+  /// True when the screen is wide enough for the product-detail
+  /// 2-column layout (gallery left, info right). Threshold is
+  /// [Breakpoints.mobile] (600 dp) — the same breakpoint that
+  /// switches the home page to a wider grid.
+  bool get isTabletOrUp => screenWidth >= Breakpoints.mobile;
 
   /// Responsive cell height for the product grid in dp. Used as the
   /// `mainAxisExtent` of the [SliverGridDelegate] so the cell
