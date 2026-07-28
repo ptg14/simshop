@@ -95,7 +95,7 @@ cp docker/.env.example docker/.env
 
 # 2. Điền các giá trị BẮT BUỘC (compose fail-fast nếu thiếu)
 #    - POSTGRES_PASSWORD : đổi từ "changeme"
-#    - ADMIN_PUBLIC_KEY  : hex 64 chars — lấy bằng `cd backend && go run ./cmd/keygen`
+#    - ADMIN_PUBLIC_KEY  : hex 64 chars — lấy bằng `./backend/cmd/keygen/bin/keygen-<your-os>` (binary đã build sẵn, không cần Go; hoặc `cd backend && go run ./cmd/keygen`)
 #    - ALLOWED_ORIGIN    : URL Cloudflare của frontend (vd https://testweb.dvthang.qzz.io)
 #    - CF_TUNNEL_TOKEN   : từ Cloudflare dashboard (xem "Cloudflare setup")
 #    - BE_PUBLIC_URL     : URL Cloudflare của backend (vd https://api.dvthang.qzz.io)
@@ -243,7 +243,7 @@ fails fast if missing):
 | Variable | Why required | How to fill |
 | -------- | ------------ | ----------- |
 | `POSTGRES_PASSWORD` | Postgres user creation | `openssl rand -hex 24` or password manager |
-| `ADMIN_PUBLIC_KEY` | Backend admin auth | `cd backend && go run ./cmd/keygen` (paste public hex) |
+| `ADMIN_PUBLIC_KEY` | Backend admin auth | `./backend/cmd/keygen/bin/keygen-<your-os>` (paste public hex; or `cd backend && go run ./cmd/keygen`) |
 | `ALLOWED_ORIGIN` | CORS allowlist | `https://<your-fe-domain>` |
 | `CF_TUNNEL_TOKEN` | Tunnel auth | Cloudflare Zero Trust → Tunnels → your tunnel → "Install cloudflared" |
 
@@ -893,7 +893,7 @@ prune` — that's intentional, to enable rollback.
 Trước khi deploy:
 
 - [ ] `POSTGRES_PASSWORD` đã đổi từ placeholder (khác rỗng, mạnh).
-- [ ] `ADMIN_PUBLIC_KEY` đã set (hex 64 chars, lấy từ `go run ./cmd/keygen`).
+- [ ] `ADMIN_PUBLIC_KEY` đã set (hex 64 chars, lấy từ `./backend/cmd/keygen/bin/keygen-<your-os>`; hoặc `go run ./cmd/keygen`).
 - [ ] `ALLOWED_ORIGIN` đã trỏ về URL Cloudflare của FE (không có trailing slash).
 - [ ] `BE_PUBLIC_URL` đã trỏ về URL Cloudflare của BE.
 - [ ] `CF_TUNNEL_TOKEN` đã paste từ Cloudflare dashboard.
