@@ -92,8 +92,6 @@ macos/
 windows/
 
 backend/backend
-backend/go.mod
-backend/go.sum
 backend/localhost:8080
 backend/uploads/
 .env

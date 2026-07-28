@@ -41,6 +41,20 @@ func (r *ArticleRepo) deleteUploadURLs(urls []string) {
 	}
 }
 
+// boolToInt converts a Go bool into the 0/1 value the shared
+// is_draft INTEGER column expects. Postgres binding is strict: a
+// bool parameter cannot be coerced into an INTEGER column and the
+// driver returns `cannot convert boolean to integer`. SQLite accepts
+// both, which is why this only surfaced when the user deployed via
+// Docker (Postgres). The reverse direction (Scan INTO a bool) is
+// handled by pgx natively, so no helper is needed for reads.
+func boolToInt(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
+}
+
 // exec is the dialect-aware Exec wrapper used by every method below.
 func (r *ArticleRepo) exec(query string, args ...any) (sql.Result, error) {
 	return r.db.Exec(r.dialect.Rebind(query), args...)
@@ -205,10 +219,17 @@ func (r *ArticleRepo) CreateArticle(a models.Article) (models.Article, error) {
 	if err != nil {
 		return a, err
 	}
+	// is_draft column is INTEGER (per the dialect-shared DDL and both
+	// Postgres initdb/01-schema.sql + the Go runtime migration). The Go
+	// model keeps it as bool for JSON ergonomics, so we cast here at
+	// the SQL boundary. Postgres strictly rejects binding a bool to an
+	// INTEGER column with `cannot convert boolean to integer` — SQLite
+	// happens to accept it, which is why this only surfaced in Docker /
+	// Postgres production. See [boolToInt] for the conversion.
 	_, err = r.exec(
 		`INSERT INTO articles (id, title, body_markdown, cover_image_url, product_ids, created_at, is_draft)
 		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		a.ID, a.Title, a.BodyMarkdown, a.CoverImageURL, string(productJSON), a.CreatedAt, a.IsDraft,
+		a.ID, a.Title, a.BodyMarkdown, a.CoverImageURL, string(productJSON), a.CreatedAt, boolToInt(a.IsDraft),
 	)
 	if err != nil {
 		return a, err
@@ -236,7 +257,7 @@ func (r *ArticleRepo) UpdateArticle(id string, a models.Article, oldCoverURL str
 		`UPDATE articles
 		 SET title = ?, body_markdown = ?, cover_image_url = ?, product_ids = ?, is_draft = ?
 		 WHERE id = ?`,
-		a.Title, a.BodyMarkdown, a.CoverImageURL, string(productJSON), a.IsDraft, id,
+		a.Title, a.BodyMarkdown, a.CoverImageURL, string(productJSON), boolToInt(a.IsDraft), id,
 	)
 	if err != nil {
 		return a, err
