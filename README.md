@@ -169,7 +169,12 @@ git clone <repo> simshop && cd simshop
 cd backend
 go mod download
 cp .env.example .env
-go run ./cmd/keygen
+# Tạo admin keypair bằng binary đã build sẵn (không cần Go toolchain):
+./cmd/keygen/bin/keygen-linux-amd64       # Linux
+./cmd/keygen/bin/keygen-darwin-amd64      # macOS Intel
+./cmd/keygen/bin/keygen-darwin-arm64      # macOS Apple Silicon
+./cmd/keygen/bin/keygen-windows-amd64.exe # Windows
+# Hoặc nếu đã cài Go: go run ./cmd/keygen
 # → paste public-key hex vào ADMIN_PUBLIC_KEY trong backend/.env
 # → admin.key (private, gitignored) + admin.key.pub (public)
 cd ..
@@ -282,7 +287,7 @@ cp docker/.env.example docker/.env
 # 2. Điền các biến BẮT BUỘC (xem docker/README.md → Cloudflare setup)
 $EDITOR docker/.env
 # - POSTGRES_PASSWORD : đổi từ "changeme"
-# - ADMIN_PUBLIC_KEY  : hex 64 chars (cd backend && go run ./cmd/keygen)
+# - ADMIN_PUBLIC_KEY  : hex 64 chars (run backend/cmd/keygen/bin/keygen-<your-os>; `cd backend && go run ./cmd/keygen` works too)
 # - ALLOWED_ORIGIN    : URL Cloudflare của FE
 # - CF_TUNNEL_TOKEN   : từ Cloudflare dashboard
 # - BE_PUBLIC_URL     : URL Cloudflare của BE
@@ -581,7 +586,12 @@ admin write auto-attaches `Authorization: Bearer <token>` via the
 
 ```bash
 cd backend
-go run ./cmd/keygen
+# Dùng binary đã build sẵn (không cần Go toolchain):
+./cmd/keygen/bin/keygen-linux-amd64       # Linux
+./cmd/keygen/bin/keygen-darwin-amd64      # macOS Intel
+./cmd/keygen/bin/keygen-darwin-arm64      # macOS Apple Silicon
+./cmd/keygen/bin/keygen-windows-amd64.exe # Windows
+# Hoặc nếu đã cài Go: go run ./cmd/keygen
 # → secret key (binary 64 bytes) → admin.key  (mode 0600)
 # → public  key (binary 32 bytes) → admin.key.pub (mode 0600)
 # → cả 2 cũng được in hex để verify
